@@ -8,6 +8,8 @@ from src.application.trend_check_report import aggregate
 from src.application.price_band_trend_check import (
     price_band_has_reference,
     price_band_missing_bands,
+    price_band_activity_has_reference,
+    price_band_activity_lines,
     price_band_monthly_lines,
     price_band_rate_line,
 )
@@ -16,12 +18,23 @@ from src.domain.trend_check import JUDGED_LABELS, LABEL_TREND
 from src.infrastructure.persistence.trend_check_repository import TrendCheckRepository
 
 WEEKDAYS_JA = ("月", "火", "水", "木", "金", "土", "日")
-REFERENCE_NOTE = "※参考値: 10件未満、または総数30件未満の帯の割合は参考値です。"
+REFERENCE_NOTE = "※参考値: 標本数10件未満、または対象総数30件未満の価格帯別集計は参考値です。"
 SKIP_FIELDS = {
-    "ATR危険度見送り": "atr_danger_skips",
-    "市場危険度見送り": "market_regime_danger_skips",
-    "注意レジームRSI見送り": "market_regime_caution_rsi_filters",
+    "注意レジームRSI": "market_regime_caution_rsi_filters",
+    "ATR危険度": "atr_danger_skips",
+    "市場危険度": "market_regime_danger_skips",
 }
+STATUS_LABELS = {
+    "available": "判定あり",
+    "unavailable": "判定不可",
+    "not_evaluated": "未判定",
+    "not_recorded": "未記録",
+}
+SKIP_OUTCOME_LABELS = (
+    ("損失回避", "損失回避の可能性"),
+    ("取り逃し", "利益取り逃しの可能性"),
+    ("値動きなし", "値動きなし"),
+)
 
 
 def _percent(trend: int, judged: int) -> str:
@@ -126,6 +139,47 @@ def _skip_counts(report: dict) -> dict[str, int]:
     }
 
 
+def _skip_events(report: dict) -> dict[str, list[dict]]:
+    events_by_label = {}
+    for label, field in SKIP_FIELDS.items():
+        events_by_label[label] = [
+            {
+                "outcome": ((item.get("evaluations") or {}).get("same_day") or {}).get("outcome"),
+                "pnl_before_cost": ((item.get("evaluations") or {}).get("same_day") or {}).get(
+                    "hypothetical_pnl_before_cost"
+                ),
+                "finalized": bool(((item.get("evaluations") or {}).get("same_day") or {}).get("finalized")),
+            }
+            for item in (report.get(field) or [])
+        ]
+    return events_by_label
+
+
+def _format_skip_group(label: str, count: int, events: list[dict]) -> str:
+    finalized = [
+        item for item in events
+        if item.get("finalized") and item.get("pnl_before_cost") is not None
+    ]
+    pnl_total = sum(float(item["pnl_before_cost"]) for item in finalized)
+    outcome_counts = {
+        text: sum(item.get("outcome") == outcome for item in finalized)
+        for text, outcome in SKIP_OUTCOME_LABELS
+    }
+    details = "・".join(
+        f"{text}{number}件" for text, number in outcome_counts.items() if number
+    )
+    unverified = max(0, count - len(finalized))
+    if finalized:
+        if len(finalized) == outcome_counts["損失回避"] and pnl_total < 0:
+            result = f"当日基準: 見送って正解{len(finalized)}件"
+        else:
+            result = "当日基準: " + (details or f"損益集計{len(finalized)}件")
+        result += f"・買っていたら{pnl_total:+,.0f}円（手数料前）"
+    else:
+        result = "当日基準結果なし"
+    return f"{label} {count}件（{result}／照合不能{unverified}件）"
+
+
 def _skip_summary(report: dict) -> str:
     """0件と未記録(古いレポートで項目自体がない)を区別して表示する。"""
     if any(field not in report for field in SKIP_FIELDS.values()):
@@ -133,8 +187,30 @@ def _skip_summary(report: dict) -> str:
     skips = _skip_counts(report)
     if not skips:
         return "見送り 0件"
-    detail = "・".join(f"{key} {value}" for key, value in skips.items())
+    event_groups = _skip_events(report)
+    detail = "・".join(
+        _format_skip_group(label, count, event_groups[label])
+        for label, field in SKIP_FIELDS.items()
+        if (count := len(report.get(field) or []))
+    )
     return f"見送り {sum(skips.values())}件（{detail}）"
+
+
+def _market_status_text(status_counts: dict, report_count: int) -> str:
+    if not status_counts:
+        return "市場状態: 記録なし"
+    parts = [
+        f"{STATUS_LABELS.get(status, status)} {count}日"
+        for status, count in sorted(status_counts.items())
+    ]
+    if (
+        len(status_counts) == 1
+        and "available" in status_counts
+        and status_counts["available"] == report_count
+        and report_count > 0
+    ):
+        return f"市場状態: {report_count}日とも判定あり"
+    return "市場状態: " + "・".join(parts)
 
 
 def _nikkei_text(market: dict) -> str:
@@ -170,17 +246,25 @@ def period_paper_lines(summary: dict, kind: str) -> list[str]:
     lines = [
         f"ペーパートレード: 損益 {daily['total_profit_loss']:+.0f}円 / "
         f"約定 {daily['order_count']}件 / 日次レポート {daily['report_count']}日",
-        f"市場状態: {ops['market_assessment_status_counts']}",
+        _market_status_text(
+            ops["market_assessment_status_counts"], daily["report_count"]
+        ),
         f"エラー・データ抜け: エラー {ops['log_error_count']}件 / "
         f"緊急停止 {ops['emergency_stop_days']}日",
     ]
     skip_totals: dict[str, int] = {}
+    skip_events: dict[str, list[dict]] = {}
     for report in reports:
         for label, count in report.get("skip_counts", {}).items():
             skip_totals[label] = skip_totals.get(label, 0) + count
+        for label, events in report.get("skip_evaluations", {}).items():
+            skip_events.setdefault(label, []).extend(events)
     lines.append(
         "見送り内訳: "
-        + (", ".join(f"{key} {value}件" for key, value in sorted(skip_totals.items())) if skip_totals else "記録なし")
+        + ("、".join(
+            _format_skip_group(label, count, skip_events.get(label, []))
+            for label, count in sorted(skip_totals.items())
+        ) if skip_totals else "記録なし")
     )
 
     if kind == "週次":
@@ -216,6 +300,7 @@ def period_notification_lines(summary: dict, trend: dict | None, kind: str, anal
         *trend_check_lines(trend, include_progression=kind == "週次"),
     ]
     price_band_trend = summary.get("price_band_trend_check")
+    lines.extend(price_band_activity_lines(price_band_trend))
     if kind == "月次":
         lines.extend(price_band_monthly_lines(price_band_trend))
     else:
@@ -242,10 +327,6 @@ def period_notification_lines(summary: dict, trend: dict | None, kind: str, anal
                 ))
         else:
             lines.append("判定できなかった日: なし")
-    if trend_check_has_reference(trend, include_progression=kind == "週次") or price_band_has_reference(
-        price_band_trend
-    ):
-        lines.append(REFERENCE_NOTE)
     lines.extend([
         "C. バックテスト（別枠）",
         backtest_line,
@@ -254,6 +335,12 @@ def period_notification_lines(summary: dict, trend: dict | None, kind: str, anal
     ])
     if analysis:
         lines.extend(["LLM評価（参考）:", analysis])
+    if (
+        trend_check_has_reference(trend, include_progression=kind == "週次")
+        or price_band_has_reference(price_band_trend)
+        or price_band_activity_has_reference(price_band_trend)
+    ):
+        lines.append(REFERENCE_NOTE)
     return lines
 
 
@@ -346,12 +433,17 @@ def daily_notification_lines(
     else:
         lines.extend(trend_check_lines(trend))
     lines.append(price_band_rate_line(price_band_trend))
-    if (cache_update_ok and trend_check_has_reference(trend)) or price_band_has_reference(price_band_trend):
-        lines.append(REFERENCE_NOTE)
+    lines.extend(price_band_activity_lines(price_band_trend))
     lines.append("D. 次回確認")
     lines.extend(
         next_check_lines(trend, price_band_trend, cache_update_ok=cache_update_ok, check_ok=check_ok)
     )
     if analysis:
         lines.extend(["LLM日次評価（参考）:", analysis])
+    if (
+        (cache_update_ok and trend_check_has_reference(trend))
+        or price_band_has_reference(price_band_trend)
+        or price_band_activity_has_reference(price_band_trend)
+    ):
+        lines.append(REFERENCE_NOTE)
     return lines

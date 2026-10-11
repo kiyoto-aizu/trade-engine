@@ -28,6 +28,15 @@ def _band(price_band, **overrides):
         "buyable_count": 0,
         "buyable_rate": None,
         "estimate": None,
+        "activity": {
+            "signal_count": 0,
+            "skip_count": 0,
+            "skip_reason_counts": {},
+            "candidate_count": 0,
+            "valid_days": 0,
+            "missing_days": 0,
+            "missing_reasons": {},
+        },
     }
     item.update(overrides)
     return item
@@ -39,9 +48,29 @@ def _price_band_trend():
             "270": _band(
                 270, selected_count=12, judged_count=12, rate_denominator=12,
                 trend_count=5, trend_rate=5 / 12, reference=True,
+                activity={
+                    "signal_count": 3, "skip_count": 2,
+                    "skip_reason_counts": {"FILTER_TURNOVER_MISSING": 2},
+                    "candidate_count": 12, "valid_days": 1,
+                    "missing_days": 0, "missing_reasons": {},
+                },
             ),
-            "450": _band(450, missing_days=1, missing_reasons={"FILTER_TIME_LIMIT": 1}),
-            "900": _band(900, missing_days=1, missing_reasons={"FILTER_TIME_LIMIT": 1}),
+            "450": _band(
+                450, missing_days=1, missing_reasons={"FILTER_TIME_LIMIT": 1},
+                activity={
+                    "signal_count": 0, "skip_count": 0, "skip_reason_counts": {},
+                    "candidate_count": 0, "valid_days": 0, "missing_days": 1,
+                    "missing_reasons": {"FILTER_TIME_LIMIT": 1},
+                },
+            ),
+            "900": _band(
+                900, missing_days=1, missing_reasons={"FILTER_TIME_LIMIT": 1},
+                activity={
+                    "signal_count": 0, "skip_count": 0, "skip_reason_counts": {},
+                    "candidate_count": 0, "valid_days": 0, "missing_days": 1,
+                    "missing_reasons": {"FILTER_TIME_LIMIT": 1},
+                },
+            ),
         }
     }
 
@@ -117,12 +146,15 @@ def test_daily_notification_sample_for_2026_10_07():
         "選定銘柄: 6/10件 (60.0%) (判定不能 0件)",
         "候補全体: 40/100件 (40.0%) (判定不能 0件)",
         "価格帯別（選定10銘柄）: 270円 5/12件 (41.7%) / 450円 欠測(フィルタ時間切れ) / 900円 欠測(フィルタ時間切れ)",
-        "※参考値: 10件未満、または総数30件未満の帯の割合は参考値です。",
+        "270円: シグナル3・見送り2・売買代金データなし×2 / 有効1日",
+        "450円: 欠測(フィルタ時間切れ1日) / 有効0日",
+        "900円: 欠測(フィルタ時間切れ1日) / 有効0日",
         "D. 次回確認",
         "450円帯の欠測: フィルタ時間切れ",
         "900円帯の欠測: フィルタ時間切れ",
         "LLM日次評価（参考）:",
         "所見: 売買なしの日。欠測帯の原因確認が優先。",
+        "※参考値: 標本数10件未満、または対象総数30件未満の価格帯別集計は参考値です。",
     ])
 
 
@@ -134,6 +166,7 @@ def test_daily_next_check_is_none_when_nothing_to_check():
 
     assert lines[lines.index("D. 次回確認") + 1:] == ["なし"]
     assert "参考値" not in "\n".join(lines)
+    assert any(line.startswith("270円: 欠測(") for line in lines)
 
 
 def test_daily_skip_summary_distinguishes_zero_from_unrecorded():
@@ -148,7 +181,34 @@ def test_daily_skip_summary_distinguishes_zero_from_unrecorded():
 
     assert "見送り 0件 / エラー 0件" in zero
     assert "見送り 未記録 / エラー 0件" in unrecorded
-    assert "見送り 3件（ATR危険度見送り 2・市場危険度見送り 1） / エラー 0件" in with_skips
+    assert (
+        "見送り 3件（ATR危険度 2件（当日基準結果なし／照合不能2件）・"
+        "市場危険度 1件（当日基準結果なし／照合不能1件）） / エラー 0件"
+    ) in with_skips
+
+
+def test_daily_skip_summary_shows_finalized_same_day_outcome():
+    report = _report_1007(
+        market_regime_caution_rsi_filters=[
+            {
+                "evaluations": {
+                    "same_day": {
+                        "finalized": True,
+                        "outcome": "損失回避の可能性",
+                        "hypothetical_pnl_before_cost": -5600,
+                    }
+                }
+            }
+        ]
+    )
+
+    lines = daily_notification_lines(report, None, cache_update_ok=True, analysis=None)
+
+    assert (
+        "見送り 1件（注意レジームRSI 1件（当日基準: 見送って正解1件・"
+        "買っていたら-5,600円（手数料前）"
+        "／照合不能0件）） / エラー 0件"
+    ) in lines
 
 
 def test_daily_conclusion_with_trades_shows_profit_and_count():
@@ -198,10 +258,61 @@ def test_period_notification_uses_same_rules_as_daily():
     assert sum(line.startswith("※参考値") for line in lines) == 1
     assert "参考値" not in "".join(line for line in lines if not line.startswith("※参考値"))
     assert lines.index("C. バックテスト（別枠）") < lines.index("D. 次回確認")
-    assert lines[lines.index("D. 次回確認") + 1:] == [
+    assert lines[lines.index("D. 次回確認") + 1:-1] == [
         "450円帯の欠測: フィルタ時間切れ",
         "900円帯の欠測: フィルタ時間切れ",
     ]
+    assert lines[-1].startswith("※参考値:")
+
+
+def test_period_status_and_skip_summary_are_human_readable():
+    summary = _period_summary()
+    summary["daily"]["operational_summary"]["market_assessment_status_counts"] = {"available": 5}
+    summary["daily"]["reports"] = [
+        {
+            "date": "2026-10-05",
+            "total_profit_loss": 0,
+            "skip_counts": {"注意レジームRSI": 1},
+            "skip_evaluations": {
+                "注意レジームRSI": [
+                    {
+                        "outcome": "損失回避の可能性",
+                        "pnl_before_cost": -5600,
+                        "finalized": True,
+                    }
+                ]
+            },
+        }
+    ]
+
+    lines = period_notification_lines(summary, _trend(), "週次", None)
+
+    assert "市場状態: 5日とも判定あり" in lines
+    assert (
+        "見送り内訳: 注意レジームRSI 1件（当日基準: 見送って正解1件・"
+        "買っていたら-5,600円（手数料前）"
+        "／照合不能0件）"
+    ) in lines
+
+
+def test_period_review_prompt_uses_only_same_day_results_and_avoids_repeated_numbers():
+    from src.infrastructure.analysis.daily_analyzer import _build_period_review_prompt
+
+    prompt = _build_period_review_prompt("週次", {
+        "filter_decision_events": {
+            "count": 3,
+            "by_event_type": {"MULTI_DAY_ONLY": {"count": 3}},
+            "basis": "複数営業日基準",
+            "same_day": {"basis": "当日基準", "count": 1},
+        },
+        "backtest": {"exact_period_run_available": False, "runs": [{"total_pnl": 12345}]},
+    })
+
+    assert "MULTI_DAY_ONLY" not in prompt
+    assert '"count": 3' not in prompt
+    assert "12345" not in prompt
+    assert "比較対象なし" in prompt
+    assert "通知本文に表示済みの数値を再掲せず" in prompt
 
 
 def test_monthly_next_check_is_none_without_problems():
@@ -246,4 +357,3 @@ def test_resolve_no_trade_reason_uses_report_or_filtering_result(monkeypatch):
     assert run_daily_analysis.resolve_no_trade_reason(None, paths, date(2026, 10, 7))["reason"] == "候補なし"
     monkeypatch.setattr(run_daily_analysis, "load_selected_symbols", lambda *_: ["7203"])
     assert run_daily_analysis.resolve_no_trade_reason(None, paths, date(2026, 10, 7))["reason"] == "その他"
-

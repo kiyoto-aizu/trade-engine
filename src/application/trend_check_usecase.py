@@ -51,6 +51,7 @@ class TrendCheckPaths:
     daily_report_dir: Path
     order_history_file: Path
     decision_database: Path
+    midday_filtering_dir: Path | None = None
 
     @classmethod
     def default(cls) -> "TrendCheckPaths":
@@ -65,6 +66,7 @@ class TrendCheckPaths:
             daily_report_dir=Path(config.DAILY_REPORT_DIRECTORY),
             order_history_file=PROJECT_ROOT / "data" / "trading" / "order_history.json",
             decision_database=Path(config.FILTER_DECISION_DATABASE_FILE),
+            midday_filtering_dir=Path(config.MIDDAY_FILTERING_RESULT_ROOT),
         )
 
 

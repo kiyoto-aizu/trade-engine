@@ -398,6 +398,218 @@ def _status_files(paths: TrendCheckPaths, price_band: int, start: str, end: str)
     return statuses
 
 
+_FILTER_REASON_LABELS = {
+    "FILTER_TURNOVER_MISSING": "売買代金データなし",
+    "FILTER_CURRENT_PRICE_MISSING": "現在値データなし",
+    "FILTER_BOARD_FETCH_FAILED": "板取得失敗",
+    "FILTER_BOARD_MISSING": "板情報なし",
+    "FILTER_PRICE_MISSING": "価格データなし",
+    "FILTER_AVERAGE_TURNOVER_MISSING": "20日平均なし",
+    "FILTER_NO_HISTORICAL_DATA": "過去データなし",
+    "FILTER_NO_TRADES": "売買なし",
+    "MIDDAY_FETCH_FAILED": "分足取得失敗",
+    "MIDDAY_NO_BARS": "当日分足なし",
+    "MIDDAY_ZERO_VOLUME": "ゼロ出来高",
+    "FILTER_TIME_LIMIT": "時間切れ",
+    "FILTER_AVERAGE_MISSING": "20日平均なし",
+    "FILTER_AVERAGE_NON_POSITIVE": "20日平均が0以下",
+    "PREVIOUS_SCREENING_NOT_AVAILABLE": "前日スクリーニングなし",
+    "FILTERING_RESULT_NOT_SAVED": "フィルタ診断未保存",
+    "FILTER_DIAGNOSTIC_INCOMPLETE": "フィルタ評価未完了",
+    "FILTER_DIAGNOSTIC_NOT_SAVED": "診断未保存",
+    "UNSPECIFIED": "理由記録なし",
+}
+
+
+def _activity_diagnostic_paths(
+    paths: TrendCheckPaths, price_band: int, trade_date: str
+) -> list[Path]:
+    if price_band == 270:
+        return sorted(paths.diagnostics_dir.glob(f"{trade_date}_*.json"))
+    midday_dir = paths.midday_filtering_dir
+    if midday_dir is not None:
+        midday = sorted(
+            (midday_dir / str(price_band) / "diagnostics").glob(
+                f"{trade_date}_*.json"
+            )
+        )
+        if midday:
+            return midday
+        if (midday_dir / str(price_band) / f"{trade_date}.json").is_file():
+            return []
+    return sorted(
+        _filtering_paths(paths, price_band).diagnostics_dir.glob(
+            f"{trade_date}_*.json"
+        )
+    )
+
+
+def _activity_missing_reason(
+    paths: TrendCheckPaths, price_band: int, trade_date: str
+) -> str:
+    status = _status_files(
+        paths, price_band, trade_date, trade_date
+    ).get(trade_date)
+    if status and status.get("reason"):
+        return str(status["reason"])
+    diagnostics = _activity_diagnostic_paths(paths, price_band, trade_date)
+    if diagnostics:
+        diagnostic = _read_json(diagnostics[-1]) or {}
+        summary = diagnostic.get("summary") or {}
+        if summary.get("stop_reason") == "FILTER_TIME_LIMIT":
+            return "FILTER_TIME_LIMIT"
+        return "FILTER_DIAGNOSTIC_INCOMPLETE"
+    return "FILTERING_RESULT_NOT_SAVED"
+
+
+def _activity_result_path(
+    paths: TrendCheckPaths, price_band: int, trade_date: str
+) -> Path | None:
+    directories = []
+    if price_band != 270 and paths.midday_filtering_dir is not None:
+        directories.append(paths.midday_filtering_dir / str(price_band))
+    directories.append(_filtering_paths(paths, price_band).filtering_dir)
+    return next(
+        (
+            directory / f"{trade_date}.json"
+            for directory in directories
+            if (directory / f"{trade_date}.json").is_file()
+        ),
+        None,
+    )
+
+
+def _activity_dates(paths: TrendCheckPaths, start: str, end: str) -> set[str]:
+    dates = {
+        path.stem
+        for path in paths.daily_report_dir.glob("????-??-??.json")
+        if start <= path.stem <= end
+    }
+    for price_band in PRICE_BANDS:
+        dates.update(
+            day for day in _status_files(paths, price_band, start, end)
+        )
+        diagnostic_dirs = [_filtering_paths(paths, price_band).diagnostics_dir]
+        result_dirs = [_filtering_paths(paths, price_band).filtering_dir]
+        if price_band != 270 and paths.midday_filtering_dir is not None:
+            diagnostic_dirs.append(
+                paths.midday_filtering_dir / str(price_band) / "diagnostics"
+            )
+            result_dirs.append(paths.midday_filtering_dir / str(price_band))
+        for directory in diagnostic_dirs:
+            dates.update(
+                path.name[:10]
+                for path in directory.glob("????-??-??_*.json")
+                if start <= path.name[:10] <= end
+            )
+        for directory in result_dirs:
+            dates.update(
+                path.stem
+                for path in directory.glob("????-??-??.json")
+                if start <= path.stem <= end
+            )
+    return dates
+
+
+def _price_band_activity(
+    paths: TrendCheckPaths, price_band: int, dates: set[str]
+) -> dict:
+    signal_count = 0
+    signal_days = 0
+    skip_count = 0
+    candidate_count = 0
+    valid_days = 0
+    missing_reasons: Counter[str] = Counter()
+    skip_reasons: Counter[str] = Counter()
+
+    for trade_date in sorted(dates):
+        diagnostic_paths = _activity_diagnostic_paths(paths, price_band, trade_date)
+        diagnostic = (
+            _read_json(diagnostic_paths[-1]) if diagnostic_paths else None
+        )
+        if diagnostic is None:
+            result_path = _activity_result_path(paths, price_band, trade_date)
+            if result_path is not None:
+                result = _read_json(result_path) or {}
+                symbols = result.get("symbols")
+                if isinstance(symbols, list):
+                    signal_count += len(symbols)
+                    signal_days += 1
+                    missing_reasons["FILTER_DIAGNOSTIC_NOT_SAVED"] += 1
+                    continue
+            missing_reasons[
+                _activity_missing_reason(paths, price_band, trade_date)
+            ] += 1
+            continue
+
+        summary = diagnostic.get("summary") or {}
+        candidates = diagnostic.get("candidates")
+        input_count = summary.get("input_count")
+        evaluated_count = summary.get("evaluated_count")
+        skipped_count = summary.get("skipped_count")
+        status = _status_files(
+            paths, price_band, trade_date, trade_date
+        ).get(trade_date)
+        if (
+            input_count == 0
+            and status
+            and status.get("reason") == "PREVIOUS_SCREENING_NOT_AVAILABLE"
+        ):
+            missing_reasons["PREVIOUS_SCREENING_NOT_AVAILABLE"] += 1
+            continue
+        counts_complete = (
+            evaluated_count + skipped_count == input_count
+            if isinstance(evaluated_count, int)
+            and isinstance(skipped_count, int)
+            and isinstance(input_count, int)
+            else evaluated_count == input_count
+        )
+        if input_count == 0 and _activity_result_path(
+            paths, price_band, trade_date
+        ) is None:
+            missing_reasons[
+                _activity_missing_reason(paths, price_band, trade_date)
+            ] += 1
+            continue
+        if (
+            summary.get("stop_reason")
+            or not isinstance(candidates, list)
+            or (input_count is not None and not counts_complete)
+            or (input_count is not None and len(candidates) < input_count)
+        ):
+            reason = (
+                "FILTER_TIME_LIMIT"
+                if summary.get("stop_reason") == "FILTER_TIME_LIMIT"
+                else "FILTER_DIAGNOSTIC_INCOMPLETE"
+            )
+            missing_reasons[reason] += 1
+            continue
+
+        if not all(isinstance(candidate, dict) for candidate in candidates):
+            missing_reasons["FILTER_DIAGNOSTIC_INCOMPLETE"] += 1
+            continue
+        valid_days += 1
+        signal_days += 1
+        candidate_count += len(candidates)
+        signal_count += sum(candidate.get("selected") is True for candidate in candidates)
+        for candidate in candidates:
+            reason = candidate.get("reason_code")
+            if candidate.get("selected") is not True and reason:
+                skip_reasons[str(reason)] += 1
+                skip_count += 1
+
+    return {
+        "signal_count": signal_count,
+        "signal_days": signal_days,
+        "skip_count": skip_count,
+        "skip_reason_counts": dict(skip_reasons),
+        "candidate_count": candidate_count,
+        "valid_days": valid_days,
+        "missing_days": sum(missing_reasons.values()),
+        "missing_reasons": dict(missing_reasons),
+    }
+
+
 def load_price_band_trends(
     start: date,
     end: date,
@@ -405,6 +617,7 @@ def load_price_band_trends(
 ) -> dict:
     paths = paths or TrendCheckPaths.default()
     start_text, end_text = start.isoformat(), end.isoformat()
+    activity_dates = _activity_dates(paths, start_text, end_text)
     collected: dict[int, dict] = {}
     overall_judged = 0
 
@@ -488,6 +701,7 @@ def load_price_band_trends(
                 1 for row in selected_rows if row["label"] not in JUDGED_LABELS
             ),
             "undecidable_reasons": dict(undecidable_reasons),
+            "activity": _price_band_activity(paths, price_band, activity_dates),
         }
 
     for item in collected.values():
@@ -516,7 +730,90 @@ def _missing_reason_label(reason: str) -> str:
         "FILTERING_RESULT_NOT_SAVED": "フィルタ結果未保存",
         "DAILY_CACHE_UPDATE_FAILED": "日足更新失敗",
         "UNSPECIFIED": "理由記録なし",
-    }.get(reason, reason)
+    }.get(reason, _FILTER_REASON_LABELS.get(reason, reason))
+
+
+def price_band_activity_lines(result: dict | None) -> list[str]:
+    """通知用に価格帯別の買いシグナル・明示的なフィルタ見送りを表示する。"""
+    if result is None:
+        return [
+            f"{band}円: 欠測(集計記録なし) / 有効0日"
+            for band in PRICE_BANDS
+        ]
+    lines = []
+    for band in PRICE_BANDS:
+        activity = result["bands"][str(band)].get("activity") or {
+            "signal_count": 0,
+            "skip_count": 0,
+            "skip_reason_counts": {},
+            "candidate_count": 0,
+            "valid_days": 0,
+            "missing_days": 0,
+            "missing_reasons": {},
+        }
+        if not activity["valid_days"]:
+            reasons = activity["missing_reasons"] or {
+                "FILTERING_RESULT_NOT_SAVED": 1
+            }
+            missing = "・".join(
+                f"{_missing_reason_label(reason)}{count}日"
+                for reason, count in sorted(reasons.items())
+            )
+            signal = (
+                f"シグナル{activity['signal_count']}({activity.get('signal_days', 0)}日記録)・"
+                "見送り未照合 / "
+                if activity.get("signal_days", 0)
+                else ""
+            )
+            lines.append(f"{band}円: {signal}欠測({missing}) / 有効0日")
+            continue
+
+        signal_suffix = (
+            f"({activity['signal_days']}日記録)"
+            if activity.get("signal_days", activity["valid_days"])
+            > activity["valid_days"]
+            else ""
+        )
+        skip_suffix = (
+            f"(診断完備{activity['valid_days']}日分)"
+            if signal_suffix
+            else ""
+        )
+        skip_reasons = activity["skip_reason_counts"]
+        skip_detail = (
+            "・" + "、".join(
+                f"{_missing_reason_label(reason)}×{count}"
+                for reason, count in sorted(skip_reasons.items())
+            )
+            if skip_reasons
+            else ""
+        )
+        line = (
+            f"{band}円: シグナル{activity['signal_count']}{signal_suffix}・"
+            f"見送り{activity['skip_count']}{skip_suffix}{skip_detail} / "
+            f"有効{activity['valid_days']}日"
+        )
+        if activity["missing_days"]:
+            reasons = "・".join(
+                _missing_reason_label(reason)
+                for reason in sorted(activity["missing_reasons"])
+            )
+            line += f"・欠測{activity['missing_days']}日({reasons})"
+        lines.append(line)
+    return lines
+
+
+def price_band_activity_has_reference(result: dict | None) -> bool:
+    if result is None:
+        return False
+    return any(
+        (activity := item.get("activity") or {}).get("valid_days", 0)
+        and (
+            activity["valid_days"] < 10
+            or activity.get("candidate_count", 0) < 30
+        )
+        for item in result.get("bands", {}).values()
+    )
 
 
 def _missing_text(item: dict, *, include_counts: bool) -> str:

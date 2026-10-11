@@ -65,6 +65,7 @@ def paths(tmp_path):
         daily_report_dir=base / "daily_reports",
         order_history_file=base / "order_history.json",
         decision_database=base / "decision.sqlite3",
+        midday_filtering_dir=base / "filtering_midday",
     )
     result.filtering_dir.mkdir()
     result.screening_dir.mkdir()

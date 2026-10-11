@@ -83,6 +83,8 @@ flowchart TD
 | トレンドの集計版 | 対象期間に行がある版から最新登録版を優先し、同じ版の行だけ集計 |
 | 週次の追加表示 | 曜日別損益・市場状態推移・保存済み日次判定の週内推移 |
 | 月次の追加表示 | 判定不能日・判定不能の理由別件数 |
+| 市場状態・見送り表示 | 日次・週次・月次で状態件数を自然文にし、見送りの答え合わせは確定済み当日基準の手数料前損益のみ表示 |
+| 期間LLMレビュー | 通知本文にある数値を再掲せず所見を示す。複数営業日基準は入力・表示せず、対象期間一致のバックテストがなければ「比較対象なし」とする |
 | 価格帯別トレンド | 週次・月次の表示内容と判定は[03b](./03b-price-band-trend-check.md)に記載 |
 
 ## 6. レイヤー別の構成
@@ -102,6 +104,7 @@ flowchart TD
 | `src/infrastructure/persistence/storage.py` | infrastructure | 期間分析結果JSONの書込 |
 | `src/infrastructure/notification/slack_notify.py` | infrastructure | `analysis`チャンネルへの通知 |
 | `src/config/task_schedule.py`、`src/config/config.py` | config | 定期予定、DB・レポートパス、LLM等の設定 |
+| `scripts/analysis/analyze_caution_regime_validity.py` | 分析スクリプト | 保存済み日次判定・見送りイベント・分足を読み取り専用で集計し、CAUTIONの妥当性調査を標準出力 |
 
 ## 7. 異常系・失敗時の動き
 

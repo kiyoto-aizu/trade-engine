@@ -15,6 +15,7 @@ def _paths(tmp_path):
         daily_report_dir=tmp_path / "daily_reports",
         order_history_file=tmp_path / "orders.json",
         decision_database=tmp_path / "decisions.sqlite3",
+        midday_filtering_dir=tmp_path / "filtering_midday",
     )
 
 

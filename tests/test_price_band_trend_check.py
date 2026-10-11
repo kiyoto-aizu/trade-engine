@@ -4,6 +4,8 @@ from datetime import date, timedelta
 from src.application.price_band_trend_check import (
     PRICE_BANDS,
     load_price_band_trends,
+    price_band_activity_has_reference,
+    price_band_activity_lines,
     price_band_has_reference,
     price_band_monthly_lines,
     price_band_rate_line,
@@ -26,6 +28,7 @@ def _paths(tmp_path):
         daily_report_dir=data_dir / "reports" / "daily",
         order_history_file=data_dir / "trading" / "order_history.json",
         decision_database=data_dir / "state" / "decisions.sqlite3",
+        midday_filtering_dir=data_dir / "filtering_midday",
     )
 
 
@@ -317,3 +320,235 @@ def test_price_band_cache_symbols_are_deduplicated(tmp_path):
         "BBB",
         "CCC",
     ]
+
+
+def _write_activity_diagnostic(
+    directory,
+    trade_date,
+    candidates,
+    *,
+    stop_reason=None,
+    input_count=None,
+    evaluated_count=None,
+    skipped_count=None,
+):
+    directory.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "input_count": len(candidates) if input_count is None else input_count,
+        "evaluated_count": len(candidates) if evaluated_count is None else evaluated_count,
+        "stop_reason": stop_reason,
+    }
+    if skipped_count is not None:
+        summary["skipped_count"] = skipped_count
+    (directory / f"{trade_date}_090000.json").write_text(
+        json.dumps(
+            {
+                "summary": summary,
+                "candidates": candidates,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_price_band_activity_uses_midday_diagnostics_and_excludes_incomplete_days(tmp_path):
+    paths = _paths(tmp_path)
+    trade_date = "2026-10-07"
+    _write_activity_diagnostic(
+        paths.diagnostics_dir,
+        trade_date,
+        [
+            {"selected": True, "reason_code": None},
+            {"selected": True, "reason_code": None},
+            {"selected": False, "reason_code": "FILTER_TURNOVER_MISSING"},
+            {"selected": False, "reason_code": None},
+        ],
+    )
+    band_450_diag = (
+        paths.filtering_dir.parent / "filtering_price_bands" / "450" / "diagnostics"
+    )
+    _write_activity_diagnostic(
+        band_450_diag,
+        trade_date,
+        [{"selected": True, "reason_code": None}],
+    )
+    _write_activity_diagnostic(
+        paths.midday_filtering_dir / "450" / "diagnostics",
+        trade_date,
+        [
+            {"selected": True, "reason_code": None},
+            {"selected": True, "reason_code": None},
+            {"selected": True, "reason_code": None},
+            {"selected": False, "reason_code": "FILTER_BOARD_MISSING"},
+            {"selected": False, "reason_code": "MIDDAY_ZERO_VOLUME"},
+        ],
+    )
+    _write_activity_diagnostic(
+        paths.midday_filtering_dir / "900" / "diagnostics",
+        trade_date,
+        [{"selected": True, "reason_code": None}] * 2,
+        stop_reason="FILTER_TIME_LIMIT",
+    )
+
+    result = load_price_band_trends(
+        date.fromisoformat(trade_date),
+        date.fromisoformat(trade_date),
+        paths,
+    )
+
+    assert result["bands"]["270"]["activity"] == {
+        "signal_count": 2,
+        "signal_days": 1,
+        "skip_count": 1,
+        "skip_reason_counts": {"FILTER_TURNOVER_MISSING": 1},
+        "candidate_count": 4,
+        "valid_days": 1,
+        "missing_days": 0,
+        "missing_reasons": {},
+    }
+    assert result["bands"]["450"]["activity"]["signal_count"] == 3
+    assert result["bands"]["450"]["activity"]["skip_count"] == 2
+    assert result["bands"]["900"]["activity"]["valid_days"] == 0
+    assert result["bands"]["900"]["activity"]["missing_reasons"] == {
+        "FILTER_TIME_LIMIT": 1
+    }
+    assert price_band_activity_lines(result) == [
+        "270円: シグナル2・見送り1・売買代金データなし×1 / 有効1日",
+        "450円: シグナル3・見送り2・板情報なし×1、ゼロ出来高×1 / 有効1日",
+        "900円: 欠測(フィルタ時間切れ1日) / 有効0日",
+    ]
+    assert price_band_activity_has_reference(result)
+
+
+def test_saved_selection_without_diagnostic_keeps_known_signals_but_marks_day_missing(tmp_path):
+    paths = _paths(tmp_path)
+    trade_date = "2026-10-08"
+    _write_selection(paths, 270, trade_date, ["AAA", "BBB"])
+
+    result = load_price_band_trends(
+        date.fromisoformat(trade_date),
+        date.fromisoformat(trade_date),
+        paths,
+    )
+    activity = result["bands"]["270"]["activity"]
+
+    assert activity["signal_count"] == 2
+    assert activity["signal_days"] == 1
+    assert activity["skip_count"] == 0
+    assert activity["valid_days"] == 0
+    assert activity["missing_reasons"] == {"FILTER_DIAGNOSTIC_NOT_SAVED": 1}
+    assert price_band_activity_lines(result)[0] == (
+        "270円: シグナル2(1日記録)・見送り未照合 / "
+        "欠測(診断未保存1日) / 有効0日"
+    )
+
+
+def test_midday_result_without_midday_diagnostic_does_not_fall_back_to_morning(tmp_path):
+    paths = _paths(tmp_path)
+    trade_date = "2026-10-08"
+    morning_diagnostics = (
+        paths.filtering_dir.parent / "filtering_price_bands" / "450" / "diagnostics"
+    )
+    _write_activity_diagnostic(
+        morning_diagnostics,
+        trade_date,
+        [{"selected": False, "reason_code": "FILTER_TURNOVER_MISSING"}],
+    )
+    midday_result_dir = paths.midday_filtering_dir / "450"
+    midday_result_dir.mkdir(parents=True)
+    (midday_result_dir / f"{trade_date}.json").write_text(
+        json.dumps({"date": trade_date, "symbols": ["AAA", "BBB", "CCC"]}),
+        encoding="utf-8",
+    )
+
+    result = load_price_band_trends(
+        date.fromisoformat(trade_date),
+        date.fromisoformat(trade_date),
+        paths,
+    )
+
+    activity = result["bands"]["450"]["activity"]
+    assert activity["signal_count"] == 3
+    assert activity["skip_count"] == 0
+    assert activity["valid_days"] == 0
+    assert activity["missing_reasons"] == {"FILTER_DIAGNOSTIC_NOT_SAVED": 1}
+
+
+def test_skipped_candidates_complete_the_day_evaluation_count(tmp_path):
+    paths = _paths(tmp_path)
+    trade_date = "2026-10-09"
+    candidates = (
+        [{"selected": True, "reason_code": None} for _ in range(10)]
+        + [{"selected": False, "reason_code": "FILTER_TURNOVER_MISSING"} for _ in range(5)]
+        + [{"selected": False, "reason_code": None} for _ in range(35)]
+    )
+    _write_activity_diagnostic(
+        paths.diagnostics_dir,
+        trade_date,
+        candidates,
+        input_count=50,
+        evaluated_count=45,
+        skipped_count=5,
+    )
+
+    result = load_price_band_trends(
+        date.fromisoformat(trade_date),
+        date.fromisoformat(trade_date),
+        paths,
+    )
+    activity = result["bands"]["270"]["activity"]
+
+    assert activity["signal_count"] == 10
+    assert activity["skip_count"] == 5
+    assert activity["valid_days"] == 1
+    assert activity["missing_days"] == 0
+
+
+def test_zero_input_without_previous_screening_is_not_a_valid_zero_count_day(tmp_path):
+    paths = _paths(tmp_path)
+    trade_date = "2026-10-05"
+    result_dir = paths.filtering_dir.parent / "filtering_price_bands" / "450"
+    result_dir.mkdir(parents=True)
+    (result_dir / f"{trade_date}.json").write_text(
+        json.dumps({"date": trade_date, "symbols": []}), encoding="utf-8"
+    )
+    _write_activity_diagnostic(
+        result_dir / "diagnostics",
+        trade_date,
+        [],
+        input_count=0,
+        evaluated_count=0,
+        skipped_count=0,
+    )
+    status_dir = (
+        paths.daily_cache_dir.parent.parent
+        / "analysis"
+        / "price_band_trend_check"
+        / "status"
+        / "450"
+    )
+    status_dir.mkdir(parents=True)
+    (status_dir / f"{trade_date}.json").write_text(
+        json.dumps(
+            {
+                "trade_date": trade_date,
+                "price_band": 450,
+                "state": "selection_missing",
+                "reason": "PREVIOUS_SCREENING_NOT_AVAILABLE",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = load_price_band_trends(
+        date.fromisoformat(trade_date),
+        date.fromisoformat(trade_date),
+        paths,
+    )
+    activity = result["bands"]["450"]["activity"]
+
+    assert activity["valid_days"] == 0
+    assert activity["signal_count"] == 0
+    assert activity["missing_reasons"] == {
+        "PREVIOUS_SCREENING_NOT_AVAILABLE": 1
+    }
