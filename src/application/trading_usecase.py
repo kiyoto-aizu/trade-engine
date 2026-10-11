@@ -534,25 +534,35 @@ class TradingUseCase:
         if missing_holdings:
             if symbol in self._missing_holding_sell_signals:
                 return
-            has_same_day_buy = any(
-                entry.symbol == symbol
-                and entry.side == config.OrderSide.BUY
-                and entry.timestamp[:10] == occurred_at.date().isoformat()
+            same_day_net_buy_quantity = sum(
+                entry.qty
+                if entry.side == config.OrderSide.BUY
+                else -entry.qty
                 for entry in self.order_history
+                if entry.symbol == symbol
+                and entry.timestamp[:10] == occurred_at.date().isoformat()
+                and entry.side in (config.OrderSide.BUY, config.OrderSide.SELL)
             )
-            self._missing_holding_sell_signals[symbol] = has_same_day_buy
+            has_same_day_net_position = same_day_net_buy_quantity > 0
+            if has_same_day_net_position:
+                warning_detail = (
+                    f" | 当日純買付数量={same_day_net_buy_quantity}株"
+                )
+            else:
+                warning_detail = ""
+            self._missing_holding_sell_signals[symbol] = has_same_day_net_position
             logger.log(
-                logging.WARNING if has_same_day_buy else logging.INFO,
+                logging.WARNING if has_same_day_net_position else logging.INFO,
                 "売り条件該当・未保有: 銘柄=%s | 状態=開始%s",
                 symbol,
-                " | 当日買い注文履歴あり" if has_same_day_buy else "",
+                warning_detail,
             )
             self._journal_decision(
                 symbol,
                 "SELL_SIGNAL_WITHOUT_HOLDINGS",
                 occurred_at,
                 state="started",
-                same_day_buy_order=has_same_day_buy,
+                same_day_net_buy_quantity=same_day_net_buy_quantity,
             )
             return
 
