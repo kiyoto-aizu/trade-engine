@@ -84,6 +84,7 @@ class TradingUseCase:
         kill_switch_baseline_path: Optional[Path] = None,
         decision_journal_repository=None,
         enable_shadow_position_tracking: bool = False,
+        market_regime_daily_repository=None,
     ):
         """
         TradingUseCaseを初期化します。
@@ -127,6 +128,7 @@ class TradingUseCase:
         self._shadow_pending_symbols: set[str] = set()
         self._account_snapshot: dict = {}
         self.market_regime_usecase = market_regime_usecase
+        self.market_regime_daily_repository = market_regime_daily_repository
         self.market_regime = MarketRegime.NORMAL
         self.market_regime_assessment = None
         self.last_positions = []
@@ -1078,7 +1080,31 @@ class TradingUseCase:
         if self.market_regime_usecase is not None and self.market_regime_assessment is None:
             self.market_regime_assessment = self.market_regime_usecase.execute()
             self.market_regime = self.market_regime_assessment.regime
+            self._record_market_regime_daily_safely()
         return self.market_regime_assessment
+
+    def _record_market_regime_daily_safely(self) -> None:
+        """検証用に判定結果を日次で保存します。失敗しても売買は止めません。"""
+        repository = self.market_regime_daily_repository
+        if repository is None or self.market_regime_assessment is None:
+            return
+        try:
+            regime_usecase = self.market_regime_usecase
+            thresholds = getattr(regime_usecase, "thresholds", None)
+            threshold_values = dict(vars(thresholds)) if thresholds is not None else {}
+            threshold_values.update({
+                "adx_trend_threshold": getattr(regime_usecase, "adx_threshold", None),
+                "realized_volatility_window": getattr(regime_usecase, "realized_volatility_window", None),
+                "data_range": getattr(regime_usecase, "data_range", None),
+            })
+            repository.save(
+                self.market_regime_assessment,
+                self._now_provider(),
+                self._execution_mode,
+                threshold_values,
+            )
+        except Exception:
+            logger.exception("市場レジームの日次記録に失敗しました")
 
     def market_conditions_summary(self) -> str:
         """通知向けに市場状況を短く整形します。"""

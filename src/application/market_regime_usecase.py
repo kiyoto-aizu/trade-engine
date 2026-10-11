@@ -88,6 +88,11 @@ class MarketRegimeUseCase:
                 data_available=True,
                 adx=adx,
                 trend_relief_applied=relief_applied,
+                regime_before_relief=regime,
+                nikkei_last_bar_date=nikkei_bars[-1].date,
+                nikkei_last_close=float(nikkei_bars[-1].close),
+                vix_last_bar_date=vix_bars[-1].date,
+                vix_last_close=float(vix_bars[-1].close),
             )
         except Exception as exc:
             logger.exception("MarketRegime判定用データの取得または計算に失敗しました")

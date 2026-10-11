@@ -38,6 +38,7 @@
 | 日足・板・口座情報 | 入力 | Yahoo Finance、kabu STATION API | 場中判定・発注可否 |
 | 注文履歴・口座状態 | 入出力 | `data/trading/` | JSON、非常停止フラグ |
 | 判定イベント | 出力 | `data/state/filter_decision_events.sqlite3` | 銘柄・日付・理由等 |
+| 市場レジームの日次記録 | 出力 | `data/state/market_regime_daily.sqlite3` | 検証用。1取引日・1実行モードにつき1行 |
 | 日次レポート | 出力 | `data/reports/daily/` | JSON |
 | Slack通知 | 出力 | `daily`、`critical` | 取引開始・中間報告・注文・終了・異常 |
 
@@ -181,6 +182,19 @@ flowchart TD
 3. 15:30以降の終了・遅延決済経路: 当日イベントを含めて確定。
 
 決済時刻は持ち越し許可時は15:30、それ以外は15:20。基準価格・高安・最終観測時刻・観測回数・価格変化・仮想損益・結果・確定時刻と`same_day_data_quality`を記録する。品質ラベルは、問題なし`OK`、日足のみ再生`DAILY_REPLAY_NO_INTRADAY`、終値観測の遅れ`STALE_LAST_OBSERVATION(nmin)`、観測回数不足`FEW_OBSERVATIONS(count/expected)`等。板取得不能フラグも同欄に保持する。
+
+### 市場レジームの日次記録
+
+`TradingUseCase.prepare_market_regime()`が判定した直後に、`MarketRegimeDailyRepository`が`market_regime_daily`表へ1行保存する(CAUTION判定の検証用。売買判断・閾値・レジーム計算には使わない)。主キーは`(trade_date, execution_mode)`で、同じ日・同じモードの再実行は上書きする。リポジトリは`run_trading.py`だけが注入し、バックテスト・再生では記録しない。保存失敗はログのみで取引を止めない。
+
+| 列 | 内容 |
+|---|---|
+| `trade_date` / `execution_mode` / `decided_at` | 取引日、`paper`または`live`、判定時刻 |
+| `final_regime` / `regime_before_relief` / `trend_relief_applied` | 最終レジーム、ADX緩和前のレジーム、緩和適用の有無 |
+| `realized_volatility_percent` / `vix` / `nikkei_change_percent` / `adx` | 判定に使った値(前日比は確定日足ベース) |
+| `nikkei_last_bar_date` / `nikkei_last_close` / `vix_last_bar_date` / `vix_last_close` | 判定に使った日経225・VIXの最新日足の日付と終値 |
+| `data_available` / `failure_reason` | データ取得・計算の可否と失敗理由 |
+| `thresholds_json` | 使用した閾値(実現ボラ・VIX・日経格上げ・ADX緩和、実現ボラ窓、取得期間) |
 
 ### 主要データモデルとAPI応答
 

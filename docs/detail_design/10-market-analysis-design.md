@@ -65,7 +65,7 @@ flowchart TD
     Danger --> Print
 ```
 
-取引起動時の`run_trading.py`は`TradingUseCase.prepare_market_regime()`からMarketRegime評価を取得し、結果を同一実行中で再利用します。バックテストは`--compare-market-regime`を指定した`--live`の日付付き実行で指数履歴から日別レジーム系列を作り、比較結果に含めます。詳細は[03](./03-trading-loop-design.md)・[05](./05-backtest-design.md)を参照してください。
+取引起動時の`run_trading.py`は`TradingUseCase.prepare_market_regime()`からMarketRegime評価を取得し、結果を同一実行中で再利用します。評価結果(緩和前レジーム・使用した日足の日付と終値・閾値を含む)は検証用に`data/state/market_regime_daily.sqlite3`へ日次で1行保存します(詳細は[03](./03-trading-loop-design.md))。バックテストは`--compare-market-regime`を指定した`--live`の日付付き実行で指数履歴から日別レジーム系列を作り、比較結果に含めます。詳細は[03](./03-trading-loop-design.md)・[05](./05-backtest-design.md)を参照してください。
 
 ## 5. 判断ルール・仕様
 
@@ -150,6 +150,7 @@ MarketRegimeは市場データを使えない場合にも評価オブジェク�
 |---|---|---|
 | 2026-10-08 | 個別の分析レポート生成とMarketRegime判定を別機能として記述 | 実際のCLI、保存先、取引・バックテストの呼出経路が別であるため |
 | 2026-10-08 | MarketRegimeの取得・計算失敗はDANGERとして扱う | `MarketRegimeUseCase._unavailable()`の実装に一致させるため |
+| 2026-10-11 | 判定時の入力値を日次で保存(`market_regime_daily.sqlite3`)。判定ロジックは変更しない | 朝一固定判定の影響を検証するため(`analyze_caution_regime_validity.py`の(c)) |
 
 ## 10. 未決・既知の課題
 

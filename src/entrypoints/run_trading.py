@@ -21,6 +21,7 @@ from src.infrastructure.persistence.filtering_result_repository import Filtering
 from src.infrastructure.persistence.filtering_diagnostics_repository import FilteringDiagnosticsRepository
 from src.infrastructure.persistence.filter_decision_repository import FilterDecisionRepository
 from src.infrastructure.persistence.decision_journal_repository import DecisionJournalRepository
+from src.infrastructure.persistence.market_regime_daily_repository import MarketRegimeDailyRepository
 from src.infrastructure.execution_lock import market_workflow_lock
 from src.infrastructure.notification.slack_notify import notify_critical, notify_daily, process_notification
 from src.infrastructure.paper.paper_order_client import PaperOrderClient
@@ -35,6 +36,15 @@ def _create_decision_journal_repository():
         )
     except Exception:
         logging.getLogger(__name__).exception('判断記録DBの初期化に失敗しました。記録なしで続行します。')
+        return None
+
+
+def _create_market_regime_daily_repository():
+    """市場レジームの日次記録DBを作成する。失敗しても取引は開始する(記録なし)。"""
+    try:
+        return MarketRegimeDailyRepository(config.MARKET_REGIME_DAILY_DATABASE_FILE)
+    except Exception:
+        logging.getLogger(__name__).exception('市場レジーム日次記録DBの初期化に失敗しました。記録なしで続行します。')
         return None
 
 
@@ -96,6 +106,7 @@ def create_trading_use_case(token: str) -> TradingUseCase:
         ),
         decision_journal_repository=_create_decision_journal_repository(),
         enable_shadow_position_tracking=True,
+        market_regime_daily_repository=_create_market_regime_daily_repository(),
         market_regime_usecase=MarketRegimeUseCase(
             market_data_client=YahooIndexClient(),
             thresholds=config.MARKET_REGIME_THRESHOLDS,

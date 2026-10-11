@@ -54,6 +54,12 @@ class MarketRegimeAssessment:
     failure_reason: str | None = None
     adx: float | None = None
     trend_relief_applied: bool = False
+    # 検証用の記録項目。判定には使わない
+    regime_before_relief: MarketRegime | None = None
+    nikkei_last_bar_date: date | None = None
+    nikkei_last_close: float | None = None
+    vix_last_bar_date: date | None = None
+    vix_last_close: float | None = None
 
 
 @dataclass(frozen=True)
