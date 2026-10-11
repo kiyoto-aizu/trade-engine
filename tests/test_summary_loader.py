@@ -36,6 +36,18 @@ def test_load_daily_summaries_keeps_operational_context(tmp_path):
                 "failure_reason": "日足データが空です",
             },
             "log_errors": {"count": 2, "summaries": ["認証エラー"]},
+            "market_regime_caution_rsi_filters": [
+                {
+                    "evaluations": {
+                        "same_day": {
+                            "outcome": "損失回避の可能性",
+                            "hypothetical_pnl_before_cost": -5600,
+                            "finalized": True,
+                        }
+                    }
+                },
+                {"evaluations": {"same_day": {"finalized": False}}},
+            ],
         }),
         encoding="utf-8",
     )
@@ -45,6 +57,15 @@ def test_load_daily_summaries_keeps_operational_context(tmp_path):
     assert summaries[0]["market_assessment_status"] == "unavailable"
     assert summaries[0]["log_error_summaries"] == ["認証エラー"]
     assert summaries[0]["position_count"] == 0
+    assert summaries[0]["skip_counts"] == {"注意レジームRSI": 2}
+    assert summaries[0]["skip_evaluations"]["注意レジームRSI"] == [
+        {
+            "outcome": "損失回避の可能性",
+            "pnl_before_cost": -5600,
+            "finalized": True,
+        },
+        {"outcome": None, "pnl_before_cost": None, "finalized": False},
+    ]
     assert summarize_daily_operations(summaries) == {
         "log_error_days": 1,
         "log_error_count": 2,

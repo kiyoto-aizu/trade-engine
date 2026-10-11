@@ -164,6 +164,21 @@ def load_daily_summaries(report_directory: Path, start: date, end: date) -> list
         error_summaries = log_errors.get("summaries")
         if not isinstance(error_summaries, list):
             error_summaries = []
+        skip_events = {
+            label: [
+                {
+                    "outcome": ((event.get("evaluations") or {}).get("same_day") or {}).get("outcome"),
+                    "pnl_before_cost": ((event.get("evaluations") or {}).get("same_day") or {}).get(
+                        "hypothetical_pnl_before_cost"
+                    ),
+                    "finalized": bool(
+                        ((event.get("evaluations") or {}).get("same_day") or {}).get("finalized")
+                    ),
+                }
+                for event in (data.get(field) or [])
+            ]
+            for label, field in skip_fields.items()
+        }
         summaries.append({
             "date": data.get("date", path.stem),
             "trading_mode": data.get("trading_mode"),
@@ -182,6 +197,7 @@ def load_daily_summaries(report_directory: Path, start: date, end: date) -> list
                 for label, field in skip_fields.items()
                 if data.get(field)
             },
+            "skip_evaluations": skip_events,
         })
     return summaries
 

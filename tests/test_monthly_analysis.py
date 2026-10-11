@@ -62,4 +62,5 @@ def test_monthly_analyzer_uses_period_aware_review_prompt(monkeypatch):
     assert "period.statusがcomplete以外" in prompt
     assert "exact_period_run_available" in prompt
     assert "comparison.availableがtrue" in prompt
-    assert "filter_decision_events.countが1件以上" in prompt
+    assert "same_dayの当日基準だけ" in prompt
+    assert "複数営業日基準は使わない" in prompt

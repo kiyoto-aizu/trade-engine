@@ -124,7 +124,8 @@ def test_weekly_analyzer_uses_required_review_prompt(monkeypatch):
     assert "期間・稼働状態" in prompt
     assert "exact_period_run_available" in prompt
     assert "comparison.availableがtrue" in prompt
-    assert "filter_decision_events.countが1件以上" in prompt
+    assert "same_dayの当日基準だけ" in prompt
+    assert "複数営業日基準は使わない" in prompt
     assert "投資判断、売買指示は行わず" in prompt
     assert "参考意見" in prompt
 

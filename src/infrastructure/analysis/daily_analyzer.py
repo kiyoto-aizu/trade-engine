@@ -21,26 +21,42 @@ STRATEGY_REVIEW_SYSTEM_PROMPT = """あなたは日本株自動売買システム
 
 
 def _build_period_review_prompt(period_label: str, period_summary: dict) -> str:
+    review_summary = dict(period_summary)
+    backtest = review_summary.get("backtest")
+    period = review_summary.get("period")
+    if isinstance(backtest, dict) and not (
+        backtest.get("exact_period_run_available")
+        and isinstance(period, dict)
+        and period.get("status") == "complete"
+    ):
+        review_summary["backtest"] = {"exact_period_run_available": False}
+    filter_events = review_summary.get("filter_decision_events")
+    if isinstance(filter_events, dict):
+        same_day = filter_events.get("same_day")
+        review_summary["filter_decision_events"] = (
+            {"same_day": same_day} if isinstance(same_day, dict) else {}
+        )
     return (
         f"以下は自動売買システムの{period_label}集計です。数値を再計算せず、入力にある事実だけを根拠に、"
         "次の検証につながる短い日本語レビューを作成してください。全体を900字以内にしてください。"
         "見出しは必要なものだけを使い、各見出しの箇条書きは最大2件にしてください。"
-        "「観測事実」は必ず使い、期間、ペーパートレード、バックテスト、確定済み判定イベントの重要な事実だけを書いてください。"
+        "「観測事実」は必ず使い、通知本文に表示済みの数値を再掲せず、結果から読み取れる所見だけを書いてください。"
         "period.statusがcomplete以外の場合だけ「期間・稼働状態」を使い、途中集計または未開始であることを明記してください。"
         "この場合、未到来のレポートやバックテストがないことを障害やスケジュール不備と推測しないでください。"
         "daily.operational_summaryにエラー、緊急停止、unavailable、not_evaluated、not_recordedがある場合だけ、"
         "同見出しで取引・戦略を評価できる状態だったかを事実として示してください。"
         "backtest.exact_period_run_availableがtrueかつperiod.statusがcompleteの場合だけ、対象期間のバックテスト結果を評価してください。"
+        "対象期間一致のバックテストがない場合は「比較対象なし」の一言だけにし、別期間の損益・取引数は使わないでください。"
         "それ以外ではbacktest.runsの損益・取引数を合算せず、ペーパートレードとの乖離や成績比較を結論づけないでください。"
         "comparison.availableがtrueの場合だけ「期間比較」を使い、comparison.basisと両期間のreport_countを併記してください。"
-        "filter_decision_events.countが1件以上の場合だけ「判定イベント」を使い、概算損益を扱う場合は実取引損益ではないと明記してください。"
-        "判定イベントのcount/by_event_typeは複数営業日基準、same_dayは当日基準です。両者を混同せず、数値を述べるときは基準を明示してください。"
+        "判定イベントに触れる場合はsame_dayの当日基準だけを使い、複数営業日基準は使わないでください。"
+        "概算損益を扱う場合は実取引損益ではないと明記してください。"
         "daily.total_profit_lossは日次レポートの記録値であり、内訳がない限り実現損益・未実現損益を断定しないでください。"
         "過学習はアウトオブサンプル結果やパラメータ比較などの根拠がない限り断定しないでください。"
         "仮説を書く場合は「仮説」と明示し、入力に直接根拠がある場合だけにしてください。"
         "未解決事項を判定できる具体的な観測値またはログがある場合だけ、「次回確認」を1件書いてください。"
         "ロジック変更、認証情報の修正、投資判断、売買指示は行わず、検証期間中の参考意見だと明記してください。\n\n"
-        f"{period_label}集計:\n{json.dumps(period_summary, ensure_ascii=False, indent=2)}"
+        f"{period_label}集計:\n{json.dumps(review_summary, ensure_ascii=False, indent=2)}"
     )
 
 
