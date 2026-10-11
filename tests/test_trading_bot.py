@@ -1766,7 +1766,7 @@ def test_emergency_stop_liquidates_positions_and_stops_loop(monkeypatch, tmp_pat
     assert any('手動緊急停止フラグ' in message for message in messages)
 
 
-def test_trading_use_case_warns_once_for_repeated_sell_signal_without_holdings(monkeypatch, tmp_path, caplog):
+def test_trading_use_case_logs_repeated_sell_signal_without_holdings_once(monkeypatch, tmp_path, caplog):
     symbols_path = tmp_path / 'top_symbols.json'
     symbols_path.write_text(json.dumps(['7203']), encoding='utf-8')
     current_times = iter([
@@ -1807,15 +1807,104 @@ def test_trading_use_case_warns_once_for_repeated_sell_signal_without_holdings(m
         daily_report_directory=tmp_path / 'reports',
     )
 
-    with caplog.at_level('WARNING', logger='src.domain.rules'):
+    with caplog.at_level('INFO', logger='src.application.trading_usecase'):
         use_case.run(
             top_symbols_path=symbols_path,
             now_provider=lambda: next(current_times),
             sleep=lambda seconds: None,
         )
 
-    warnings = [
+    observations = [
         record for record in caplog.records
-        if record.message == '保有株が確認できないため、売り注文を見送ります。'
+        if record.message.startswith('売り条件該当・未保有:')
     ]
-    assert len(warnings) == 1
+    assert len(observations) == 1
+    assert observations[0].levelname == 'INFO'
+    assert '銘柄=7203' in observations[0].message
+    assert '状態=開始' in observations[0].message
+
+
+def test_missing_holding_sell_signal_logs_only_state_transitions(tmp_path, caplog):
+    class DecisionJournal:
+        def __init__(self):
+            self.records = []
+
+        def record(self, stage, symbol, reason_code, occurred_at, inputs):
+            self.records.append((stage, symbol, reason_code, occurred_at, inputs))
+
+    journal = DecisionJournal()
+    use_case = TradingUseCase(
+        token='dummy',
+        order_history_path=tmp_path / 'unused_history.json',
+        decision_journal_repository=journal,
+    )
+    now = datetime(2026, 10, 9, 10, 0)
+
+    with caplog.at_level('INFO', logger='src.application.trading_usecase'):
+        use_case._observe_missing_holding_sell_signal('7203', now, missing_holdings=True)
+        use_case._observe_missing_holding_sell_signal('7203', now, missing_holdings=True)
+        use_case._observe_missing_holding_sell_signal(
+            '7203', now, missing_holdings=False, cleared_by='売り条件が解消'
+        )
+        use_case._observe_missing_holding_sell_signal('7203', now, missing_holdings=True)
+
+    observations = [
+        record for record in caplog.records
+        if record.message.startswith('売り条件該当・未保有:')
+    ]
+    assert [record.levelname for record in observations] == ['INFO', 'INFO', 'INFO']
+    assert all('銘柄=7203' in record.message for record in observations)
+    assert '状態=開始' in observations[0].message
+    assert '状態=解消' in observations[1].message
+    assert '状態=開始' in observations[2].message
+    assert [
+        (stage, symbol, reason_code, inputs['state'])
+        for stage, symbol, reason_code, _, inputs in journal.records
+    ] == [
+        ('trading', '7203', 'SELL_SIGNAL_WITHOUT_HOLDINGS', 'started'),
+        ('trading', '7203', 'SELL_SIGNAL_WITHOUT_HOLDINGS', 'started'),
+    ]
+
+
+def test_missing_holding_after_same_day_buy_is_warning_on_each_transition(tmp_path, caplog):
+    use_case = TradingUseCase(token='dummy', order_history_path=tmp_path / 'unused_history.json')
+    now = datetime(2026, 10, 9, 10, 0)
+    use_case.order_history = [
+        OrderHistoryEntry(
+            symbol='7203',
+            side=config.OrderSide.BUY,
+            price=100.0,
+            qty=100,
+            timestamp='2026-10-09T09:45:00',
+            result_code=0,
+        )
+    ]
+
+    with caplog.at_level('INFO', logger='src.application.trading_usecase'):
+        use_case._observe_missing_holding_sell_signal('7203', now, missing_holdings=True)
+        use_case._observe_missing_holding_sell_signal(
+            '7203', now, missing_holdings=False, cleared_by='保有を確認'
+        )
+
+    observations = [
+        record for record in caplog.records
+        if record.message.startswith('売り条件該当・未保有:')
+    ]
+    assert [record.levelname for record in observations] == ['WARNING', 'WARNING']
+    assert all('銘柄=7203' in record.message for record in observations)
+    assert '当日買い注文履歴あり' in observations[0].message
+
+
+def test_buy_safety_checks_still_reject_insufficient_budget(caplog):
+    signal = TradeSignal('7203', config.OrderSide.BUY, 1_000.0, 100)
+
+    with caplog.at_level('WARNING', logger='src.domain.rules'):
+        assert not is_safe_to_order(
+            signal,
+            wallet_amount=50_000.0,
+            has_holdings=False,
+            order_history=[],
+            lock_seconds=60,
+        )
+
+    assert any('予算不足:' in record.message for record in caplog.records)

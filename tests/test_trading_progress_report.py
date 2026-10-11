@@ -52,6 +52,41 @@ def test_progress_report_does_not_invent_unavailable_pnl():
     assert "新規買い見送り: 7203" in report
 
 
+def test_progress_report_separates_unheld_sell_observation_from_safety_blocks(tmp_path):
+    class FilterEvents:
+        def load_summaries(self, **kwargs):
+            return []
+
+    class DecisionJournal:
+        def load_records(self, *args):
+            return [
+                {
+                    "reason_code": "SELL_SIGNAL_WITHOUT_HOLDINGS",
+                    "symbol": "4563",
+                    "occurrence_count": 2,
+                    "last_occurred_at": "2026-10-09T10:00:00",
+                },
+                {
+                    "reason_code": "ORDER_SAFETY_BLOCKED",
+                    "symbol": "7203",
+                    "occurrence_count": 5,
+                    "last_occurred_at": "2026-10-09T10:00:00",
+                },
+            ]
+
+    use_case = TradingUseCase(
+        token="test",
+        order_history_path=Path(tmp_path / "orders.json"),
+        filter_decision_repository=FilterEvents(),
+        decision_journal_repository=DecisionJournal(),
+    )
+
+    events = use_case._progress_report_events(datetime(2026, 10, 9, 11, 30))
+
+    assert "売り条件該当・未保有: 4563 (2回)" in events
+    assert "安全条件による注文見送り: 7203 (5回)" in events
+
+
 def test_yahoo_index_client_fetches_intraday_change_with_one_request(monkeypatch):
     previous_time = datetime(2026, 10, 2, 15, 29, tzinfo=JST).timestamp()
     current_time = datetime(2026, 10, 5, 11, 29, tzinfo=JST).timestamp()

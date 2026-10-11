@@ -53,7 +53,10 @@ _RECORD_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ (\w+) (\S+)
 _REGIME_RE = re.compile(r"MarketRegimeを取得しました: レジーム=(\w+)")
 _GUARD_DUPLICATE = "当日同一シンボル・同一方向の注文が既にあります"
 _GUARD_LOCK = "秒以内に発生しています。二重発注を防止します"
-_GUARD_NO_HOLDING = "保有株が確認できないため、売り注文を見送ります"
+_GUARD_NO_HOLDING = (
+    "保有株が確認できないため、売り注文を見送ります",
+    "売り条件該当・未保有",
+)
 _TRADING_LOGGER_PREFIXES = (
     "src.application.trading_usecase", "src.infrastructure.kabu", "src.api",
     "src.infrastructure.paper", "src.infrastructure.market_data",
@@ -426,8 +429,12 @@ def collect_log_facts(records: list[LogRecord], symbol: str, start: datetime | N
             if judged_symbol == symbol and (start is None or record.at >= start) and (end is None or record.at <= end):
                 observations.append(obs)
             continue
-        for key, marker in (("duplicate", _GUARD_DUPLICATE), ("lock", _GUARD_LOCK), ("no_holding", _GUARD_NO_HOLDING)):
-            if marker in record.message and last_judgment:
+        for key, markers in (
+            ("duplicate", (_GUARD_DUPLICATE,)),
+            ("lock", (_GUARD_LOCK,)),
+            ("no_holding", _GUARD_NO_HOLDING),
+        ):
+            if any(marker in record.message for marker in markers) and last_judgment:
                 bucket = guards[key].setdefault(last_judgment, [])
                 bucket.append(record.at)
         if start is not None and record.at < start:

@@ -6,7 +6,7 @@ import pytest
 
 from scripts.analysis.diagnose_unsold_position import (
     CODE_A, CODE_B, CODE_C, CODE_UNKNOWN, ClassificationInput, LogRecord, Obs, Paths,
-    classify, diagnose, parse_judgment, render_markdown, simulate_exit_path, write_reports,
+    classify, collect_log_facts, diagnose, parse_judgment, render_markdown, simulate_exit_path, write_reports,
 )
 from src.domain.volatility import VolatilityLevel
 
@@ -79,6 +79,35 @@ def test_parse_judgment_reads_prices_and_holding_high():
     assert symbol == "8944"
     assert (obs.price, obs.lower_band, obs.logged_high, obs.logged_line, obs.decision) == (271.0, 251.3, 271.0, 257.9, "BUY")
     assert parse_judgment(LogRecord(datetime(2026, 10, 6, 9, 37), "INFO", "x", "ATR数量調整: 銘柄=8944")) is None
+
+
+def test_collect_log_facts_counts_current_and_legacy_missing_holding_messages():
+    records = [
+        LogRecord(
+            datetime(2026, 10, 6, 9, 37),
+            "INFO",
+            "src.application.trading_usecase",
+            "売買判定: 銘柄=8944 | 現在値=265.0 | エントリー基準=256.0 | 決済基準=251.0 | "
+            "RSI=40.0 | エントリーRSI基準=60.0 | 決済RSI基準=45.0 | "
+            "保有中最高値=- | 利確ライン=- | 判定=SELL",
+        ),
+        LogRecord(
+            datetime(2026, 10, 6, 9, 37, 1),
+            "INFO",
+            "src.application.trading_usecase",
+            "売り条件該当・未保有: 銘柄=8944 | 状態=開始",
+        ),
+        LogRecord(
+            datetime(2026, 10, 6, 9, 37, 2),
+            "WARNING",
+            "src.domain.rules",
+            "保有株が確認できないため、売り注文を見送ります。",
+        ),
+    ]
+
+    facts = collect_log_facts(records, SYMBOL, None, None)
+
+    assert len(facts["guards"]["no_holding"][("8944", "SELL")]) == 2
 
 
 def _path(prices):

@@ -145,7 +145,7 @@ class TradingUseCase:
         self.emergency_stop_triggered = False
         self.daily_starting_capital = config.OPERATING_CAPITAL
         self.api_soft_limit: Optional[float] = None
-        self._missing_holding_warning_symbols: set[str] = set()
+        self._missing_holding_sell_signals: dict[str, bool] = {}
         self._logged_trade_reasons: set[tuple[str, str]] = set()
         self._board_unavailable_symbols: set[str] = set()
         # 売買0件の理由を分類するための記録(売買判定には使わない)
@@ -523,6 +523,49 @@ class TradingUseCase:
         self._logged_trade_reasons.add(key)
         logger.log(level, "%s: 銘柄=%s | %s", reason_code, symbol, detail)
 
+    def _observe_missing_holding_sell_signal(
+        self,
+        symbol: str,
+        occurred_at: datetime,
+        missing_holdings: bool,
+        cleared_by: str = "売り条件が解消",
+    ) -> None:
+        """売り条件該当・未保有を状態遷移時だけ記録する。"""
+        if missing_holdings:
+            if symbol in self._missing_holding_sell_signals:
+                return
+            has_same_day_buy = any(
+                entry.symbol == symbol
+                and entry.side == config.OrderSide.BUY
+                and entry.timestamp[:10] == occurred_at.date().isoformat()
+                for entry in self.order_history
+            )
+            self._missing_holding_sell_signals[symbol] = has_same_day_buy
+            logger.log(
+                logging.WARNING if has_same_day_buy else logging.INFO,
+                "売り条件該当・未保有: 銘柄=%s | 状態=開始%s",
+                symbol,
+                " | 当日買い注文履歴あり" if has_same_day_buy else "",
+            )
+            self._journal_decision(
+                symbol,
+                "SELL_SIGNAL_WITHOUT_HOLDINGS",
+                occurred_at,
+                state="started",
+                same_day_buy_order=has_same_day_buy,
+            )
+            return
+
+        had_same_day_buy = self._missing_holding_sell_signals.pop(symbol, None)
+        if had_same_day_buy is None:
+            return
+        logger.log(
+            logging.WARNING if had_same_day_buy else logging.INFO,
+            "売り条件該当・未保有: 銘柄=%s | 状態=解消 | 理由=%s",
+            symbol,
+            cleared_by,
+        )
+
     def _journal_decision(self, symbol: str, reason_code: str, occurred_at: datetime, **inputs) -> None:
         """銘柄×日付×理由の判断記録を残す。失敗しても売買は止めない。"""
         if self.decision_journal_repository is None:
@@ -844,7 +887,8 @@ class TradingUseCase:
                 "POSITION_LIMIT_REACHED": "保有上限による新規買い見送り",
                 "WALLET_UNKNOWN": "買付余力不明による新規買い見送り",
                 "ORDER_AMOUNT_LIMIT_EXCEEDED": "注文金額上限による新規買い見送り",
-                "ORDER_SAFETY_BLOCKED": "安全条件による新規買い見送り",
+                "ORDER_SAFETY_BLOCKED": "安全条件による注文見送り",
+                "SELL_SIGNAL_WITHOUT_HOLDINGS": "売り条件該当・未保有",
                 "caution_rounding_to_zero": "CAUTION数量調整による新規買い見送り",
                 "atr_quantity_adjustment_zero": "ATR数量調整による新規買い見送り",
             }
@@ -2110,7 +2154,7 @@ class TradingUseCase:
             sleep: スリープ関数（テスト用、デフォルト：time.sleep）
         """
         self._load_order_history()
-        self._missing_holding_warning_symbols.clear()
+        self._missing_holding_sell_signals.clear()
         self._logged_trade_reasons.clear()
         self._board_unavailable_symbols.clear()
         self._buy_evaluated_symbols.clear()
@@ -2500,11 +2544,23 @@ class TradingUseCase:
                         f"{trailing_stop_line:.1f}" if trailing_stop_line is not None else "-",
                         signal.side.name if signal else "なし",
                     )
+                    if signal is None or signal.side == config.OrderSide.BUY:
+                        self._observe_missing_holding_sell_signal(
+                            symbol, now, missing_holdings=False
+                        )
                     if not signal:
                         continue
                     # 口座状態を確認
                     wallet_amount, positions = self._load_account_state()
                     self.last_positions = positions
+                    has_holdings = self._has_holdings(symbol, positions)
+                    if signal.side == config.OrderSide.SELL:
+                        self._observe_missing_holding_sell_signal(
+                            symbol,
+                            now,
+                            missing_holdings=not has_holdings,
+                            cleared_by="保有を確認",
+                        )
                     api_limit = config.API_SOFT_LIMIT if config.IS_DEMO else get_api_soft_limit(self.token)
                     if api_limit is None:
                         logger.warning("API発注上限を取得できないため、発注を停止しました。")
@@ -2705,7 +2761,6 @@ class TradingUseCase:
                         )
                         continue
                     # 注文の安全性を確認
-                    has_holdings = self._has_holdings(symbol, positions)
                     if signal.side == config.OrderSide.BUY and self._is_new_buy_halted_by_save_failure():
                         self._journal_decision(
                             symbol, "NEW_BUY_HALTED_STATE_SAVE_FAILURE", now, current_price=current_price,
@@ -2728,26 +2783,20 @@ class TradingUseCase:
                                 "売り・損切り・決済は継続します。",
                             ]))
                         continue
-                    should_warn_missing_holdings = (
-                        signal.side == config.OrderSide.SELL
-                        and not has_holdings
-                        and symbol not in self._missing_holding_warning_symbols
-                    )
                     if not is_safe_to_order(
                         signal,
                         wallet_amount,
                         has_holdings,
                         self.order_history,
                         config.ORDER_LOCK_SECONDS,
-                        warn_on_missing_holdings=should_warn_missing_holdings,
+                        warn_on_missing_holdings=False,
                         now=now,
                     ):
-                        self._journal_decision(
-                            symbol, "ORDER_SAFETY_BLOCKED", now, current_price=current_price,
-                            quantity_after=signal.qty, side=signal.side.name,
-                        )
-                        if signal.side == config.OrderSide.SELL and not has_holdings:
-                            self._missing_holding_warning_symbols.add(symbol)
+                        if signal.side != config.OrderSide.SELL or has_holdings:
+                            self._journal_decision(
+                                symbol, "ORDER_SAFETY_BLOCKED", now, current_price=current_price,
+                                quantity_after=signal.qty, side=signal.side.name,
+                            )
                         continue
                     # 注文を実行（成否はResultコードで判定。失敗時はNoneが返る）
                     if self.order_sender and hasattr(self.order_sender, 'set_price'):

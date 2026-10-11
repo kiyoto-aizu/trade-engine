@@ -259,7 +259,10 @@ def is_safe_to_order(
 
     if signal.side == OrderSide.SELL and not has_holdings:
         if warn_on_missing_holdings:
-            logger.warning("保有株が確認できないため、売り注文を見送ります。")
+            logger.info(
+                "売り条件該当・未保有: 銘柄=%s | 売り注文を見送ります。",
+                signal.symbol,
+            )
         return False
 
     if is_duplicate_order(signal, order_history, now):

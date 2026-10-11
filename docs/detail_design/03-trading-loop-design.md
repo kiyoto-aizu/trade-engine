@@ -1,6 +1,6 @@
 # 詳細設計書 03 取引ループ機能
 
-> 状態: 現行    最終更新: 2026-10-07
+> 状態: 現行    最終更新: 2026-10-11
 > 起動: `run_trading.py`    関連: [02 フィルタリング](./02-filtering-design.md)、[06 ヒストリカル再生](./06-trading-usecase-historical-replay.md)、[ADR-0002](../adr/0002-atr-trailing-stop-take-profit.md)、[ADR-0007](../adr/0007-unify-trading-and-backtest.md)
 
 対象: ②の当日フィルタ結果を読み込み、取引時間中に監視・判定・発注する機能。
@@ -143,7 +143,10 @@ flowchart TD
 | 現金・保有 | 発注判断に応じAPIまたは`PaperOrderClient`から再取得 |
 | 注文履歴 | `TradingUseCase.order_history`。成功受付時に追記しJSONへ保存 |
 | 保有中最高値 | `TradingUseCase._holding_high_prices`。run中のメモリ保持、注文時に初期化・消去 |
+| 売り条件該当・未保有 | `TradingUseCase._missing_holding_sell_signals`。銘柄ごとにrun中保持し、開始時だけ`SELL_SIGNAL_WITHOUT_HOLDINGS`を記録。条件解消または保有確認時に状態を解消し、開始・解消ログを出力 |
 | 判断記録 | `DecisionJournalRepository`。銘柄×日付×理由で集約し、ループ周回後にflush。DB障害時も取引を継続 |
+
+売り条件に該当しても保有がない場合は注文を見送り、銘柄コード付きの観察ログを状態遷移時だけ出力する。通常の開始・解消はINFO。同日中にその銘柄の買い注文履歴がある状態で未保有と判定した場合は、開始から解消までWARNINGで記録する。この観察は`SELL_SIGNAL_WITHOUT_HOLDINGS`として判断記録に分離し、`ORDER_SAFETY_BLOCKED`（中間報告の安全条件件数）には加算しない。注文安全判定の戻り値と注文可否は従来どおりとする。
 
 認証復旧後も401が続く場合は保有一覧を付けて1 run 1回通知する。board全銘柄の連続取得失敗も閾値到達時に1 run 1回通知する。
 
@@ -163,6 +166,7 @@ flowchart TD
 | `POSITION_LIMIT_REACHED` / `WALLET_UNKNOWN` | 建玉上限または買付余力不明 |
 | `MARKET_REGIME_DANGER_SKIP` | DANGERによる新規買い見送り |
 | `ORDER_AMOUNT_LIMIT_EXCEEDED` / `ORDER_SAFETY_BLOCKED` | 金額上限または一般安全条件で拒否 |
+| `SELL_SIGNAL_WITHOUT_HOLDINGS` | 売り条件該当・未保有の状態開始（状態遷移時のみ。安全条件件数には含めない） |
 | `NEW_BUY_HALTED_STATE_SAVE_FAILURE` | 状態ファイル保存の連続失敗による新規買い停止 |
 | `ORDER_REJECTED_NONE` / `ORDER_REJECTED_RESULT` | 注文応答なし、またはResultが成功値以外 |
 | `ORDER_REJECTED_PAPER_PRICE_MISSING` / `ORDER_REJECTED_PAPER_PRICE_INVALID` | ペーパー注文価格の欠落、または有限正値・数値型の検証失敗 |
