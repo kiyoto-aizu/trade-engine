@@ -1892,7 +1892,77 @@ def test_missing_holding_after_same_day_buy_is_warning_on_each_transition(tmp_pa
     ]
     assert [record.levelname for record in observations] == ['WARNING', 'WARNING']
     assert all('銘柄=7203' in record.message for record in observations)
-    assert '当日買い注文履歴あり' in observations[0].message
+    assert '当日純買付数量=100株' in observations[0].message
+
+
+def test_missing_holding_after_same_day_buy_and_full_sell_is_info(tmp_path, caplog):
+    use_case = TradingUseCase(token='dummy', order_history_path=tmp_path / 'unused_history.json')
+    now = datetime(2026, 10, 9, 10, 0)
+    use_case.order_history = [
+        OrderHistoryEntry(
+            symbol='7203',
+            side=config.OrderSide.BUY,
+            price=100.0,
+            qty=100,
+            timestamp='2026-10-09T09:35:00',
+            result_code=0,
+        ),
+        OrderHistoryEntry(
+            symbol='7203',
+            side=config.OrderSide.SELL,
+            price=105.0,
+            qty=100,
+            timestamp='2026-10-09T09:50:00',
+            result_code=0,
+        ),
+    ]
+
+    with caplog.at_level('INFO', logger='src.application.trading_usecase'):
+        use_case._observe_missing_holding_sell_signal('7203', now, missing_holdings=True)
+
+    observations = [
+        record for record in caplog.records
+        if record.message.startswith('売り条件該当・未保有:')
+    ]
+    assert len(observations) == 1
+    assert observations[0].levelname == 'INFO'
+    assert '銘柄=7203' in observations[0].message
+    assert '当日純買付数量=' not in observations[0].message
+
+
+def test_missing_holding_after_partial_same_day_sell_remains_warning(tmp_path, caplog):
+    use_case = TradingUseCase(token='dummy', order_history_path=tmp_path / 'unused_history.json')
+    now = datetime(2026, 10, 9, 10, 0)
+    use_case.order_history = [
+        OrderHistoryEntry(
+            symbol='7203',
+            side=config.OrderSide.BUY,
+            price=100.0,
+            qty=200,
+            timestamp='2026-10-09T09:35:00',
+            result_code=0,
+        ),
+        OrderHistoryEntry(
+            symbol='7203',
+            side=config.OrderSide.SELL,
+            price=105.0,
+            qty=100,
+            timestamp='2026-10-09T09:50:00',
+            result_code=0,
+        ),
+    ]
+
+    with caplog.at_level('INFO', logger='src.application.trading_usecase'):
+        use_case._observe_missing_holding_sell_signal('7203', now, missing_holdings=True)
+
+    observations = [
+        record for record in caplog.records
+        if record.message.startswith('売り条件該当・未保有:')
+    ]
+    assert len(observations) == 1
+    assert observations[0].levelname == 'WARNING'
+    assert '銘柄=7203' in observations[0].message
+    assert '当日純買付数量=100株' in observations[0].message
 
 
 def test_buy_safety_checks_still_reject_insufficient_budget(caplog):
