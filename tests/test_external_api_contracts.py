@@ -397,6 +397,11 @@ def test_monthly_analysis_helpers_skip_corrupt_files_and_parse_legacy_values(tmp
         'log_error_summaries': [],
         'position_count': None,
         'skip_counts': {},
+        'skip_evaluations': {
+            'ATR危険度': [],
+            '市場危険度': [],
+            '注意レジームRSI': [],
+        },
     }]
 
     backtests = tmp_path / 'backtests'

@@ -15,6 +15,7 @@ from src.application.price_band_trend_check import (
 )
 from src.domain.no_trade_reason import describe_no_trade_reason
 from src.domain.trend_check import JUDGED_LABELS, LABEL_TREND
+from src.infrastructure.analysis.period_review import sanitize_period_review
 from src.infrastructure.persistence.trend_check_repository import TrendCheckRepository
 
 WEEKDAYS_JA = ("月", "火", "水", "木", "金", "土", "日")
@@ -334,7 +335,9 @@ def period_notification_lines(summary: dict, trend: dict | None, kind: str, anal
         *next_check_lines(trend, price_band_trend),
     ])
     if analysis:
-        lines.extend(["LLM評価（参考）:", analysis])
+        sanitized_analysis = sanitize_period_review(analysis)
+        if sanitized_analysis:
+            lines.extend(["LLM評価（参考）:", sanitized_analysis])
     if (
         trend_check_has_reference(trend, include_progression=kind == "週次")
         or price_band_has_reference(price_band_trend)

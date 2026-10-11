@@ -4,6 +4,10 @@ import logging
 import requests
 
 from src.config import config
+from src.infrastructure.analysis.period_review import (
+    prepare_period_review_summary,
+    sanitize_period_review,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,26 +25,13 @@ STRATEGY_REVIEW_SYSTEM_PROMPT = """あなたは日本株自動売買システム
 
 
 def _build_period_review_prompt(period_label: str, period_summary: dict) -> str:
-    review_summary = dict(period_summary)
-    backtest = review_summary.get("backtest")
-    period = review_summary.get("period")
-    if isinstance(backtest, dict) and not (
-        backtest.get("exact_period_run_available")
-        and isinstance(period, dict)
-        and period.get("status") == "complete"
-    ):
-        review_summary["backtest"] = {"exact_period_run_available": False}
-    filter_events = review_summary.get("filter_decision_events")
-    if isinstance(filter_events, dict):
-        same_day = filter_events.get("same_day")
-        review_summary["filter_decision_events"] = (
-            {"same_day": same_day} if isinstance(same_day, dict) else {}
-        )
+    review_summary = prepare_period_review_summary(period_summary)
     return (
         f"以下は自動売買システムの{period_label}集計です。数値を再計算せず、入力にある事実だけを根拠に、"
         "次の検証につながる短い日本語レビューを作成してください。全体を900字以内にしてください。"
         "見出しは必要なものだけを使い、各見出しの箇条書きは最大2件にしてください。"
-        "「観測事実」は必ず使い、通知本文に表示済みの数値を再掲せず、結果から読み取れる所見だけを書いてください。"
+        "「観測事実」は必ず使い、通知本文のA・Bに表示済みの数値は再掲せず、結果から読み取れる所見だけを書いてください。"
+        "割合は%表記にし、小数表記の割合や英語のキー名は使わないでください。"
         "period.statusがcomplete以外の場合だけ「期間・稼働状態」を使い、途中集計または未開始であることを明記してください。"
         "この場合、未到来のレポートやバックテストがないことを障害やスケジュール不備と推測しないでください。"
         "daily.operational_summaryにエラー、緊急停止、unavailable、not_evaluated、not_recordedがある場合だけ、"
@@ -173,7 +164,8 @@ class OpenAIDailyAnalyzer:
             content = response.json().get("choices", [{}])[0].get("message", {}).get("content")
             if not isinstance(content, str) or not content.strip():
                 raise ValueError("LLM応答に本文がありません")
-            return content.strip()[:2400]
+            sanitized = sanitize_period_review(content.strip())
+            return sanitized[:2400] if sanitized else None
         except (requests.RequestException, ValueError, KeyError, IndexError, TypeError) as exc:
             logger.warning("月次LLM分析に失敗しました: %s", exc)
             return None
@@ -200,7 +192,8 @@ class OpenAIDailyAnalyzer:
             content = response.json().get("choices", [{}])[0].get("message", {}).get("content")
             if not isinstance(content, str) or not content.strip():
                 raise ValueError("LLM応答に本文がありません")
-            return content.strip()[:2400]
+            sanitized = sanitize_period_review(content.strip())
+            return sanitized[:2400] if sanitized else None
         except (requests.RequestException, ValueError, KeyError, IndexError, TypeError) as exc:
             logger.warning("週次LLM分析に失敗しました: %s", exc)
             return None

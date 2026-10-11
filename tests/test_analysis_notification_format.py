@@ -298,21 +298,77 @@ def test_period_status_and_skip_summary_are_human_readable():
 def test_period_review_prompt_uses_only_same_day_results_and_avoids_repeated_numbers():
     from src.infrastructure.analysis.daily_analyzer import _build_period_review_prompt
 
-    prompt = _build_period_review_prompt("週次", {
+    summary = {
         "filter_decision_events": {
             "count": 3,
             "by_event_type": {"MULTI_DAY_ONLY": {"count": 3}},
             "basis": "複数営業日基準",
             "same_day": {"basis": "当日基準", "count": 1},
         },
+        "daily": {
+            "operational_summary": {
+                "market_assessment_status_counts": {"available": 5},
+            },
+            "reports": [
+                {
+                    "market_assessment_status": "available",
+                    "skip_evaluations": {
+                        "注意レジームRSI": [{
+                            "evaluations": {
+                                "same_day": {"outcome": "当日結果"},
+                                "multi_day": {"outcome": "複数営業日結果"},
+                            }
+                        }]
+                    },
+                }
+            ],
+        },
         "backtest": {"exact_period_run_available": False, "runs": [{"total_pnl": 12345}]},
-    })
+    }
+
+    prompt = _build_period_review_prompt("週次", summary)
 
     assert "MULTI_DAY_ONLY" not in prompt
     assert '"count": 3' not in prompt
     assert "12345" not in prompt
+    assert '"available": 5' not in prompt
+    assert '"market_assessment_status"' not in prompt
+    assert '"multi_day"' not in prompt
+    assert "複数営業日結果" not in prompt
+    assert '"outcome": "当日結果"' in prompt
     assert "比較対象なし" in prompt
-    assert "通知本文に表示済みの数値を再掲せず" in prompt
+    assert "通知本文のA・Bに表示済みの数値は再掲せず" in prompt
+    assert "割合は%表記" in prompt
+
+
+def test_period_notification_sanitizes_llm_output_and_localizes_status():
+    summary = _period_summary()
+    summary["daily"]["operational_summary"]["market_assessment_status_counts"] = {
+        "available": 5,
+    }
+    analysis = "\n".join([
+        "所見",
+        "- 市場評価は available でした。",
+        "- 生データ {'available': 5} を参照しました。",
+        "{'available': 5,",
+        " 'unavailable': 2",
+        "}",
+        "- 複数営業日基準では12件です。",
+        "- market_assessment_status_counts を確認しました。",
+    ])
+
+    for kind in ("週次", "月次"):
+        lines = period_notification_lines(summary, _trend(), kind, analysis)
+        message = "\n".join(lines)
+        llm_section = message.split("LLM評価（参考）:\n", 1)[1]
+
+        assert "市場状態: 5日とも判定あり" in lines
+        assert "市場評価は 判定あり でした。" in llm_section
+        assert "{'available': 5}" not in message
+        assert "複数営業日" not in message
+        assert "market_assessment_status_counts" not in message
+        assert "available" not in message
+        assert lines[-1].startswith("※参考値:")
 
 
 def test_monthly_next_check_is_none_without_problems():
