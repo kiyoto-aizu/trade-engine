@@ -1,7 +1,8 @@
 """Yahoo Financeのintraday chart APIから分足（デフォルト1分足）を取得します。"""
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from urllib.parse import quote
 
 from src.api import request_handler
 from src.domain.models import MinuteBar
@@ -45,7 +46,31 @@ def fetch_yahoo_intraday_bars(
     )
     if not response:
         return IntradayFetchResult(ok=False, error="NO_RESPONSE")
+    return _parse_intraday_response(symbol, response)
 
+
+def fetch_yahoo_index_intraday_bars(
+    index_symbol: str, start: date, end: date, interval: str = "1m", timeout: float = 30
+) -> IntradayFetchResult:
+    """指数(例: ^N225)の分足を、start〜end(両端含む・JST)の期間で取得します。
+
+    Yahooの1分足は1回のリクエストが8日以内に制限されるため、呼び出し側で分割してください。
+    """
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(index_symbol, safe='')}"
+    period1 = int(datetime.combine(start, time.min, tzinfo=JST).timestamp())
+    period2 = int(datetime.combine(end + timedelta(days=1), time.min, tzinfo=JST).timestamp())
+    response = request_handler.send_get(
+        url,
+        params={"interval": interval, "period1": period1, "period2": period2},
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=timeout,
+    )
+    if not response:
+        return IntradayFetchResult(ok=False, error="NO_RESPONSE")
+    return _parse_intraday_response(index_symbol, response)
+
+
+def _parse_intraday_response(symbol: str, response: dict) -> IntradayFetchResult:
     try:
         chart = response.get("chart", {})
         result = chart.get("result") or []

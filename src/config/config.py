@@ -287,6 +287,10 @@ if PAPER_MARKET_SLIPPAGE_BPS < 0:
 MINUTE_BAR_PARQUET_DIR = Path(
     os.getenv("MINUTE_BAR_PARQUET_DIR", str(_repo_root / "data" / "minute_bars_parquet"))
 )
+# 日経225など指数の分足Parquetの保存先。個別銘柄用とはDuckDB読み込み(symbol列がBIGINT)を壊さないため分離する。
+INDEX_MINUTE_BAR_PARQUET_DIR = Path(
+    os.getenv("INDEX_MINUTE_BAR_PARQUET_DIR", str(_repo_root / "data" / "index_minute_bars_parquet"))
+)
 SCREENING_RESULT_DIRECTORY = Path(
     os.getenv("SCREENING_RESULT_DIRECTORY", str(_repo_root / "data" / "screening"))
 )

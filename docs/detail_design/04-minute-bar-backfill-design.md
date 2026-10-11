@@ -28,6 +28,7 @@
 | 価格帯別フィルタ結果 | 入力 | `FILTERING_PRICE_BAND_RESULT_ROOT/<価格上限>/` | 通常ディレクトリを明示指定した場合は対象外 |
 | Yahoo 1分足 | 入力 | Yahoo Finance chart API | `--days`で取得期間を指定 |
 | 分足データ | 出力 | `data/minute_bars_parquet/symbol=<銘柄>/date=<日付>/data.parquet` | `MINUTE_BAR_PARQUET_DIR`で変更可能 |
+| 日経225の1分足 | 出力 | `data/index_minute_bars_parquet/symbol=^N225/date=<日付>/data.parquet` | `INDEX_MINUTE_BAR_PARQUET_DIR`。本タスクではなく日次分析(引け後)と`run_index_minute_backfill.py`が保存。CAUTION検証用 |
 | 取込結果通知 | 出力 | Slack `analysis` | 対象数、取込本数、所要時間 |
 
 ## 4. 処理フロー
@@ -100,6 +101,7 @@ flowchart TD
 | 日付 | 決定 | 理由 |
 |---|---|---|
 | 2026-10-08 | 現行の銘柄収集・Yahoo取得・Parquet保存フローを設計図へ反映する | 旧図のJSON保存表記と取得経路が現行コードと異なるため |
+| 2026-10-11 | 日経225の1分足は別ディレクトリに保存し、新タスクを増やさず日次分析の引け後に相乗りする | `^N225`を`minute_bars_parquet`に混ぜると分析サンドボックスのsymbol整数列読込が壊れるため。Yahoo 1分足は直近約30日・1回8日以内の制限があり、7日ずつ取得する |
 
 ## 10. 未決・既知の課題
 

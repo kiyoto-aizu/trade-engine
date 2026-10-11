@@ -34,6 +34,7 @@ from src.application.trend_check_usecase import (
 from src.domain.no_trade_reason import NO_CANDIDATE, OTHER
 from src.infrastructure.logging_config import configure_logging
 from src.entrypoints.run_trend_check import run_daily_safely
+from src.entrypoints.run_index_minute_backfill import save_index_minute_bars
 from src.entrypoints.update_daily_bar_cache import latest_confirmed_trading_day, update_cache
 
 logger = logging.getLogger(__name__)
@@ -211,7 +212,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="日足更新・答え合わせ・日次分析を実行します")
     parser.add_argument("--date", type=date.fromisoformat, default=date.today())
     args = parser.parse_args(argv)
-    return 0 if run_daily_analysis(args.date) else 1
+    success = run_daily_analysis(args.date)
+    # 引け後の日経225分足の保存。記録専用で、失敗しても日次分析の結果には影響させない。
+    save_index_minute_bars(args.date, args.date)
+    return 0 if success else 1
 
 
 if __name__ == "__main__":
