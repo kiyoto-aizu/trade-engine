@@ -52,6 +52,15 @@ from src.application.shadow_position_tracker import ShadowPosition, resolve_refe
 
 logger = logging.getLogger(__name__)
 JST = timezone(timedelta(hours=9))
+# 見送りイベントへ日経225の日中値を追記する対象(検証用の記録のみ)
+NIKKEI_INTRADAY_EVENT_TYPES = frozenset({
+    "MARKET_REGIME_DANGER_SKIP",
+    "MARKET_REGIME_CAUTION_RSI_FILTER",
+    "ATR_DANGER_SKIP",
+    "ADX_TREND_RELIEF",
+})
+NIKKEI_INTRADAY_CACHE_SECONDS = 60
+NIKKEI_INTRADAY_TIMEOUT_SECONDS = 5
 
 
 class TradingUseCase:
@@ -159,6 +168,8 @@ class TradingUseCase:
         self._new_buy_halt_notified = False
         self._progress_reports_sent: set[str] = set()
         self._progress_report_start_time: datetime | None = None
+        self._nikkei_intraday_cache: tuple[datetime, dict] | None = None
+
     @property
     def _execution_mode(self) -> str:
         return config.TRADING_MODE
@@ -176,11 +187,39 @@ class TradingUseCase:
         inputs: dict,
     ) -> int | None:
         try:
+            if event_type in NIKKEI_INTRADAY_EVENT_TYPES:
+                inputs = {**inputs, **self._nikkei_intraday_inputs(occurred_at)}
             return self.filter_decision_repository.record_event(
                 event_type, symbol, occurred_at, reference_price, quantity, inputs, self._execution_mode
             )
         except Exception:
             logger.exception("判定イベントの保存に失敗しました: 種別=%s 銘柄=%s", event_type, symbol)
+
+    def _nikkei_intraday_inputs(self, now: datetime) -> dict:
+        """見送り時刻の日経225日中値(検証用の記録のみ)。失敗・遅延しても判断や注文には影響させない。"""
+        empty = {"nikkei_intraday_change_percent": None, "nikkei_intraday_as_of": None}
+        cached = self._nikkei_intraday_cache
+        if cached is not None and 0 <= (now - cached[0]).total_seconds() < NIKKEI_INTRADAY_CACHE_SECONDS:
+            return cached[1]
+        values = empty
+        try:
+            getter = getattr(
+                getattr(self.market_regime_usecase, "market_data_client", None), "get_intraday_snapshot", None
+            )
+            snapshot = getter("^N225", now, NIKKEI_INTRADAY_TIMEOUT_SECONDS) if getter else None
+            if snapshot is not None:
+                percent, bar_time = snapshot
+                values = {
+                    "nikkei_intraday_change_percent": percent,
+                    "nikkei_intraday_as_of": (
+                        bar_time.astimezone(JST).replace(tzinfo=None) if bar_time.tzinfo else bar_time
+                    ).isoformat(timespec="seconds"),
+                }
+        except Exception as exc:
+            logger.warning("日経225の日中値の取得に失敗しました(記録は空で続行): %s", exc)
+        # 失敗も同じ秒数だけ保持し、障害中に毎分取得し直して注文ループを遅らせない
+        self._nikkei_intraday_cache = (now, values)
+        return values
 
     @staticmethod
     def _shadow_position_key(symbol: str, order_id: str | None, timestamp: str, quantity: int) -> str:

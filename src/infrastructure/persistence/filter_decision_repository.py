@@ -22,6 +22,11 @@ SAME_DAY_COLUMNS: tuple[tuple[str, str], ...] = (
     ("same_day_data_quality", "TEXT"),
 )
 
+# 見送り時刻の日経225の日中値(検証用・nullable)
+NIKKEI_INTRADAY_COLUMNS = (
+    ("nikkei_intraday_change_percent", "REAL"),
+    ("nikkei_intraday_as_of", "TEXT"),
+)
 # data_quality判定の仮置き閾値
 STALE_LAST_OBSERVATION_MINUTES = 30
 FEW_OBSERVATIONS_MIN_EXPECTED = 5
@@ -110,7 +115,7 @@ class FilterDecisionRepository:
             existing_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(filter_decision_events)")
             }
-            for name, column_type in SAME_DAY_COLUMNS:
+            for name, column_type in (*SAME_DAY_COLUMNS, *NIKKEI_INTRADAY_COLUMNS):
                 if name in existing_columns:
                     continue
                 try:
@@ -183,8 +188,9 @@ class FilterDecisionRepository:
                     lowest_price, highest_price, last_price, last_observed_at,
                     observation_count, created_at,
                     same_day_close_price, same_day_high, same_day_low,
-                    same_day_last_observed_at, same_day_observation_count, same_day_data_quality
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 1, ?)
+                    same_day_last_observed_at, same_day_observation_count, same_day_data_quality,
+                    nikkei_intraday_change_percent, nikkei_intraday_as_of
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 1, ?, ?, ?)
                 """,
                 (
                     event_type, symbol, execution_mode, occurred_text, reference_price, quantity,
@@ -197,6 +203,7 @@ class FilterDecisionRepository:
                     reference_price, reference_price, reference_price, occurred_text, occurred_text,
                     reference_price, reference_price, reference_price, occurred_text,
                     same_day_data_quality,
+                    values.get("nikkei_intraday_change_percent"), values.get("nikkei_intraday_as_of"),
                 ),
             )
             return int(cursor.lastrowid)

@@ -63,6 +63,13 @@ class YahooIndexClient:
 
     def get_intraday_change_percent(self, symbol: str, as_of: datetime) -> float | None:
         """日経225の当日値を1回の取得で読み、直近営業日の終値比を返します。"""
+        snapshot = self.get_intraday_snapshot(symbol, as_of)
+        return None if snapshot is None else snapshot[0]
+
+    def get_intraday_snapshot(
+        self, symbol: str, as_of: datetime, timeout: float = 30
+    ) -> tuple[float, datetime] | None:
+        """日中の前日比(%)と、その算出に使った最終1分足の時刻(JST)を返します。"""
         if symbol != "^N225":
             raise ValueError("日中の前日比取得に対応する指数は^N225のみです")
 
@@ -71,7 +78,7 @@ class YahooIndexClient:
                 f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
                 params={"interval": "1m", "range": "5d"},
                 headers={"User-Agent": "Mozilla/5.0"},
-                timeout=30,
+                timeout=timeout,
             )
             result = response["chart"]["result"][0] if response else None
             if result is None:
@@ -87,6 +94,7 @@ class YahooIndexClient:
                 if not math.isfinite(previous_close) or previous_close <= 0:
                     previous_close = None
             current_price = None
+            current_time: datetime | None = None
             previous_date: date | None = None
             for timestamp, raw_close in zip(timestamps, closes):
                 if raw_close is None:
@@ -103,9 +111,10 @@ class YahooIndexClient:
                         previous_close = close
                 elif bar_time.date() == target_date:
                     current_price = close
-            if previous_close is None or current_price is None:
+                    current_time = bar_time
+            if previous_close is None or current_price is None or current_time is None:
                 return None
-            return (current_price / previous_close - 1.0) * 100.0
+            return (current_price / previous_close - 1.0) * 100.0, current_time
         except (KeyError, IndexError, TypeError, ValueError, OverflowError):
             logger.warning("Yahoo Financeの日経225日中値取得に失敗しました")
             return None

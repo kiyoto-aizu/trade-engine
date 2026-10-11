@@ -151,6 +151,7 @@ MarketRegimeは市場データを使えない場合にも評価オブジェク�
 | 2026-10-08 | 個別の分析レポート生成とMarketRegime判定を別機能として記述 | 実際のCLI、保存先、取引・バックテストの呼出経路が別であるため |
 | 2026-10-08 | MarketRegimeの取得・計算失敗はDANGERとして扱う | `MarketRegimeUseCase._unavailable()`の実装に一致させるため |
 | 2026-10-11 | 判定時の入力値を日次で保存(`market_regime_daily.sqlite3`)。判定ロジックは変更しない | 朝一固定判定の影響を検証するため(`analyze_caution_regime_validity.py`の(c)) |
+| 2026-10-11 | 見送りイベントに日経225の日中値(`nikkei_intraday_*`)を追記。MarketRegimeには使わない | 見送り時点の市況と朝の判定値を比較するため |
 
 ## 10. 未決・既知の課題
 

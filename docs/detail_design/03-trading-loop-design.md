@@ -175,6 +175,8 @@ flowchart TD
 
 `FilterDecisionRepository`が保存するイベント種別は`ATR_DANGER_SKIP`、`ATR_STOP_EXIT`、`MARKET_REGIME_DANGER_SKIP`、`MARKET_REGIME_CAUTION_RSI_FILTER`、`ADX_TREND_RELIEF`。`input_json`にはATR・True Range・レジーム・実現ボラ・VIX・日経前日比・ADX・RSI・通常/適用閾値等の判断入力を保存する。RSIが取引可能な注文履歴には`rsi_input`として判断日時、レジーム、RSI・閾値、計算可否、不足理由、終値本数、最終終値、現在値、判定結果を保存する。
 
+`MARKET_REGIME_DANGER_SKIP`・`MARKET_REGIME_CAUTION_RSI_FILTER`・`ATR_DANGER_SKIP`・`ADX_TREND_RELIEF`には、見送り時刻の日経225の日中値として、nullable列`nikkei_intraday_change_percent`(当日の前日比%)と`nikkei_intraday_as_of`(算出に使った最終1分足の時刻、JST)を記録する(CAUTION検証用。判断には使わない)。`YahooIndexClient.get_intraday_snapshot`で取得し、60秒キャッシュ(失敗も同じ秒数保持)・タイムアウト5秒で、失敗時はNULLのまま警告ログだけを出して判断・注文を続ける。既存DBは`existing_columns`によるALTERで列を追加する。同一イベントが継続している間もイベント保存処理は毎分呼ばれるため、取得は最大で毎分1回行われる。
+
 当日基準(`same_day_*`)の確定はコード上の3か所で行う。
 
 1. 最初のループ周回: `include_today=False`で再起動後に残った前日以前の未確定イベントを確定。
