@@ -193,6 +193,16 @@ def test_main_saves_270_filter_before_isolated_price_band_failures(monkeypatch, 
         def __init__(self, _directory):
             pass
 
+    original_datetime = run_filtering.datetime
+
+    class MorningDateTime(original_datetime):
+        # 締め切り(09:34)前に固定し、実行時刻で板の先読み有無が変わらないようにする
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 5, 9, 0)
+
+    monkeypatch.setattr(run_filtering, "datetime", MorningDateTime)
+    monkeypatch.setattr(config, "FILTERING_PRICE_BAND_DEADLINE_TIME", original_datetime.strptime("09:34", "%H:%M").time())
     monkeypatch.setattr(sys, "argv", ["run_filtering.py"])
     monkeypatch.setattr(run_filtering, "configure_logging", lambda: None)
     monkeypatch.setattr(run_filtering, "is_trading_day", lambda _day: True)
@@ -234,7 +244,7 @@ def test_main_saves_270_filter_before_isolated_price_band_failures(monkeypatch, 
     assert "採用=2件 | 所要=" in band_900_message
     assert f"保存先={config.FILTERING_PRICE_BAND_RESULT_ROOT / '900'}" in band_900_message
     summary = next(record for record in caplog.records if record.msg.startswith("全価格帯板取得サマリー:"))
-    assert summary.args[0:2] == (4, 5)
+    assert summary.args[0:2] == (4, 8)
     assert summary.args[4] == 2
 
 
