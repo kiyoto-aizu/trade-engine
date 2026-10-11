@@ -391,6 +391,7 @@ DAILY_REPORT_DIRECTORY = _repo_root / "data" / "reports" / "daily"
 FILTER_DECISION_DATABASE_FILE = _repo_root / "data" / "state" / "filter_decision_events.sqlite3"
 MARKET_REGIME_DAILY_DATABASE_FILE = _repo_root / "data" / "state" / "market_regime_daily.sqlite3"
 BACKTEST_FILTER_DECISION_DIRECTORY = _repo_root / "data" / "backtest" / "filter_events"
+BACKTEST_INPUT_SNAPSHOT_DIRECTORY = _repo_root / "data" / "backtest" / "input_snapshots"
 # 移行スクリプトの移行先（過去分の保管用）専用。バックテスト本体は使用しない。
 LEGACY_BACKTEST_FILTER_DECISION_DATABASE_FILE = _repo_root / "data" / "backtest" / "state" / "filter_decision_events.sqlite3"
 EMERGENCY_STOP_FILE = Path(

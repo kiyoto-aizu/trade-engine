@@ -157,3 +157,10 @@ flowchart TD
 - 日足終値のみの場中再生と`ALLOW_OVERNIGHT_HOLDING=true`での持ち越しは未対応です。
 - 2026-09-27時点のフィルタ結果は15稼働日分で3ヶ月分に満たず、607Aは初回対象日より前の確定日足がRSI最低本数に届かない課題がありました。キャッシュ追補後の具体的な結果は検証記録を参照してください。
 - 旧エンジンとの再比較では、同一の日足・指数・分足スナップショットと決済条件の準備が必要です。期間・取引数が小規模であり、旧側の銘柄日足入力も凍結されていません。
+- **Phase 4の入力凍結（旧エンジン側、実装済み）**: `run_backtest.py`は実行ごとに旧エンジンへ渡した入力を`data/backtest/input_snapshots/<実行時刻>_<ラベル>/`へ保存し、`--input-snapshot <ディレクトリ>`でYahooを呼ばずに同一入力で再実行できます。形式・挙動は[05 バックテスト設計 §3.1](./05-backtest-design.md)を参照してください。これにより分足が3ヶ月分たまる12/15ごろの再検証で、9/16・9/17のRSI差を同一入力で確定できます。
+- **新エンジン側の未対応**: `backtest_v2_multi_day_check.py`の`_load_daily_bars()`は`fetch_yahoo_dated_ohlc_cached`（`data/cache/yahoo_daily/<銘柄>.json`、追記マージされるキャッシュ）から日足・`^N225`・`^VIX`を読みます。スナップショットから読ませる案は次のとおりで、今回は未実装です。
+  1. `_load_daily_bars()`に`--input-snapshot`を追加し、指定時は`fetch_yahoo_dated_ohlc_cached`の代わりに`load_backtest_input_snapshot()`で検証済みの`ohlc_history.json.gz`（銘柄×日付のOHLC）から`fetched`と同形のdictを作る。以降のDatedDailyBar変換・不足判定は共通化する。
+  2. `^N225`/`^VIX`は`index_daily.json.gz`の生OHLCを同じdict形式に変換して`fetched`に入れる（スナップショット側のバーは`YahooIndexClient`由来で当日を含まない点、出来高なしの点を確認する）。
+  3. スナップショットの指数日足は現状`--compare-market-regime`指定時のみ保存されるため、新エンジンと比較する実行では同オプションを必須にするか、指数日足を常に保存する形へ拡張する。`ohlc_history`も`--live`時のみ保存される。
+  4. 分足はコピーしていないため、`minute_manifest.json`との不一致警告（`find_minute_mismatches`）を新エンジンの分足読込にも流用する。
+  5. 比較レポートには使用した`snapshot_path`を記録する。

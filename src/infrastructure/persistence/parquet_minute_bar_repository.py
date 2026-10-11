@@ -29,6 +29,9 @@ class ParquetMinuteBarRepository:
             / "data.parquet"
         )
 
+    def partition_path(self, target_date: date, symbol: str) -> Path:
+        return self._partition_path(target_date, symbol)
+
     @staticmethod
     def _require_pyarrow():
         try:

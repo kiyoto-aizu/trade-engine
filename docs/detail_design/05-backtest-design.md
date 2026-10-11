@@ -48,6 +48,28 @@
 
 主な出力フィールドは`cash`、`final_position`、`total_trades`、`total_pnl`、`win_rate`、`max_drawdown`、`profit_factor`、`signals`、`trade_history`、`daily_summary`、`execution_assumptions`、`volatility_adjustment`、`market_regime_adjustment`です。`trade_history`は決済が成立した取引のみを含み、ATR診断情報`atr_diagnostic`も記録します。
 
+### 3.1 入力スナップショットと再実行（ADR-0007 Phase 4）
+
+旧エンジンは毎回Yahooから日足・指数を取り直すため、実行ごとに入力が変わりえます。そこで`run_backtest.py`は通常実行のたびに入力を`data/backtest/input_snapshots/<実行時刻>_<ラベル>/`へ保存します（`data/`配下のためgit管理外。計算ロジックは変更しません）。
+
+| ファイル | 内容 |
+|---|---|
+| `manifest.json` | 作成時刻、モード、対象期間、銘柄数、合計サイズ、各ファイルのsha256とバイト数 |
+| `run_conditions.json` | 引数（args）、結果に影響するconfig値（手数料・スリッページ・サイジング・RSI・ATR・MarketRegime閾値など）、実行時刻、gitコミットID |
+| `history.json.gz` | `fetch_yahoo_dated_history`の結果（銘柄×日付の終値） |
+| `ohlc_history.json.gz` | `fetch_yahoo_dated_ohlc`の結果（`--live`時のみ） |
+| `index_daily.json.gz` | `^N225`・`^VIX`の日足OHLCと`market_regime_by_date`（`--compare-market-regime`時のみ） |
+| `filtering/*.json` | 対象期間のフィルタ結果のコピー |
+| `minute_manifest.json` | 分足は複製せず、対象日×銘柄の本数と保存済みParquetのsha256のみ |
+
+- 結果JSONに`snapshot_path`を1項目追加します（既存項目は不変。保存も再実行もしない場合は出しません）。
+- 保存は一時ディレクトリへ書いてから改名します。保存に失敗しても警告ログのみでバックテストは続行し、`snapshot_path`は`null`になります。
+- 保存件数の上限・古いものの削除は未実装です（サイズ報告後に判断）。目安: 直近5営業日・35銘柄で約0.42MB。
+- `--input-snapshot <ディレクトリ>`を指定すると、Yahooを呼ばず、スナップショットの日足・指数・フィルタ結果で再実行します。manifestのファイル欠落・sha256不一致は`SnapshotError`で停止します。引数は保存値が既定で、コマンドラインで明示した値だけが上書きされ、上書きは結果の`input_snapshot_overrides`（`{引数: {snapshot, override}}`）に記録します。`--input-snapshot`/`--output`/`--archive-directory`は保存値から復元しません。
+- 分足は現在の保存先を使い、`minute_manifest.json`と本数・sha256が合わない場合は警告します。config値・gitコミットが保存時と異なる場合も警告します（現在値で実行）。
+- 旧エンジンが取り込む入力の棚卸し: 上記のほか、実行時にconfigから読む値（`BACKTEST_FEE_RATE`/`SLIPPAGE_BPS`/`EXECUTION_DELAY_BARS`/`ORDER_TYPE`、`TARGET_POSITIONS`、`MAX_ORDER_AMOUNT_PER_TRADE`、`API_SOFT_LIMIT`、`ORDER_UNIT`、`RSI_*`、`ATR_*`、`MARKET_REGIME_*`、`MARKET_CLOSE_HOUR/MINUTE`、`FILTER_DECISION_OBSERVATION_DAYS`）、分足Parquet、固定銘柄モードの`--symbols`/`--history`ファイルと`fetch_yahoo_history`があります。configは`run_conditions.json`に保存、分足はマニフェストで検知、固定銘柄モードの履歴は`history.json.gz`の`fixed_history`に保存します。
+- 保存→再実行の結果JSONは`generated_at`を除き完全一致することをテスト（`tests/test_backtest_input_snapshot.py`）と実データ5営業日で確認済みです。
+
 ## 4. 処理フロー
 
 主軸は`simulate_timeseries_backtest`です。
@@ -159,10 +181,13 @@ flowchart TD
 | 分足指標を指定したが分足リポジトリがない | CLI引数検証 | `ValueError`で停止 | 例外 | 要確認 |
 | 比較オプションを`--live`なしで指定 | CLI引数検証 | `ValueError`で停止 | 例外 | 要確認 |
 | 入力データの不足・履歴取得失敗 | 要確認 | 要確認 | 要確認 | 要確認 |
+| 入力スナップショットの保存失敗 | 保存処理の例外 | 警告ログのみでバックテスト続行（`snapshot_path`は`null`） | なし | 要確認 |
+| `--input-snapshot`のファイル欠落・sha256不一致 | `load_backtest_input_snapshot()` | `SnapshotError`で停止 | 例外 | 要確認 |
+| 再実行時の分足がmanifestと不一致 | `find_minute_mismatches()` | 警告ログのみで続行 | なし | 要確認 |
 
 ## 8. 設定項目
 
-設定値は[config-reference.md](../reference/config-reference.md)を参照してください。主なCLI引数は`--filtering-dir`、`--minute-bars-dir`、`--indicator-source`、`--output`、`--start-date`、`--end-date`、`--days`です。
+設定値は[config-reference.md](../reference/config-reference.md)を参照してください。主なCLI引数は`--filtering-dir`、`--minute-bars-dir`、`--indicator-source`、`--output`、`--start-date`、`--end-date`、`--days`、`--input-snapshot`です。
 
 ### 出力形式
 
@@ -178,6 +203,7 @@ flowchart TD
 | 2026-09-22（ADR-0004） | 数量計算はデフォルトで本番相当の予算配分を使い、固定数量が必要な場合だけ`--fixed-qty`を指定する | 本番に近い資金の使い方を既定評価にする |
 | 2026-09-22（ADR-0005） | 期間を完全一致させる評価では`--start-date`と`--end-date`を両方指定する | 祝日・実行タイミングに左右されず分析期間と一致させる |
 | 要確認（元記載に日付なし） | entrypointsは引数解析・実行調整に限定し、データ取得・入力読込・結果比較・保存をapplication/infrastructureへ分離する | 元の決定事項サマリに理由の記載なし |
+| 2026-10-12（ADR-0007 Phase 4） | 旧エンジンの入力を実行ごとにスナップショット保存し、`--input-snapshot`で再実行可能にする。分足は複製せずマニフェストで変化を検知する | 旧エンジンが毎回Yahooから日足を取り直すため、新旧突合を同一入力で行えるようにする |
 
 ## 10. 未決・既知の課題
 

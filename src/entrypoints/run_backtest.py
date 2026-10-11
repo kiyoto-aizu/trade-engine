@@ -4,9 +4,10 @@ import logging
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from src.application.backtest_execution_usecase import execute_backtest
+from src.application.backtest_execution_usecase import execute_backtest, to_jsonable
 from src.application.backtest_report_usecase import save_backtest_result
 from src.config import config
+from src.infrastructure.persistence.backtest_input_snapshot import load_backtest_input_snapshot
 from src.infrastructure.analysis.daily_analyzer import create_daily_analyzer
 from src.infrastructure.notification.slack_notify import (
     format_result_notification,
@@ -80,7 +81,7 @@ def _filter_daily_symbols(
     return daily_symbols
 
 
-def _build_parser(repo_root: Path) -> argparse.ArgumentParser:
+def _build_parser(repo_root: Path, suppress_defaults: bool = False) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="バックテストを実行します")
     parser.add_argument("--symbols", type=Path, default=repo_root / "data" / "filtering" / "2026-09-01.json", help="銘柄一覧のJSONファイル")
     parser.add_argument("--filtering-dir", type=Path, default=None, help="日付別フィルタリング結果のディレクトリ")
@@ -106,7 +107,37 @@ def _build_parser(repo_root: Path) -> argparse.ArgumentParser:
     parser.add_argument("--archive-directory", type=Path, default=None, help="日時付き結果の保存先")
     parser.add_argument("--compare-atr", action="store_true", help="ATRなし・ロット調整のみ・ATRありの比較を追加する（--liveが必要。ATRはライブ実行時に標準適用）")
     parser.add_argument("--compare-market-regime", action="store_true", help="MarketRegime導入前後を比較する（--liveの日付付きバックテストが必要）")
+    parser.add_argument("--input-snapshot", type=Path, default=None, help="保存済みの入力スナップショットで再実行する（Yahooを使わない。引数は保存値が既定で、明示した引数だけ上書き）")
+    if suppress_defaults:
+        for action in parser._actions:
+            action.default = argparse.SUPPRESS
     return parser
+
+
+_SNAPSHOT_NOT_RESTORED = frozenset({"input_snapshot", "output", "archive_directory"})
+
+
+def _apply_input_snapshot(
+    repo_root: Path, args: argparse.Namespace, snapshot, argv: list[str] | None = None,
+) -> tuple[argparse.Namespace, dict]:
+    """保存した引数を既定にし、コマンドラインで明示した引数だけを上書きする。"""
+    explicit = vars(_build_parser(repo_root, suppress_defaults=True).parse_args(argv))
+    actions = {action.dest: action for action in _build_parser(repo_root)._actions}
+    saved = snapshot.run_conditions["args"]
+    merged = vars(args).copy()
+    for dest, value in saved.items():
+        if dest in _SNAPSHOT_NOT_RESTORED or dest in explicit or dest not in actions:
+            continue
+        action_type = actions[dest].type
+        merged[dest] = action_type(value) if action_type is not None and value is not None else value
+    overrides = {}
+    for dest, value in explicit.items():
+        if dest in _SNAPSHOT_NOT_RESTORED:
+            continue
+        override = to_jsonable(value)
+        if override != saved.get(dest):
+            overrides[dest] = {"snapshot": saved.get(dest), "override": override}
+    return argparse.Namespace(**merged), overrides
 
 
 def _display_result(result: dict, atr_comparison: dict | None, market_regime_comparison: dict | None) -> dict:
@@ -136,6 +167,13 @@ def main() -> None:
     with process_notification("バックテスト", notify_lifecycle=False, trigger="手動実行"):
         repo_root = Path(__file__).resolve().parents[2]
         args = _build_parser(repo_root).parse_args()
+        input_snapshot = None
+        input_overrides: dict = {}
+        if args.input_snapshot is not None:
+            input_snapshot = load_backtest_input_snapshot(args.input_snapshot)
+            args, input_overrides = _apply_input_snapshot(repo_root, args, input_snapshot)
+            if input_overrides:
+                logger.warning("スナップショットの値を上書きして実行します: %s", input_overrides)
         _validate_backtest_arguments(args)
         sizing_kwargs = _build_sizing_kwargs(args)
         if (sizing_kwargs["target_positions"] is not None or sizing_kwargs["max_order_amount_per_trade"] is not None) and not args.filtering_dir:
@@ -149,7 +187,11 @@ def main() -> None:
             raise ValueError("--indicator-source minuteを使う場合は--minute-bars-dirを指定してください")
         result, atr_comparison, market_regime_comparison = execute_backtest(
             args, sizing_kwargs, minute_bar_repository,
+            snapshot_directory=None if input_snapshot else config.BACKTEST_INPUT_SNAPSHOT_DIRECTORY,
+            input_snapshot=input_snapshot,
         )
+        if input_overrides:
+            result["input_snapshot_overrides"] = input_overrides
 
         display_result = _display_result(result, atr_comparison, market_regime_comparison)
         analyzer = create_daily_analyzer()
