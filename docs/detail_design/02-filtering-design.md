@@ -208,7 +208,7 @@ kabuステーション`/board/{symbol}`から当日の`TradingValue`を取得す
 - 09:00〜09:30の分足は評価・通知の後にParquetへ保存する(範囲外の既存の足は残す)。保存失敗は結果に影響しない。休場日は実行せず、午前のみの日は`MIDDAY_FILTERING_SKIP_DATES`で指定してスキップする。
 - ロックは専用の`midday_filtering_lock()`(`.midday_filtering.lock`)だけを取る。取引ループが丸一日保持する`market_workflow_lock`は取らないため、12:00に取引中でも実行できる。取れない場合(二重起動)・休場日・スキップ日・開始前/締切後は、理由をログに出しdailyへ簡潔に通知して終了する。
 - 検証用実行: `run_midday_filtering --verify --date YYYY-MM-DD`(`--date`必須)。開始時刻・締切のチェックを無視し、予算は`--budget-seconds`(既定3時間)。結果・診断・270円比較は`MIDDAY_FILTERING_VERIFY_RESULT_ROOT/<日付>/`(既定`data/filtering_midday_verify`)に出し、Slack通知はせず要約(所要時間・取得失敗率・理由別件数・窓内本数分布・270円の推定/実測比較・本番25分に収まるか)を表示する。`--verify-save-bars`指定時だけ09:00〜09:30の足を`MINUTE_BAR_PARQUET_VERIFY_DIR`(既定`data/minute_bars_parquet_verify`)へ保存する。専用ロックは`.midday_filtering_verify.lock`で本番の昼フィルタと干渉しない。候補一覧と朝の板の診断JSONは読み取りのみ。
-- 午前のみの日・`task_schedule.TASKS`への昼タスク追加は未対応(登録は`scripts/tasks/register_midday_filtering_task.ps1`)。
+- `task_schedule.TASKS`へ「フィルタリング(昼)」を追加済み(2026-10-11。ログの開始/終了マーカー名と一致させ、予定通知・実行確認の対象)。OSへの登録は`scripts/tasks/register_midday_filtering_task.ps1`。午前のみの日の扱いは未対応。
 
 ## 10. 未決・既知の課題
 

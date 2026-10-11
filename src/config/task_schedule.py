@@ -17,6 +17,7 @@ class ScheduledTask:
 
 TASKS: list[ScheduledTask] = [
     ScheduledTask("フィルタリング", "09:30", "weekday"),
+    ScheduledTask("フィルタリング(昼)", config.MIDDAY_FILTERING_START_TIME.strftime("%H:%M"), "weekday"),
     ScheduledTask("取引", "09:35-15:30", "weekday"),
     ScheduledTask("スクリーニング", "15:35", "weekday"),
     ScheduledTask("日次分析", config.DAILY_ANALYSIS_START_TIME.strftime("%H:%M"), "weekday"),

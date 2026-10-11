@@ -8,6 +8,7 @@ def test_weekday_schedule_excludes_japanese_holidays():
     assert [task.name for task in tasks_for_date(date(2026, 9, 28))] == [
         "フィルタリング",
         "取引",
+        "フィルタリング(昼)",
         "スクリーニング",
         "日次分析",
     ]
@@ -36,6 +37,7 @@ def test_plan_message_lists_tasks_and_marks_screening_for_next_business_day():
         "【本日の実行予定タスク】2026-09-28(月)\n"
         "09:30 フィルタリング\n"
         "09:35-15:30 取引\n"
+        "12:00 フィルタリング(昼)\n"
         "15:35 スクリーニング(翌営業日向け)\n"
         "16:30 日次分析"
     )

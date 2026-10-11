@@ -8,6 +8,7 @@
 |---|---|---|---|
 | 09:30 | フィルタリング | `scripts/tasks/run_filtering.ps1` | `daily` |
 | 09:35-15:30 | 取引 | `scripts/tasks/run_trading.ps1` | `daily`、`critical` |
+| 既定12:00（`MIDDAY_FILTERING_START_TIME`） | フィルタリング(昼) | `scripts/tasks/run_midday_filtering.ps1` | `daily` |
 | 15:35 | スクリーニング | `scripts/tasks/run_screening.ps1` | `daily` |
 | 既定16:30（設定変更可） | 日次分析・答え合わせ | `scripts/tasks/run_daily_analysis.ps1` | `analysis`、失敗時`critical` |
 
@@ -35,7 +36,7 @@ flowchart LR
     Master --> Weekly[10:00 週次分析]
 ```
 
-`task_schedule.py`は日付ごとの予定を返すモジュールで、OSタスクスケジューラやcronの代わりにプロセスを起動するものではありません。平日のフィルタリング・取引・スクリーニング・日次分析と、土曜の分足バックフィル・バックテスト・銘柄マスタ更新・週次分析を予定として列挙し、月末最終取引日の月次分析も返します。
+`task_schedule.py`は日付ごとの予定を返すモジュールで、OSタスクスケジューラやcronの代わりにプロセスを起動するものではありません。平日のフィルタリング・昼フィルタリング・取引・スクリーニング・日次分析と、土曜の分足バックフィル・バックテスト・銘柄マスタ更新・週次分析を予定として列挙し、月末最終取引日の月次分析も返します。
 
 `backtest_v2_single_day_check.py`と`backtest_v2_multi_day_check.py`は通常の`run_backtest.py`とは別のヒストリカル再生検証CLIです。両スクリプトの検証結果は`data/backtest_v2_scratch/`に出力します。
 
