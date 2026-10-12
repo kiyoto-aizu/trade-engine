@@ -1,5 +1,7 @@
 from datetime import date, datetime
 
+import pytest
+
 from src.application.analysis_notification import daily_notification_lines, period_notification_lines
 from src.application.trend_check_usecase import TrendCheckPaths
 from src.entrypoints import run_daily_analysis
@@ -98,6 +100,94 @@ def test_daily_analysis_notifies_even_when_daily_refresh_fails(monkeypatch, tmp_
     assert trend_check_calls == []
     assert "【機能】日次分析" in notifications[0]
     assert "判定不能(日足更新失敗)" in notifications[0]
+
+
+def test_daily_analysis_main_runs_on_trading_day(monkeypatch):
+    analysis_calls = []
+    minute_bar_calls = []
+    monkeypatch.setattr(run_daily_analysis, "configure_logging", lambda: None)
+    monkeypatch.setattr(
+        run_daily_analysis,
+        "run_daily_analysis",
+        lambda target_date: analysis_calls.append(target_date) or True,
+    )
+    monkeypatch.setattr(
+        run_daily_analysis,
+        "save_index_minute_bars",
+        lambda start, end: minute_bar_calls.append((start, end)),
+    )
+
+    result = run_daily_analysis.main(["--date", "2026-10-06"])
+
+    assert result == 0
+    assert analysis_calls == [date(2026, 10, 6)]
+    assert minute_bar_calls == [(date(2026, 10, 6), date(2026, 10, 6))]
+
+
+@pytest.mark.parametrize(
+    "target_date",
+    [
+        "2026-10-10",  # 土曜
+        "2026-10-11",  # 日曜
+        "2026-09-21",  # 敬老の日
+        "2026-12-31",
+        "2026-01-02",
+        "2026-01-03",
+    ],
+)
+def test_daily_analysis_main_skips_closed_days_without_side_effects(
+    monkeypatch, caplog, target_date
+):
+    analysis_calls = []
+    minute_bar_calls = []
+    notification_calls = []
+    monkeypatch.setattr(run_daily_analysis, "configure_logging", lambda: None)
+    monkeypatch.setattr(
+        run_daily_analysis,
+        "run_daily_analysis",
+        lambda target: analysis_calls.append(target),
+    )
+    monkeypatch.setattr(
+        run_daily_analysis,
+        "save_index_minute_bars",
+        lambda *args: minute_bar_calls.append(args),
+    )
+    monkeypatch.setattr(
+        run_daily_analysis,
+        "notify_analysis",
+        notification_calls.append,
+    )
+
+    with caplog.at_level("INFO", logger=run_daily_analysis.__name__):
+        result = run_daily_analysis.main(["--date", target_date])
+
+    assert result == 0
+    assert "休場日のため日次分析をスキップします" in caplog.text
+    assert analysis_calls == []
+    assert minute_bar_calls == []
+    assert notification_calls == []
+
+
+def test_daily_analysis_main_force_runs_on_closed_day(monkeypatch):
+    analysis_calls = []
+    minute_bar_calls = []
+    monkeypatch.setattr(run_daily_analysis, "configure_logging", lambda: None)
+    monkeypatch.setattr(
+        run_daily_analysis,
+        "run_daily_analysis",
+        lambda target_date: analysis_calls.append(target_date) or True,
+    )
+    monkeypatch.setattr(
+        run_daily_analysis,
+        "save_index_minute_bars",
+        lambda start, end: minute_bar_calls.append((start, end)),
+    )
+
+    result = run_daily_analysis.main(["--date", "2026-10-11", "--force"])
+
+    assert result == 0
+    assert analysis_calls == [date(2026, 10, 11)]
+    assert minute_bar_calls == [(date(2026, 10, 11), date(2026, 10, 11))]
 
 
 def test_period_notice_separates_backtest_and_states_missing_exact_period():
