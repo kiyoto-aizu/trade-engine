@@ -2,7 +2,7 @@
 
 - 起票日: 2026-10-04
 - 対象: `src/config/config.py`、関連する設定・起動テスト、`docs/reference/config-reference.md`
-- ステータス: **`run_trading.py`への適用を実装済み・コミット済み（`c56be4a`、2026-10-04）**。他entrypointへの適用は「未決の確認事項」のとおり未決
+- ステータス: **`run_trading.py`への適用を実装済み・コミット済み（`c56be4a`、2026-10-04）**。2026-10-12、適用範囲は`run_trading.py`のみで据え置き、他の起動口へは広げないと決定
 - 実装: `src/config/startup_validation.py`（`validate_startup_config` / `find_config_violations` / `ConfigValidationError`）、`run_trading._validate_config_or_exit()`、`tests/test_startup_validation.py`
 - 運用者確認: `.\.venv\Scripts\python.exe scripts/check_startup_config.py`（現在の`.env`で検証し、違反があれば全件表示して終了コード1。秘密値は表示しない）
 - 実施時期: **2026-10-04**
@@ -62,7 +62,7 @@
 
 ### 対象entrypoint数
 
-`src/entrypoints/`には20ファイルがあり、そのうち現行ASTで`src.config.config`を直接importするものは13件（`run_trading.py`等）だった。レビュー調査メモの14件とは一致しないため、起動時検証の適用範囲決定時に、動的/間接利用を含めて再確認する。
+`src/entrypoints/`には20ファイルがあり、そのうち現行ASTで`src.config.config`を直接importするものは13件（`run_trading.py`等）だった。レビュー調査メモの14件とは一致しない。この調査結果にかかわらず、2026-10-12に起動時検証は`run_trading.py`のみへの適用で据え置き、他の起動口へは広げないと決定した。
 
 ## 必須対応
 
@@ -75,13 +75,13 @@
 
 1. **範囲外値は起動を止める**: 上記「検証項目一覧」の範囲を適用し、coding-guidelines §3のfail-fastに揃える。
 2. **違反は一括で報告する**: 新設検証は全対象の違反をリストへ集めてから一度に例外化し、最初の違反だけで止めない。既存のATR等のimport時検証は本タスクでは変更しない。
-3. **検証はlogging設定後に実行する**: 候補関数名は`validate_startup_config(settings)`。値を引数で受け取る純粋な検証部とし、`config.py`をimportせず単体テスト可能にする。呼出し位置は各entrypointの`main()`で`configure_logging()`直後とする。違反一覧をログとSlackへまとめて出し、その後起動を止める。
+3. **検証はlogging設定後に実行する**: 候補関数名は`validate_startup_config(settings)`。値を引数で受け取る純粋な検証部とし、`config.py`をimportせず単体テスト可能にする。呼出し位置は`run_trading.py`の`main()`で`configure_logging()`直後とする。違反一覧をログとSlackへまとめて出し、その後起動を止める。
 4. **`.env`はこの作業で読まない**: 実値の適合確認は実装前に運用者が各環境で行う。
+5. **適用範囲は`run_trading.py`のみで据え置く（2026-10-12決定）**: 他の起動口へは広げない。
 
-## 未決の確認事項
+## 未完了の確認事項
 
-1. 検証呼出しをどのentrypointへ入れるか。今回は`run_trading.py`のみ実装。スクリーニング・フィルタリング・バックテスト等への適用は**要判断**（関数は値を渡すだけで再利用可能）。
-2. 運用者は実装前に`.env`実値を確認し、特に`MAX_ORDER_AMOUNT_PER_TRADE <= OPERATING_CAPITAL`等の新制約に適合するか、値そのものを共有せず適合/不適合を確認する。
+1. 運用者は実装前に`.env`実値を確認し、特に`MAX_ORDER_AMOUNT_PER_TRADE <= OPERATING_CAPITAL`等の新制約に適合するか、値そのものを共有せず適合/不適合を確認する。
 
 ## 売買結果への影響
 
