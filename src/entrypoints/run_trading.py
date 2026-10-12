@@ -5,6 +5,7 @@
 ================================================================================
 """
 import logging
+from contextlib import contextmanager
 from logging.handlers import TimedRotatingFileHandler
 from datetime import datetime
 from pathlib import Path
@@ -25,8 +26,24 @@ from src.infrastructure.persistence.market_regime_daily_repository import Market
 from src.infrastructure.execution_lock import market_workflow_lock
 from src.infrastructure.notification.slack_notify import notify_critical, notify_daily, process_notification
 from src.infrastructure.paper.paper_order_client import PaperOrderClient
+from src.infrastructure.persistence.storage import StateFileCorruptError
 from src.infrastructure.market_data.yahoo_index_client import YahooIndexClient
 from src.infrastructure.calendar.japanese_calendar import is_trading_session
+
+
+@contextmanager
+def _notify_corrupt_state_file():
+    try:
+        yield
+    except StateFileCorruptError as exc:
+        logger = logging.getLogger(__name__)
+        logger.critical("状態ファイルの破損により取引の起動を中止します: %s", exc)
+        try:
+            notify_critical(f"【取引】起動を中止しました(状態ファイルの破損)\n{exc}")
+        except Exception:
+            logger.exception("状態ファイル破損の通知に失敗しました。")
+        raise
+
 
 def _create_decision_journal_repository():
     """判断記録DBを作成する。失敗しても取引は開始する(記録なし)。"""
@@ -165,7 +182,7 @@ def main(now_provider=None) -> None:
     configure_logging()
     _validate_config_or_exit()
     logging.getLogger(__name__).info('取引モード: %s', config.TRADING_MODE_LABEL)
-    with market_workflow_lock() as acquired:
+    with market_workflow_lock() as acquired, _notify_corrupt_state_file():
         if not acquired:
             logging.getLogger(__name__).warning("他の市場処理が実行中のため、トレーディングを中止します。")
             return

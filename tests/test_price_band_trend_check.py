@@ -1,6 +1,7 @@
 import json
 from datetime import date, timedelta
 
+from src.application import price_band_trend_check
 from src.application.price_band_trend_check import (
     PRICE_BANDS,
     load_price_band_trends,
@@ -30,6 +31,67 @@ def _paths(tmp_path):
         decision_database=data_dir / "state" / "decisions.sqlite3",
         midday_filtering_dir=data_dir / "filtering_midday",
     )
+
+
+def test_status_write_failure_notifies_only_once_per_band_and_date(
+    tmp_path, monkeypatch, caplog
+):
+    paths = _paths(tmp_path)
+    notifications = []
+    failures = set()
+    monkeypatch.setattr(price_band_trend_check, "write_json", lambda *_: False)
+    monkeypatch.setattr(
+        price_band_trend_check, "notify_critical", notifications.append
+    )
+
+    with caplog.at_level("CRITICAL"):
+        for _ in range(2):
+            price_band_trend_check._write_status(
+                paths,
+                450,
+                "2026-10-06",
+                {"state": "evaluated"},
+                failures,
+            )
+
+    assert len(notifications) == 1
+    assert "2026-10-06.json" in notifications[0]
+    assert "価格帯トレンドチェック状態を保存できません" in caplog.text
+
+
+def test_status_mkdir_failure_does_not_stop_price_band_checks(
+    tmp_path, monkeypatch, caplog
+):
+    paths = _paths(tmp_path)
+    notifications = []
+    monkeypatch.setattr(
+        price_band_trend_check, "notify_critical", notifications.append
+    )
+
+    def fail_mkdir(*args, **kwargs):
+        raise OSError("directory unavailable")
+
+    monkeypatch.setattr(price_band_trend_check.Path, "mkdir", fail_mkdir)
+    with caplog.at_level("CRITICAL"):
+        result = run_price_band_checks(
+            date(2026, 10, 6),
+            paths,
+            cache_update_ok=False,
+            source_database=tmp_path / "unused.sqlite3",
+        )
+
+    assert result is None
+    assert len(notifications) == len(PRICE_BANDS)
+    assert "価格帯トレンドチェック状態を保存できません" in caplog.text
+
+
+def test_status_write_success_is_unchanged(tmp_path):
+    paths = _paths(tmp_path)
+    status = {"state": "evaluated"}
+
+    price_band_trend_check._write_status(paths, 450, "2026-10-06", status)
+
+    assert price_band_trend_check._read_status(paths, 450, "2026-10-06") == status
 
 
 def _write_selection(paths, price_band, trade_date, symbols):

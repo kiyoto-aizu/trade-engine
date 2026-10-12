@@ -2,6 +2,7 @@ import logging
 import os
 import subprocess
 import sys
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from src.config.startup_validation import (
 )
 from src.domain.market_regime import MarketRegimeThresholds
 from src.entrypoints import run_trading
+from src.infrastructure.persistence.storage import StateFileCorruptError
 
 
 def make_settings(**overrides):
@@ -229,3 +231,38 @@ def test_main_stops_even_if_notification_raises(monkeypatch):
         run_trading.main(now_provider=lambda: datetime(2026, 10, 5, 10, 0))
     assert info.value.code == 1
     assert reached == []
+
+
+def test_main_notifies_and_stops_on_corrupt_state_file(monkeypatch, tmp_path):
+    sent = []
+    monkeypatch.setattr(run_trading, "configure_logging", lambda: None)
+    monkeypatch.setattr(run_trading, "_validate_config_or_exit", lambda: None)
+    monkeypatch.setattr(run_trading, "market_workflow_lock", lambda: _NoOp())
+    monkeypatch.setattr(run_trading, "process_notification", lambda *args, **kwargs: nullcontext())
+    monkeypatch.setattr(run_trading, "is_trading_session", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        run_trading,
+        "FilteringResultRepository",
+        lambda *_: SimpleNamespace(
+            load_for_date=lambda _: SimpleNamespace(symbols=["AAA"])
+        ),
+    )
+    monkeypatch.setattr(run_trading, "get_api_token", lambda: "token")
+    monkeypatch.setattr(run_trading, "notify_critical", sent.append)
+
+    def corrupt_state(*args, **kwargs):
+        path = tmp_path / "corrupt.json"
+        raise StateFileCorruptError(path, "JSONDecodeError", path)
+
+    monkeypatch.setattr(run_trading, "create_trading_use_case", corrupt_state)
+
+    with pytest.raises(StateFileCorruptError):
+        run_trading.main(now_provider=lambda: datetime(2026, 10, 5, 10, 0))
+
+    assert sent == [
+        "【取引】起動を中止しました(状態ファイルの破損)\n"
+        f"状態ファイルが破損しているか読み込めません: {tmp_path / 'corrupt.json'} "
+        "(原因: JSONDecodeError)。"
+        f" 破損ファイルのコピー: {tmp_path / 'corrupt.json'}。"
+        "原因を確認し、ファイルを修正するか、意図的に初期化する場合はファイルを削除してください。"
+    ]

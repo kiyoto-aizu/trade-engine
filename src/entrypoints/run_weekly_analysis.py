@@ -105,14 +105,25 @@ def main() -> None:
         analyzer = create_daily_analyzer()
         analysis = analyzer.analyze_weekly(summary) if analyzer else None
         result = {**summary, "generated_at": datetime.now().isoformat(timespec="seconds"), "llm_analysis": analysis}
-        args.output.mkdir(parents=True, exist_ok=True)
         output_path = args.output / f"{week_start:%Y-%m-%d}_{week_end:%Y-%m-%d}.json"
-        write_json(output_path, result)
+        try:
+            args.output.mkdir(parents=True, exist_ok=True)
+            saved = write_json(output_path, result)
+        except OSError:
+            saved = False
+            logger.critical("週次分析結果を保存できません: %s", output_path, exc_info=True)
+        else:
+            if not saved:
+                logger.critical("週次分析結果を保存できません: %s", output_path)
         lines = [
             f"対象週: {week_start}～{week_end}",
             f"集計状態: {'確定' if summary['period']['is_complete'] else '途中'}",
             *period_notification_lines(summary, summary["trend_check"], "週次", analysis),
-            f"詳細: {output_path}",
+            (
+                f"詳細: {output_path}"
+                if saved
+                else f"分析結果の保存に失敗しました({output_path.name})"
+            ),
         ]
         message = format_result_notification(
             "分析運用", "週次分析", period_conclusion(summary, "週次"), lines

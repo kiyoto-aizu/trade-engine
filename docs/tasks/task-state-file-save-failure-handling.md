@@ -1,21 +1,23 @@
 # 改修タスク: 状態ファイルの破損・保存失敗対応
 
 - 起票日: 2026-10-04
-- 対象: `src/infrastructure/paper/paper_order_client.py`、`src/infrastructure/persistence/storage.py`、注文履歴読み書き、関連テスト
-- ステータス: **実装済み・コミット済み（`79b001e`、2026-10-04）**。キルスイッチ基準・日次レポートの保存失敗は2026-10-12に対応済み
+- 対象: 状態ファイル共通処理、`src/application/trading_usecase.py`、価格帯別トレンド状態、日次・週次・月次分析のJSON読み書き、取引起動通知、関連テスト・設計書
+- ステータス: **実装済み**。初回対応は`79b001e`（2026-10-04）、キルスイッチ基準・日次レポートの保存失敗は2026-10-12に対応
 - 実施時期: **2026-10-04**
 - 関連調査: 2026-10-02「売買部分サイレントスキップ横並び調査」。第1弾は取引判断理由を`DecisionJournalRepository.TRADING_REASON_CODES`等へ記録したが、状態ファイル読込/保存失敗の専用記録はなく、共通JSON層は一般ログだけを出す。
 
-## 未対応範囲
+## 2026-10-12追加対応
 
-2026-10-12に次の2点を対応済み。
 - キルスイッチ基準資本: 保存失敗時はメモリ上の基準を使い続け、未保存として保持する。保存対象`kill_switch_baseline`として既存の連続失敗カウント・初回critical通知・閾値での新規買い停止(売り・決済は継続)に載せ、取引ループごとに再保存して成功で復帰する。
 - 日次レポート: `mkdir`の`OSError`と`write_json`失敗を処理し、1回再試行後も失敗なら`report_text`をcriticalログに残しSlack通知する。取引結果通知は必ず送り、「日次レポート保存失敗」を添える。
+- キルスイッチ基準ファイルの読込: `read_json_strict()`を使い、既存ファイルが破損・読込不能・dict以外なら破損コピーを残して`StateFileCorruptError`で起動を停止する。取引起動処理からcritical Slack通知を送り、ファイルなしと前日以前の正常ファイルは従来どおり扱う。
+- 価格帯別トレンド状態: `mkdir`の`OSError`と`write_json()`失敗をcriticalログ・Slack通知に記録する。価格帯・日付ごとに同一実行内の通知を重複させず、トレンド判定と後続処理は継続する。
+- 週次・月次分析JSON: 出力ディレクトリ作成または`write_json()`が失敗しても集計・所見を含む分析通知を送信する。詳細パスの代わりに`分析結果の保存に失敗しました(ファイル名)`を通知する。
+- `run_daily_analysis`の日次レポート: JSON破損・読込失敗・dict以外を警告ログに記録し、レポートなしとして既存の理由解決処理へ渡す。
 
-残る未対応(今回は変更しない):
-- 起動時のキルスイッチ基準ファイルは`read_json()`(非strict)で読むため、破損していても停止・破損コピー保存はされず、基準がその時点の資産で作り直されて上書きされる。他の状態ファイルのような`StateFileCorruptError`扱いにはなっていない。
-- `run_daily_analysis`は日次レポート欠落日を警告ログ+「日次レポートなし」の理由で扱い落ちないが、レポートJSONが破損している場合は`json.loads`の例外で落ちる。
-- `write_json`の戻り値を見ていない他の呼び出し元: 中=`price_band_trend_check._write_status`(状態欠落で再判定・重複通知の恐れ、mkdirの`OSError`も未処理)、`run_weekly_analysis`・`run_monthly_analysis`(出力JSON欠落、通知は詳細パスを案内するため実在しない恐れ)。小=`error_analyzer._persist`(重複抑止状態の欠落のみ)、`run_daily_diary`(context欠落)、`backtest_v2_multi_day_check`(検証用の出力)。大に該当するものはない。
+## 今回対象外の保存呼び出し元
+
+- 小=`error_analyzer._persist`(重複抑止状態の欠落のみ)、`run_daily_diary`(context欠落)、`backtest_v2_multi_day_check`(検証用の出力)。大に該当するものはない。
 
 ## 背景
 

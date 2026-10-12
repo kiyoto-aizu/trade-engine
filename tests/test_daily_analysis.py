@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime
 
 import pytest
@@ -67,6 +68,40 @@ def test_daily_notification_marks_failed_daily_refresh_as_undecidable():
 
     assert "判定不能(日足更新失敗)" in lines
     assert not any("候補全体:" in line for line in lines)
+
+
+@pytest.mark.parametrize("content", ["{broken-json", "[]"])
+def test_corrupt_daily_report_is_treated_as_missing(
+    tmp_path, caplog, monkeypatch, content
+):
+    paths = _paths(tmp_path)
+    paths.daily_report_dir.mkdir(parents=True)
+    (paths.daily_report_dir / "2026-10-06.json").write_text(
+        content, encoding="utf-8"
+    )
+
+    with caplog.at_level("WARNING"):
+        report = run_daily_analysis._load_daily_report(paths, date(2026, 10, 6))
+
+    assert report is None
+    assert "日次レポートを読み込めません" in caplog.text or "形式が不正です" in caplog.text
+    monkeypatch.setattr(
+        run_daily_analysis, "load_selected_symbols", lambda *_: ["AAA"]
+    )
+    assert run_daily_analysis.resolve_no_trade_reason(
+        report, paths, date(2026, 10, 6)
+    ) == {"reason": run_daily_analysis.OTHER, "detail": "日次レポートなし"}
+
+
+def test_valid_daily_report_is_loaded_unchanged(tmp_path):
+    paths = _paths(tmp_path)
+    paths.daily_report_dir.mkdir(parents=True)
+    report = {"date": "2026-10-06", "order_count": 2}
+    (paths.daily_report_dir / "2026-10-06.json").write_text(
+        json.dumps(report), encoding="utf-8"
+    )
+
+    assert run_daily_analysis._load_daily_report(paths, date(2026, 10, 6)) == report
 
 
 def test_daily_analysis_notifies_even_when_daily_refresh_fails(monkeypatch, tmp_path):

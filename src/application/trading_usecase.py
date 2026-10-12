@@ -43,7 +43,13 @@ from src.infrastructure.notification.slack_notify import (
     notify_daily,
 )
 from src.infrastructure.calendar.japanese_calendar import is_trading_session
-from src.infrastructure.persistence.storage import read_json, write_json
+from src.infrastructure.persistence.storage import (
+    StateFileCorruptError,
+    preserve_corrupt_copy,
+    read_json,
+    read_json_strict,
+    write_json,
+)
 from src.infrastructure.persistence.filter_decision_repository import FilterDecisionRepository
 from src.domain.no_trade_reason import classify_no_trade_reason
 from src.infrastructure.persistence.decision_journal_repository import STAGE_TRADING
@@ -1450,10 +1456,23 @@ class TradingUseCase:
 
     def _initialize_daily_starting_capital(self, today, initial_wallet_amount, initial_positions) -> None:
         """当日の初回起動時だけキルスイッチ基準資本を保存します。"""
-        baseline = read_json(self.kill_switch_baseline_path)
-        if isinstance(baseline, dict) and baseline.get("date") == today:
-            self.daily_starting_capital = float(baseline.get("capital", config.OPERATING_CAPITAL))
-            return
+        baseline = read_json_strict(self.kill_switch_baseline_path)
+        if baseline is not None:
+            try:
+                baseline_date = date.fromisoformat(baseline["date"])
+                baseline_capital = float(baseline["capital"])
+                if not math.isfinite(baseline_capital) or baseline_capital <= 0:
+                    raise ValueError("capital must be a finite positive number")
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise StateFileCorruptError(
+                    self.kill_switch_baseline_path,
+                    f"値が不正です({type(exc).__name__}: {exc})",
+                    preserve_corrupt_copy(self.kill_switch_baseline_path),
+                ) from exc
+
+            if baseline_date.isoformat() == today:
+                self.daily_starting_capital = baseline_capital
+                return
 
         computed_capital = self._calculate_total_equity(initial_wallet_amount, initial_positions)
         self.daily_starting_capital = (

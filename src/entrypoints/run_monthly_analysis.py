@@ -114,14 +114,25 @@ def main() -> None:
         analyzer = create_daily_analyzer()
         analysis = analyzer.analyze_monthly(summary) if analyzer else None
         result = {**summary, "generated_at": datetime.now().isoformat(timespec="seconds"), "llm_analysis": analysis}
-        args.output.mkdir(parents=True, exist_ok=True)
         output_path = args.output / f"{month_text}.json"
-        write_json(output_path, result)
+        try:
+            args.output.mkdir(parents=True, exist_ok=True)
+            saved = write_json(output_path, result)
+        except OSError:
+            saved = False
+            logger.critical("月次分析結果を保存できません: %s", output_path, exc_info=True)
+        else:
+            if not saved:
+                logger.critical("月次分析結果を保存できません: %s", output_path)
         lines = [
             f"対象月: {month_text}",
             f"集計状態: {'確定' if summary['period']['is_complete'] else '途中'}",
             *period_notification_lines(summary, summary["trend_check"], "月次", analysis),
-            f"詳細: {output_path}",
+            (
+                f"詳細: {output_path}"
+                if saved
+                else f"分析結果の保存に失敗しました({output_path.name})"
+            ),
         ]
         message = format_result_notification(
             "分析運用", "月次総合分析", period_conclusion(summary, "月次"), lines

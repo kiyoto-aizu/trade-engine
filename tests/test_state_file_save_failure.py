@@ -357,6 +357,80 @@ def test_kill_switch_baseline_success_is_unchanged(tmp_path):
     assert messages == []
 
 
+def test_corrupt_kill_switch_baseline_stops_and_preserves_copy(tmp_path):
+    path = tmp_path / "kill_switch_baseline.json"
+    content = "{not-json"
+    path.write_text(content, encoding="utf-8")
+    use_case = _baseline_use_case(tmp_path, [])
+
+    with pytest.raises(StateFileCorruptError):
+        use_case._initialize_daily_starting_capital("2026-09-25", 50_000.0, [])
+
+    assert path.read_text(encoding="utf-8") == content
+    copies = _corrupt_copies(path)
+    assert len(copies) == 1
+    assert copies[0].read_text(encoding="utf-8") == content
+
+
+@pytest.mark.parametrize(
+    "baseline",
+    [
+        {"date": "2026-09-25", "capital": "not-a-number"},
+        {"date": "2026-09-25", "capital": 0},
+        {"date": "not-a-date", "capital": 50_000},
+    ],
+)
+def test_invalid_kill_switch_baseline_values_stop_and_preserve_copy(
+    tmp_path, baseline
+):
+    path = tmp_path / "kill_switch_baseline.json"
+    content = json.dumps(baseline)
+    path.write_text(content, encoding="utf-8")
+    use_case = _baseline_use_case(tmp_path, [])
+
+    with pytest.raises(StateFileCorruptError):
+        use_case._initialize_daily_starting_capital("2026-09-25", 50_000.0, [])
+
+    assert path.read_text(encoding="utf-8") == content
+    copies = _corrupt_copies(path)
+    assert len(copies) == 1
+    assert copies[0].read_text(encoding="utf-8") == content
+
+
+def test_same_day_kill_switch_baseline_is_loaded_without_recalculation(tmp_path):
+    path = tmp_path / "kill_switch_baseline.json"
+    path.write_text(
+        json.dumps({"date": "2026-09-25", "capital": 75_000.0}),
+        encoding="utf-8",
+    )
+    use_case = _baseline_use_case(tmp_path, [])
+
+    use_case._initialize_daily_starting_capital("2026-09-25", 50_000.0, [])
+
+    assert use_case.daily_starting_capital == 75_000.0
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "date": "2026-09-25",
+        "capital": 75_000.0,
+    }
+
+
+def test_previous_day_kill_switch_baseline_is_replaced_normally(tmp_path):
+    path = tmp_path / "kill_switch_baseline.json"
+    path.write_text(
+        json.dumps({"date": "2026-09-24", "capital": 75_000.0}),
+        encoding="utf-8",
+    )
+    use_case = _baseline_use_case(tmp_path, [])
+
+    use_case._initialize_daily_starting_capital("2026-09-25", 50_000.0, [])
+
+    assert use_case.daily_starting_capital == 50_000.0
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "date": "2026-09-25",
+        "capital": 50_000.0,
+    }
+
+
 # --- 日次レポート ---
 
 def _report_case(tmp_path, monkeypatch):

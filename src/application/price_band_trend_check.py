@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections import Counter
 from dataclasses import replace
@@ -21,7 +22,9 @@ from src.domain.trend_check import JUDGED_LABELS
 from src.infrastructure.calendar.japanese_calendar import is_trading_day
 from src.infrastructure.persistence.storage import write_json
 from src.infrastructure.persistence.trend_check_repository import TrendCheckRepository
+from src.infrastructure.notification.slack_notify import notify_critical
 
+logger = logging.getLogger(__name__)
 PRICE_BANDS = (270, 450, 900)
 VERSION = "v1"
 
@@ -75,11 +78,45 @@ def _read_status(paths: TrendCheckPaths, price_band: int, trade_date: str) -> di
 
 
 def _write_status(
-    paths: TrendCheckPaths, price_band: int, trade_date: str, status: dict
+    paths: TrendCheckPaths,
+    price_band: int,
+    trade_date: str,
+    status: dict,
+    notified_failures: set[tuple[str, int]] | None = None,
 ) -> None:
     status_path = _status_path(paths, price_band, trade_date)
-    status_path.parent.mkdir(parents=True, exist_ok=True)
-    write_json(status_path, status)
+    try:
+        status_path.parent.mkdir(parents=True, exist_ok=True)
+        saved = write_json(status_path, status)
+    except OSError:
+        logger.critical("価格帯トレンドチェック状態を保存できません: %s", status_path, exc_info=True)
+        _notify_status_save_failure(
+            status_path, price_band, trade_date, notified_failures
+        )
+        return
+
+    if not saved:
+        logger.critical("価格帯トレンドチェック状態を保存できません: %s", status_path)
+        _notify_status_save_failure(
+            status_path, price_band, trade_date, notified_failures
+        )
+
+
+def _notify_status_save_failure(
+    status_path: Path,
+    price_band: int,
+    trade_date: str,
+    notified_failures: set[tuple[str, int]] | None,
+) -> None:
+    key = (trade_date, price_band)
+    if notified_failures is not None:
+        if key in notified_failures:
+            return
+        notified_failures.add(key)
+    try:
+        notify_critical(f"価格帯トレンドチェック状態の保存に失敗しました: {status_path}")
+    except Exception:
+        logger.exception("価格帯トレンドチェック状態の保存失敗通知に失敗しました")
 
 
 def _result_dates(paths: TrendCheckPaths, price_band: int, through: str) -> set[str]:
@@ -206,6 +243,7 @@ def _evaluate_price_band_day(
     trade_date: str,
     *,
     source_database: Path,
+    notified_failures: set[tuple[str, int]] | None = None,
 ) -> dict:
     band_paths = _filtering_paths(paths, price_band)
     selected = load_selected_symbols(band_paths, trade_date)
@@ -224,7 +262,7 @@ def _evaluate_price_band_day(
             "undecidable_count": 0,
             "undecidable_reasons": {},
         }
-        _write_status(paths, price_band, trade_date, status)
+        _write_status(paths, price_band, trade_date, status, notified_failures)
         return status
 
     if not selected:
@@ -245,7 +283,7 @@ def _evaluate_price_band_day(
                 "undecidable_count": 0,
                 "undecidable_reasons": {},
             }
-            _write_status(paths, price_band, trade_date, status)
+            _write_status(paths, price_band, trade_date, status, notified_failures)
             return status
         repository = TrendCheckRepository(_database_path(paths, price_band))
         ensure_builtin_versions(repository, trade_date)
@@ -260,7 +298,7 @@ def _evaluate_price_band_day(
             "undecidable_count": 0,
             "undecidable_reasons": {},
         }
-        _write_status(paths, price_band, trade_date, status)
+        _write_status(paths, price_band, trade_date, status, notified_failures)
         return status
 
     result = None
@@ -298,7 +336,7 @@ def _evaluate_price_band_day(
             "undecidable_count": 0,
             "undecidable_reasons": {},
         }
-        _write_status(paths, price_band, trade_date, status)
+        _write_status(paths, price_band, trade_date, status, notified_failures)
         return status
 
     rows, summary = result
@@ -320,7 +358,7 @@ def _evaluate_price_band_day(
         "undecidable_count": summary["selected_undecidable"],
         "undecidable_reasons": dict(reasons),
     }
-    _write_status(paths, price_band, trade_date, status)
+    _write_status(paths, price_band, trade_date, status, notified_failures)
     return status
 
 
@@ -332,6 +370,7 @@ def run_price_band_checks(
     source_database: Path = DEFAULT_DATABASE_FILE,
 ) -> dict | None:
     through = trade_date.isoformat()
+    notified_failures: set[tuple[str, int]] = set()
     if not cache_update_ok:
         for price_band in PRICE_BANDS:
             existing = _read_status(paths, price_band, through)
@@ -350,6 +389,7 @@ def run_price_band_checks(
                         "undecidable_count": 0,
                         "undecidable_reasons": {},
                     },
+                    notified_failures,
                 )
         return None
 
@@ -371,6 +411,7 @@ def run_price_band_checks(
                 price_band,
                 day,
                 source_database=source_database,
+                notified_failures=notified_failures,
             )
     return load_price_band_trends(trade_date, trade_date, paths)
 

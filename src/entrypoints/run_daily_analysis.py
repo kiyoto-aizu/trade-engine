@@ -95,9 +95,14 @@ def _load_daily_report(paths: TrendCheckPaths, trade_date: date) -> dict | None:
     if not path.exists():
         logger.warning("日次取引レポートがありません: %s", path)
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("日次レポートを読み込めません: %s (%s)", path, exc)
+        return None
     if not isinstance(data, dict):
-        raise ValueError(f"日次取引レポートの形式が不正です: {path}")
+        logger.warning("日次取引レポートの形式が不正です: %s", path)
+        return None
     return data
 
 
