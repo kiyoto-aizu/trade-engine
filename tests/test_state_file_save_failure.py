@@ -218,7 +218,10 @@ def test_paper_state_save_failure_is_detected_and_released(tmp_path, monkeypatch
 
 def test_halt_stops_new_buys_but_not_sells_or_eod_liquidation(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "STATE_SAVE_CONSECUTIVE_FAILURE_THRESHOLD", 2)
-    monkeypatch.setattr("src.application.trading_usecase.write_json", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "src.application.trading_usecase.write_json",
+        lambda path, *a, **k: path.name == "kill_switch_baseline.json",  # 基準保存は成功させ、履歴保存だけ失敗させる
+    )
     monkeypatch.setattr("src.infrastructure.paper.paper_order_client.write_json", lambda *a, **k: False)
     monkeypatch.setattr(config, "TRADING_MODE", "paper")
     monkeypatch.setattr(config, "IS_DEMO", True)
@@ -297,3 +300,108 @@ def test_halt_stops_new_buys_but_not_sells_or_eod_liquidation(tmp_path, monkeypa
     assert order_sender.get_positions("dummy") == []
     assert sum("NEW_BUY_HALTED_STATE_SAVE_FAILURE" in m for m in messages) == 1
     assert any("連続失敗回数: 1" in m for m in messages)
+
+
+# --- キルスイッチ基準資本 ---
+
+def _baseline_use_case(tmp_path, messages):
+    return TradingUseCase(
+        token="dummy",
+        order_history_path=tmp_path / "order_history.json",
+        notifier=messages.append,
+        daily_report_directory=tmp_path / "reports",
+        kill_switch_baseline_path=tmp_path / "kill_switch_baseline.json",
+    )
+
+
+def test_kill_switch_baseline_failure_keeps_memory_value_notifies_once_and_recovers(tmp_path, monkeypatch):
+    saves = {"ok": False}
+    monkeypatch.setattr("src.application.trading_usecase.write_json", lambda *a, **k: saves["ok"])
+    messages = []
+    use_case = _baseline_use_case(tmp_path, messages)
+
+    use_case._initialize_daily_starting_capital("2026-09-25", 100_000.0, [])
+    assert use_case.daily_starting_capital == 100_000.0
+    assert len(messages) == 1 and "kill_switch_baseline.json" in messages[0]
+    use_case._retry_kill_switch_baseline_save()
+    assert len(messages) == 1
+    assert use_case._kill_switch_baseline_save_failures == 2
+
+    saves["ok"] = True
+    use_case._retry_kill_switch_baseline_save()
+    assert use_case._kill_switch_baseline_save_failures == 0
+    assert use_case._kill_switch_baseline_unsaved is None
+    assert use_case.daily_starting_capital == 100_000.0
+
+
+def test_kill_switch_baseline_consecutive_failures_halt_new_buys_until_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "STATE_SAVE_CONSECUTIVE_FAILURE_THRESHOLD", 2)
+    saves = {"ok": False}
+    monkeypatch.setattr("src.application.trading_usecase.write_json", lambda *a, **k: saves["ok"])
+    use_case = _baseline_use_case(tmp_path, [])
+
+    use_case._initialize_daily_starting_capital("2026-09-25", 100_000.0, [])
+    assert use_case._is_new_buy_halted_by_save_failure() is False  # 1回では止めない
+    use_case._retry_kill_switch_baseline_save()  # ループごとの再保存
+    assert use_case._is_new_buy_halted_by_save_failure() is True
+    saves["ok"] = True
+    assert use_case._is_new_buy_halted_by_save_failure() is False
+
+
+def test_kill_switch_baseline_success_is_unchanged(tmp_path):
+    messages = []
+    use_case = _baseline_use_case(tmp_path, messages)
+    use_case._initialize_daily_starting_capital("2026-09-25", 100_000.0, [])
+    saved = json.loads((tmp_path / "kill_switch_baseline.json").read_text(encoding="utf-8"))
+    assert saved == {"date": "2026-09-25", "capital": 100_000.0}
+    assert messages == []
+
+
+# --- 日次レポート ---
+
+def _report_case(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.application.trading_usecase.time.sleep", lambda s: None)
+    messages = []
+    return _baseline_use_case(tmp_path, messages), messages
+
+
+def test_daily_report_write_failure_retries_then_still_sends_result(tmp_path, monkeypatch):
+    use_case, messages = _report_case(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        "src.application.trading_usecase.write_json", lambda *a, **k: calls.append(a) or False
+    )
+    use_case._send_end_of_day_report()
+
+    assert len(calls) == 2
+    assert any("日次レポートの保存に失敗しました" in m and ".json" in m for m in messages)
+    result = [m for m in messages if "トレード終了" in m]
+    assert len(result) == 1 and "日次レポート保存失敗" in result[0]
+
+
+def test_daily_report_mkdir_failure_still_sends_result(tmp_path, monkeypatch):
+    use_case, messages = _report_case(tmp_path, monkeypatch)
+    (tmp_path / "reports").write_text("file", encoding="utf-8")  # mkdir が失敗する
+    use_case._send_end_of_day_report()
+
+    assert any("日次レポートの保存に失敗しました" in m for m in messages)
+    assert any("トレード終了" in m and "日次レポート保存失敗" in m for m in messages)
+
+
+def test_daily_report_retry_success_is_silent(tmp_path, monkeypatch):
+    use_case, messages = _report_case(tmp_path, monkeypatch)
+    real = storage.write_json
+    results = iter([False])
+    monkeypatch.setattr(
+        "src.application.trading_usecase.write_json",
+        lambda p, d: False if next(results, True) is False else real(p, d),
+    )
+    use_case._send_end_of_day_report()
+    assert len(messages) == 1 and "日次レポート保存失敗" not in messages[0]
+
+
+def test_daily_report_success_is_unchanged(tmp_path, monkeypatch):
+    use_case, messages = _report_case(tmp_path, monkeypatch)
+    use_case._send_end_of_day_report()
+    assert len(messages) == 1 and "日次レポート保存失敗" not in messages[0]
+    assert list((tmp_path / "reports").glob("*.json"))

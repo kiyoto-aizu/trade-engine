@@ -164,6 +164,8 @@ class TradingUseCase:
         self._board_fetch_failure_notified = False
         # 状態ファイル保存失敗: 注文履歴の連続失敗回数と、通知済みの連続失敗ストリーク
         self._order_history_save_failures = 0
+        self._kill_switch_baseline_save_failures = 0
+        self._kill_switch_baseline_unsaved: Optional[dict] = None
         self._save_failure_notified_sources: set[str] = set()
         self._new_buy_halt_notified = False
         self._progress_reports_sent: set[str] = set()
@@ -1118,7 +1120,12 @@ class TradingUseCase:
 
     def _state_save_failure_counts(self) -> dict[str, tuple[str, int]]:
         """保存対象ごとの(ファイル名, 連続失敗回数)。"""
-        counts = {"order_history": (self.order_history_path.name, self._order_history_save_failures)}
+        counts = {
+            "order_history": (self.order_history_path.name, self._order_history_save_failures),
+            "kill_switch_baseline": (
+                self.kill_switch_baseline_path.name, self._kill_switch_baseline_save_failures,
+            ),
+        }
         state_path = getattr(self.order_sender, "state_path", None)
         if state_path is not None:
             counts["paper_state"] = (
@@ -1159,6 +1166,8 @@ class TradingUseCase:
         # 買いが止まっている間は注文がなく保存機会もないため、ここで再保存して解除を可能にする
         if self._order_history_save_failures >= threshold:
             self._save_order_history()
+        if self._kill_switch_baseline_save_failures >= threshold:
+            self._retry_kill_switch_baseline_save()
         retry = getattr(self.order_sender, "retry_save_state", None)
         if callable(retry) and getattr(self.order_sender, "consecutive_save_failures", 0) >= threshold:
             retry()
@@ -1450,10 +1459,20 @@ class TradingUseCase:
         self.daily_starting_capital = (
             computed_capital if computed_capital > 0 else config.OPERATING_CAPITAL
         )
-        write_json(
-            self.kill_switch_baseline_path,
-            {"date": today, "capital": self.daily_starting_capital},
-        )
+        self._kill_switch_baseline_unsaved = {"date": today, "capital": self.daily_starting_capital}
+        self._retry_kill_switch_baseline_save()
+
+    def _retry_kill_switch_baseline_save(self) -> None:
+        """未保存のキルスイッチ基準資本を保存する。失敗してもメモリ上の基準を使い続ける。"""
+        payload = self._kill_switch_baseline_unsaved
+        if payload is None:
+            return
+        if write_json(self.kill_switch_baseline_path, payload):
+            self._kill_switch_baseline_unsaved = None
+            self._kill_switch_baseline_save_failures = 0
+        else:
+            self._kill_switch_baseline_save_failures += 1
+        self._check_state_save_failure_notification()
 
     # ================================================================================
     # 口座状態の取得
@@ -1870,8 +1889,7 @@ class TradingUseCase:
             "report_text": report_text,
             "llm_analysis": None,
         }
-        self.daily_report_directory.mkdir(parents=True, exist_ok=True)
-        write_json(self.daily_report_directory / f"{today}.json", report_data)
+        report_saved = self._save_daily_report(today, report_data, report_text)
         positions = [
             f"{item.get('Symbol', '')}({float(item.get('ProfitLoss', 0) or 0):+.0f}円)"
             for item in self.last_positions
@@ -1893,12 +1911,38 @@ class TradingUseCase:
                 f"保有: {', '.join(positions) if positions else 'なし'}",
                 f"エラー概要: {error_detail}",
                 f"強制売却確認: {liquidation_detail}",
+                *([] if report_saved else ["日次レポート保存失敗"]),
             ],
         )
         if self.notifier:
             self.notifier(notification)
         else:
             notify_daily(notification)
+
+    DAILY_REPORT_SAVE_RETRY_SECONDS = 1.0
+
+    def _save_daily_report(self, today, report_data: dict, report_text: str) -> bool:
+        """日次レポートを保存する。失敗時は1回再試行し、なお失敗なら通知して False を返す。"""
+        report_path = self.daily_report_directory / f"{today}.json"
+        error = "write_json が False を返しました(詳細はログを確認してください)"
+        for attempt in range(2):
+            if attempt:
+                time.sleep(self.DAILY_REPORT_SAVE_RETRY_SECONDS)
+            try:
+                self.daily_report_directory.mkdir(parents=True, exist_ok=True)
+                if write_json(report_path, report_data):
+                    return True
+            except OSError as exc:
+                error = f"{type(exc).__name__}: {exc}"
+                logger.exception("日次レポートの保存準備に失敗: %s", report_path)
+        logger.critical(
+            "日次レポートの保存に失敗しました: ファイル=%s | エラー=%s\nreport_text:\n%s",
+            report_path.name, error, report_text,
+        )
+        self._notify_safely(
+            f"日次レポートの保存に失敗しました。ファイル: {report_path.name} / エラー: {error}"
+        )
+        return False
 
     def _fresh_liquidation_quote(
         self, symbol: str
@@ -2247,6 +2291,7 @@ class TradingUseCase:
             now = initial_now if first_loop else now_provider()
             self._current_now = now
             first_loop = False
+            self._retry_kill_switch_baseline_save()
             if not filter_decisions_initialized:
                 self._finalize_filter_decisions_safely(now)
                 self._finalize_same_day_filter_decisions_safely(now, include_today=False)
