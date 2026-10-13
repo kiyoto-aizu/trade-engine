@@ -51,7 +51,20 @@ def _status_path(paths: TrendCheckPaths, price_band: int, trade_date: str) -> Pa
     return _status_directory(paths, price_band) / f"{trade_date}.json"
 
 
-def _filtering_paths(paths: TrendCheckPaths, price_band: int) -> TrendCheckPaths:
+SOURCE_MORNING_BOARD = "morning_board"
+SOURCE_MIDDAY_UNSPECIFIED = "midday_unspecified"
+SOURCE_LABELS = {
+    SOURCE_MORNING_BOARD: "朝実測",
+    "yahoo_minute_estimate": "昼推定",
+    SOURCE_MIDDAY_UNSPECIFIED: "昼(出典未記録)",
+}
+
+
+def source_label(source: str) -> str:
+    return SOURCE_LABELS.get(source, source)
+
+
+def _morning_paths(paths: TrendCheckPaths, price_band: int) -> TrendCheckPaths:
     if price_band == 270:
         return paths
     filtering_directory = (
@@ -62,6 +75,37 @@ def _filtering_paths(paths: TrendCheckPaths, price_band: int) -> TrendCheckPaths
         filtering_dir=filtering_directory,
         diagnostics_dir=filtering_directory / "diagnostics",
     )
+
+
+def _midday_paths(paths: TrendCheckPaths, price_band: int) -> TrendCheckPaths | None:
+    if price_band == 270 or paths.midday_filtering_dir is None:
+        return None
+    midday_directory = paths.midday_filtering_dir / str(price_band)
+    return replace(
+        paths,
+        filtering_dir=midday_directory,
+        diagnostics_dir=midday_directory / "diagnostics",
+    )
+
+
+def _has_result_files(band_paths: TrendCheckPaths, trade_date: str) -> bool:
+    return (band_paths.filtering_dir / f"{trade_date}.json").is_file() or any(
+        band_paths.diagnostics_dir.glob(f"{trade_date}_*.json")
+    )
+
+
+def _is_midday(paths: TrendCheckPaths, price_band: int, trade_date: str) -> bool:
+    midday = _midday_paths(paths, price_band)
+    return midday is not None and _has_result_files(midday, trade_date)
+
+
+def _filtering_paths(
+    paths: TrendCheckPaths, price_band: int, trade_date: str
+) -> TrendCheckPaths:
+    """選定結果・診断の読み取り先。450/900円帯は昼の結果か診断があれば昼を優先し、なければ朝。"""
+    if _is_midday(paths, price_band, trade_date):
+        return _midday_paths(paths, price_band)
+    return _morning_paths(paths, price_band)
 
 
 def _read_json(path: Path) -> dict | None:
@@ -120,17 +164,19 @@ def _notify_status_save_failure(
 
 
 def _result_dates(paths: TrendCheckPaths, price_band: int, through: str) -> set[str]:
-    band_paths = _filtering_paths(paths, price_band)
-    dates = {
-        path.stem
-        for path in band_paths.filtering_dir.glob("????-??-??.json")
-        if path.stem <= through
-    }
-    dates.update(
-        path.name[:10]
-        for path in band_paths.diagnostics_dir.glob("????-??-??_*.json")
-        if path.name[:10] <= through
-    )
+    dates: set[str] = set()
+    locations = [_morning_paths(paths, price_band), _midday_paths(paths, price_band)]
+    for band_paths in filter(None, locations):
+        dates.update(
+            path.stem
+            for path in band_paths.filtering_dir.glob("????-??-??.json")
+            if path.stem <= through
+        )
+        dates.update(
+            path.name[:10]
+            for path in band_paths.diagnostics_dir.glob("????-??-??_*.json")
+            if path.name[:10] <= through
+        )
     return dates
 
 
@@ -148,13 +194,36 @@ def _previous_screening_file(price_band: int, trade_date: str) -> Path:
 def _latest_diagnostic(
     paths: TrendCheckPaths, price_band: int, trade_date: str
 ) -> dict | None:
-    band_paths = _filtering_paths(paths, price_band)
+    band_paths = _filtering_paths(paths, price_band, trade_date)
     diagnostics = sorted(band_paths.diagnostics_dir.glob(f"{trade_date}_*.json"))
     for diagnostic_path in reversed(diagnostics):
         diagnostic = _read_json(diagnostic_path)
         if diagnostic is not None:
             return diagnostic
     return None
+
+
+def _selection_source(
+    paths: TrendCheckPaths, price_band: int, trade_date: str
+) -> str | None:
+    """選定の出典。朝の板実測か、昼診断に記録された分子の出典(yahoo_minute_estimate等)。保存物がなければNone。"""
+    band_paths = _filtering_paths(paths, price_band, trade_date)
+    if not _has_result_files(band_paths, trade_date):
+        return None
+    if not _is_midday(paths, price_band, trade_date):
+        return SOURCE_MORNING_BOARD
+    diagnostic = _latest_diagnostic(paths, price_band, trade_date) or {}
+    source = (diagnostic.get("summary") or {}).get("source")
+    if not source:
+        source = next(
+            (
+                candidate.get("numerator_source")
+                for candidate in diagnostic.get("candidates") or []
+                if isinstance(candidate, dict) and candidate.get("numerator_source")
+            ),
+            None,
+        )
+    return str(source) if source else SOURCE_MIDDAY_UNSPECIFIED
 
 
 def _missing_reason(paths: TrendCheckPaths, price_band: int, trade_date: str) -> str:
@@ -187,12 +256,13 @@ def price_band_symbols_for_update(
     through = trade_date.isoformat()
     symbols: set[str] = set()
     for price_band in (450, 900):
-        band_paths = _filtering_paths(paths, price_band)
         for day in _result_dates(paths, price_band, through):
             status = _read_status(paths, price_band, day)
             if status and status.get("state") == "evaluated" and day != through:
                 continue
-            selected = load_selected_symbols(band_paths, day)
+            selected = load_selected_symbols(
+                _filtering_paths(paths, price_band, day), day
+            )
             if selected:
                 symbols.update(selected)
     return sorted(symbols)
@@ -232,8 +302,10 @@ def _standard_rows_for_day(
 def _store_missing_result(
     repository: TrendCheckRepository,
     trade_date: str,
+    selection_source: str | None = None,
 ) -> None:
     summary = summarize_rows(trade_date, VERSION, "selected_price_band", None, [])
+    summary["selection_source"] = selection_source
     repository.replace_day(trade_date, VERSION, [], summary)
 
 
@@ -245,19 +317,21 @@ def _evaluate_price_band_day(
     source_database: Path,
     notified_failures: set[tuple[str, int]] | None = None,
 ) -> dict:
-    band_paths = _filtering_paths(paths, price_band)
+    band_paths = _filtering_paths(paths, price_band, trade_date)
+    selection_source = _selection_source(paths, price_band, trade_date)
     selected = load_selected_symbols(band_paths, trade_date)
     if selected is None:
         reason = _missing_reason(paths, price_band, trade_date)
         repository = TrendCheckRepository(_database_path(paths, price_band))
         ensure_builtin_versions(repository, trade_date)
-        _store_missing_result(repository, trade_date)
+        _store_missing_result(repository, trade_date, selection_source)
         status = {
             "trade_date": trade_date,
             "price_band": price_band,
             "version": VERSION,
             "state": "selection_missing",
             "reason": reason,
+            "selection_source": selection_source,
             "selected_count": None,
             "undecidable_count": 0,
             "undecidable_reasons": {},
@@ -272,13 +346,14 @@ def _evaluate_price_band_day(
             reason = "PREVIOUS_SCREENING_NOT_AVAILABLE"
             repository = TrendCheckRepository(_database_path(paths, price_band))
             ensure_builtin_versions(repository, trade_date)
-            _store_missing_result(repository, trade_date)
+            _store_missing_result(repository, trade_date, selection_source)
             status = {
                 "trade_date": trade_date,
                 "price_band": price_band,
                 "version": VERSION,
                 "state": "selection_missing",
                 "reason": reason,
+                "selection_source": selection_source,
                 "selected_count": None,
                 "undecidable_count": 0,
                 "undecidable_reasons": {},
@@ -287,13 +362,14 @@ def _evaluate_price_band_day(
             return status
         repository = TrendCheckRepository(_database_path(paths, price_band))
         ensure_builtin_versions(repository, trade_date)
-        _store_missing_result(repository, trade_date)
+        _store_missing_result(repository, trade_date, selection_source)
         status = {
             "trade_date": trade_date,
             "price_band": price_band,
             "version": VERSION,
             "state": "empty_selection",
             "reason": "NO_SELECTED_SYMBOLS",
+            "selection_source": selection_source,
             "selected_count": 0,
             "undecidable_count": 0,
             "undecidable_reasons": {},
@@ -325,13 +401,14 @@ def _evaluate_price_band_day(
         reason = "SELECTION_NOT_AVAILABLE"
         repository = TrendCheckRepository(_database_path(paths, price_band))
         ensure_builtin_versions(repository, trade_date)
-        _store_missing_result(repository, trade_date)
+        _store_missing_result(repository, trade_date, selection_source)
         status = {
             "trade_date": trade_date,
             "price_band": price_band,
             "version": VERSION,
             "state": "selection_missing",
             "reason": reason,
+            "selection_source": selection_source,
             "selected_count": None,
             "undecidable_count": 0,
             "undecidable_reasons": {},
@@ -340,6 +417,7 @@ def _evaluate_price_band_day(
         return status
 
     rows, summary = result
+    summary["selection_source"] = selection_source
     repository = TrendCheckRepository(_database_path(paths, price_band))
     ensure_builtin_versions(repository, trade_date)
     repository.replace_day(trade_date, VERSION, rows, summary)
@@ -354,6 +432,7 @@ def _evaluate_price_band_day(
         "version": VERSION,
         "state": "evaluated",
         "reason": None,
+        "selection_source": selection_source,
         "selected_count": summary["selected_count"],
         "undecidable_count": summary["selected_undecidable"],
         "undecidable_reasons": dict(reasons),
@@ -465,21 +544,8 @@ _FILTER_REASON_LABELS = {
 def _activity_diagnostic_paths(
     paths: TrendCheckPaths, price_band: int, trade_date: str
 ) -> list[Path]:
-    if price_band == 270:
-        return sorted(paths.diagnostics_dir.glob(f"{trade_date}_*.json"))
-    midday_dir = paths.midday_filtering_dir
-    if midday_dir is not None:
-        midday = sorted(
-            (midday_dir / str(price_band) / "diagnostics").glob(
-                f"{trade_date}_*.json"
-            )
-        )
-        if midday:
-            return midday
-        if (midday_dir / str(price_band) / f"{trade_date}.json").is_file():
-            return []
     return sorted(
-        _filtering_paths(paths, price_band).diagnostics_dir.glob(
+        _filtering_paths(paths, price_band, trade_date).diagnostics_dir.glob(
             f"{trade_date}_*.json"
         )
     )
@@ -506,18 +572,10 @@ def _activity_missing_reason(
 def _activity_result_path(
     paths: TrendCheckPaths, price_band: int, trade_date: str
 ) -> Path | None:
-    directories = []
-    if price_band != 270 and paths.midday_filtering_dir is not None:
-        directories.append(paths.midday_filtering_dir / str(price_band))
-    directories.append(_filtering_paths(paths, price_band).filtering_dir)
-    return next(
-        (
-            directory / f"{trade_date}.json"
-            for directory in directories
-            if (directory / f"{trade_date}.json").is_file()
-        ),
-        None,
+    result_file = _filtering_paths(paths, price_band, trade_date).filtering_dir / (
+        f"{trade_date}.json"
     )
+    return result_file if result_file.is_file() else None
 
 
 def _activity_dates(paths: TrendCheckPaths, start: str, end: str) -> set[str]:
@@ -530,25 +588,11 @@ def _activity_dates(paths: TrendCheckPaths, start: str, end: str) -> set[str]:
         dates.update(
             day for day in _status_files(paths, price_band, start, end)
         )
-        diagnostic_dirs = [_filtering_paths(paths, price_band).diagnostics_dir]
-        result_dirs = [_filtering_paths(paths, price_band).filtering_dir]
-        if price_band != 270 and paths.midday_filtering_dir is not None:
-            diagnostic_dirs.append(
-                paths.midday_filtering_dir / str(price_band) / "diagnostics"
-            )
-            result_dirs.append(paths.midday_filtering_dir / str(price_band))
-        for directory in diagnostic_dirs:
-            dates.update(
-                path.name[:10]
-                for path in directory.glob("????-??-??_*.json")
-                if start <= path.name[:10] <= end
-            )
-        for directory in result_dirs:
-            dates.update(
-                path.stem
-                for path in directory.glob("????-??-??.json")
-                if start <= path.stem <= end
-            )
+        dates.update(
+            day
+            for day in _result_dates(paths, price_band, end)
+            if day >= start
+        )
     return dates
 
 
@@ -562,6 +606,7 @@ def _price_band_activity(
     valid_days = 0
     missing_reasons: Counter[str] = Counter()
     skip_reasons: Counter[str] = Counter()
+    source_days: Counter[str] = Counter()
 
     for trade_date in sorted(dates):
         diagnostic_paths = _activity_diagnostic_paths(paths, price_band, trade_date)
@@ -631,6 +676,7 @@ def _price_band_activity(
             continue
         valid_days += 1
         signal_days += 1
+        source_days[_selection_source(paths, price_band, trade_date) or SOURCE_MORNING_BOARD] += 1
         candidate_count += len(candidates)
         signal_count += sum(candidate.get("selected") is True for candidate in candidates)
         for candidate in candidates:
@@ -646,8 +692,57 @@ def _price_band_activity(
         "skip_reason_counts": dict(skip_reasons),
         "candidate_count": candidate_count,
         "valid_days": valid_days,
+        "source_days": dict(source_days),
         "missing_days": sum(missing_reasons.values()),
         "missing_reasons": dict(missing_reasons),
+    }
+
+
+def _day_source(statuses: dict[str, dict], summary: dict) -> str:
+    """評価済み日の出典。status、DB行の順に読み、記録のない過去日は朝の板実測とみなす。"""
+    return (
+        statuses.get(summary["trade_date"], {}).get("selection_source")
+        or summary.get("selection_source")
+        or SOURCE_MORNING_BOARD
+    )
+
+
+def _source_metrics(price_band: int, summaries: list[dict], rows: list[dict]) -> dict:
+    selected_count = sum(int(item["selected_count"]) for item in summaries)
+    judged_count = sum(int(item["selected_judged"]) for item in summaries)
+    trend_count = sum(int(item["selected_trend"]) for item in summaries)
+    denominator = judged_count if price_band == 270 else selected_count
+    moves = [
+        float(row["open_to_close_pct"])
+        for row in rows
+        if row["label"] == LABEL_TREND and row["open_to_close_pct"] is not None
+    ]
+    buyable = sum(
+        1
+        for row in rows
+        if row["close"] is not None
+        and float(row["close"]) * config.ORDER_UNIT <= config.MAX_ORDER_AMOUNT_PER_TRADE
+    )
+    rate = trend_count / denominator if denominator else None
+    average_move = sum(moves) / len(moves) if moves else None
+    slots = min(
+        config.TARGET_POSITIONS,
+        math.floor(config.OPERATING_CAPITAL / (price_band * config.ORDER_UNIT)),
+    )
+    return {
+        "selected_count": selected_count,
+        "judged_count": judged_count,
+        "rate_denominator": denominator,
+        "trend_count": trend_count,
+        "trend_rate": rate,
+        "average_move_pct": average_move,
+        "buyable_count": buyable,
+        "buyable_rate": buyable / selected_count if selected_count else None,
+        "estimate": (
+            rate * average_move * slots
+            if rate is not None and average_move is not None
+            else None
+        ),
     }
 
 
@@ -688,6 +783,17 @@ def load_price_band_trends(
         trend_count = sum(int(item["selected_trend"]) for item in selected_summaries)
         rate_denominator = judged_count if price_band == 270 else selected_count
         overall_judged += judged_count
+        day_sources = {
+            item["trade_date"]: _day_source(statuses, item) for item in selected_summaries
+        }
+        by_source = {}
+        for source in sorted(set(day_sources.values())):
+            source_days = {day for day, value in day_sources.items() if value == source}
+            by_source[source] = _source_metrics(
+                price_band,
+                [item for item in selected_summaries if item["trade_date"] in source_days],
+                [row for row in selected_rows if row["trade_date"] in source_days],
+            )
         undecidable_reasons = Counter(
             row.get("undecidable_reason") or "UNSPECIFIED"
             for row in selected_rows
@@ -743,6 +849,7 @@ def load_price_band_trends(
             ),
             "undecidable_reasons": dict(undecidable_reasons),
             "activity": _price_band_activity(paths, price_band, activity_dates),
+            "by_source": by_source,
         }
 
     for item in collected.values():
@@ -829,10 +936,21 @@ def price_band_activity_lines(result: dict | None) -> list[str]:
             if skip_reasons
             else ""
         )
+        sources = activity.get("source_days") or {}
+        source_tag = ""
+        source_note = ""
+        if band != 270 and set(sources) - {SOURCE_MORNING_BOARD}:
+            if len(sources) == 1:
+                source_tag = f"[{source_label(next(iter(sources)))}]"
+            else:
+                source_note = "[" + "・".join(
+                    f"{source_label(source)}{count}日"
+                    for source, count in sorted(sources.items())
+                ) + "混在]"
         line = (
-            f"{band}円: シグナル{activity['signal_count']}{signal_suffix}・"
+            f"{band}円{source_tag}: シグナル{activity['signal_count']}{signal_suffix}・"
             f"見送り{activity['skip_count']}{skip_suffix}{skip_detail} / "
-            f"有効{activity['valid_days']}日"
+            f"有効{activity['valid_days']}日{source_note}"
         )
         if activity["missing_days"]:
             reasons = "・".join(
@@ -871,8 +989,35 @@ def _missing_text(item: dict, *, include_counts: bool) -> str:
     return f"欠測({'・'.join(reasons)})"
 
 
+def _source_segment(source: str, metrics: dict, price_band: int) -> str:
+    if metrics["trend_rate"] is None:
+        text = "判定不能" if metrics["selected_count"] else "データなし"
+    else:
+        text = (
+            f"{metrics['trend_count']}/{metrics['rate_denominator']}件 "
+            f"({metrics['trend_rate']:.1%})"
+        )
+    if price_band != 270 and 0 < metrics["selected_count"] < 10:
+        text = f"{text}・選定{metrics['selected_count']}件(10件未満)"
+    return f"{source_label(source)} {text}"
+
+
+def _non_morning_sources(item: dict) -> dict:
+    sources = item.get("by_source") or {}
+    if item["price_band"] == 270 or set(sources) <= {SOURCE_MORNING_BOARD}:
+        return {}
+    return sources
+
+
 def _rate_text(item: dict, *, include_missing: bool = False) -> str:
-    if item["trend_rate"] is None:
+    sources = _non_morning_sources(item)
+    mixed = len(sources) > 1
+    if mixed:
+        value = "・".join(
+            _source_segment(source, metrics, item["price_band"])
+            for source, metrics in sorted(sources.items())
+        )
+    elif item["trend_rate"] is None:
         if item["missing_days"]:
             value = _missing_text(item, include_counts=False)
         elif item["selected_count"] == 0 and item["empty_days"]:
@@ -886,7 +1031,9 @@ def _rate_text(item: dict, *, include_missing: bool = False) -> str:
             f"{item['trend_count']}/{item['rate_denominator']}件 "
             f"({item['trend_rate']:.1%})"
         )
-    if item["price_band"] != 270 and 0 < item["selected_count"] < 10:
+        if sources:
+            value += f"[{source_label(next(iter(sources)))}]"
+    if not mixed and item["price_band"] != 270 and 0 < item["selected_count"] < 10:
         value = f"{value}・選定{item['selected_count']}件(10件未満)"
     if (
         include_missing
@@ -952,22 +1099,37 @@ def price_band_monthly_lines(result: dict | None) -> list[str]:
     ]
     for band in PRICE_BANDS:
         item = result["bands"][str(band)]
-        move = (
-            f"{item['average_move_pct']:.2f}%"
-            if item["average_move_pct"] is not None
-            else "—"
-        )
-        buyable = (
-            f"{item['buyable_count']}/{item['selected_count']}件 "
-            f"({item['buyable_rate']:.1%})"
-            if item["buyable_rate"] is not None
-            else "—"
-        )
-        estimate = f"{item['estimate']:.2f}" if item["estimate"] is not None else "—"
-        lines.append(
-            f"|{band}円|{_rate_text(item)}|{move}|{item['slot_count']}枠|"
-            f"{buyable}|{estimate}|"
-        )
+        sources = _non_morning_sources(item)
+        if len(sources) > 1:
+            variants = [
+                (
+                    f"{band}円[{source_label(source)}]",
+                    _source_segment(source, metrics, band).split(" ", 1)[1],
+                    metrics,
+                )
+                for source, metrics in sorted(sources.items())
+            ]
+        else:
+            variants = [(f"{band}円", _rate_text(item), item)]
+        for band_cell, rate_cell, metrics in variants:
+            move = (
+                f"{metrics['average_move_pct']:.2f}%"
+                if metrics["average_move_pct"] is not None
+                else "—"
+            )
+            buyable = (
+                f"{metrics['buyable_count']}/{metrics['selected_count']}件 "
+                f"({metrics['buyable_rate']:.1%})"
+                if metrics["buyable_rate"] is not None
+                else "—"
+            )
+            estimate = (
+                f"{metrics['estimate']:.2f}" if metrics["estimate"] is not None else "—"
+            )
+            lines.append(
+                f"|{band_cell}|{rate_cell}|{move}|{item['slot_count']}枠|"
+                f"{buyable}|{estimate}|"
+            )
         if item["missing_reasons"]:
             if band == 270:
                 reasons = ", ".join(

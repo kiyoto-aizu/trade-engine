@@ -21,7 +21,7 @@ SUMMARY_COLUMNS = (
     "selected_count", "selected_judged", "selected_trend", "selected_rate",
     "candidate_count", "candidate_judged", "candidate_trend", "candidate_rate",
     "selected_undecidable", "candidate_undecidable",
-    "bought_count", "bought_trend", "pnl_total",
+    "bought_count", "bought_trend", "pnl_total", "selection_source",
 )
 
 
@@ -81,10 +81,19 @@ class TrendCheckRepository:
                     bought_count INTEGER NOT NULL,
                     bought_trend INTEGER NOT NULL,
                     pnl_total REAL,
+                    selection_source TEXT,
                     PRIMARY KEY (trade_date, version)
                 );
                 """
             )
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(trend_daily_summaries)")
+            }
+            if "selection_source" not in columns:
+                connection.execute(
+                    "ALTER TABLE trend_daily_summaries ADD COLUMN selection_source TEXT"
+                )
 
     # --- 版 ---
     def register_version(

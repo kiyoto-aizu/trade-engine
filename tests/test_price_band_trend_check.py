@@ -393,6 +393,7 @@ def _write_activity_diagnostic(
     input_count=None,
     evaluated_count=None,
     skipped_count=None,
+    source=None,
 ):
     directory.mkdir(parents=True, exist_ok=True)
     summary = {
@@ -402,6 +403,8 @@ def _write_activity_diagnostic(
     }
     if skipped_count is not None:
         summary["skipped_count"] = skipped_count
+    if source is not None:
+        summary["source"] = source
     (directory / f"{trade_date}_090000.json").write_text(
         json.dumps(
             {
@@ -444,6 +447,7 @@ def test_price_band_activity_uses_midday_diagnostics_and_excludes_incomplete_day
             {"selected": False, "reason_code": "FILTER_BOARD_MISSING"},
             {"selected": False, "reason_code": "MIDDAY_ZERO_VOLUME"},
         ],
+        source="yahoo_minute_estimate",
     )
     _write_activity_diagnostic(
         paths.midday_filtering_dir / "900" / "diagnostics",
@@ -467,6 +471,7 @@ def test_price_band_activity_uses_midday_diagnostics_and_excludes_incomplete_day
         "valid_days": 1,
         "missing_days": 0,
         "missing_reasons": {},
+        "source_days": {"morning_board": 1},
     }
     assert result["bands"]["450"]["activity"]["signal_count"] == 3
     assert result["bands"]["450"]["activity"]["skip_count"] == 2
@@ -476,7 +481,7 @@ def test_price_band_activity_uses_midday_diagnostics_and_excludes_incomplete_day
     }
     assert price_band_activity_lines(result) == [
         "270円: シグナル2・見送り1・売買代金データなし×1 / 有効1日",
-        "450円: シグナル3・見送り2・板情報なし×1、ゼロ出来高×1 / 有効1日",
+        "450円[昼推定]: シグナル3・見送り2・板情報なし×1、ゼロ出来高×1 / 有効1日",
         "900円: 欠測(フィルタ時間切れ1日) / 有効0日",
     ]
     assert price_band_activity_has_reference(result)
@@ -614,3 +619,162 @@ def test_zero_input_without_previous_screening_is_not_a_valid_zero_count_day(tmp
     assert activity["missing_reasons"] == {
         "PREVIOUS_SCREENING_NOT_AVAILABLE": 1
     }
+
+
+def _write_midday_selection(paths, price_band, trade_date, symbols, source="yahoo_minute_estimate"):
+    directory = paths.midday_filtering_dir / str(price_band)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{trade_date}.json").write_text(
+        json.dumps({"date": trade_date, "symbols": symbols}), encoding="utf-8"
+    )
+    _write_activity_diagnostic(
+        directory / "diagnostics",
+        trade_date,
+        [{"selected": True, "reason_code": None, "numerator_source": source}] * len(symbols),
+        source=source,
+    )
+
+
+def _run(paths, trade_date):
+    return run_price_band_checks(
+        date.fromisoformat(trade_date),
+        paths,
+        cache_update_ok=True,
+        source_database=paths.filtering_dir.parent.parent / "none.sqlite3",
+    )
+
+
+def _band_database(paths, price_band):
+    return TrendCheckRepository(
+        paths.filtering_dir.parent
+        / "analysis"
+        / "price_band_trend_check"
+        / "databases"
+        / f"{price_band}.sqlite3"
+    )
+
+
+def test_midday_selection_is_preferred_over_morning(tmp_path):
+    paths = _paths(tmp_path)
+    trade_date = "2026-10-13"
+    for symbol in ("MID1", "MID2", "MORN"):
+        _write_daily_history(paths, symbol, trade_date)
+    _write_selection(paths, 450, trade_date, ["MORN"])
+    _write_midday_selection(paths, 450, trade_date, ["MID1", "MID2"])
+
+    result = _run(paths, trade_date)
+
+    rows = _band_database(paths, 450).load_rows("v1", trade_date, trade_date)
+    assert [row["symbol"] for row in rows] == ["MID1", "MID2"]
+    assert result["bands"]["450"]["missing_days"] == 0
+    assert result["bands"]["450"]["selected_count"] == 2
+    assert "450円 2/2件 (100.0%)[昼推定]・選定2件(10件未満)" in price_band_rate_line(result)
+    summary = _band_database(paths, 450).load_summaries("v1", trade_date, trade_date)[0]
+    assert summary["selection_source"] == "yahoo_minute_estimate"
+    status = json.loads(
+        (
+            paths.filtering_dir.parent
+            / "analysis"
+            / "price_band_trend_check"
+            / "status"
+            / "450"
+            / f"{trade_date}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert status["selection_source"] == "yahoo_minute_estimate"
+
+
+def test_morning_selection_is_used_when_no_midday_files(tmp_path):
+    paths = _paths(tmp_path)
+    trade_date = "2026-10-09"
+    _write_daily_history(paths, "MORN", trade_date)
+    _write_selection(paths, 450, trade_date, ["MORN"])
+
+    result = _run(paths, trade_date)
+
+    summary = _band_database(paths, 450).load_summaries("v1", trade_date, trade_date)[0]
+    assert summary["selection_source"] == "morning_board"
+    assert result["bands"]["450"]["selected_count"] == 1
+    assert "[" not in price_band_rate_line(result).split("450円", 1)[1].split("/")[0]
+
+
+def test_missing_when_neither_midday_nor_morning_exists(tmp_path):
+    paths = _paths(tmp_path)
+    trade_date = "2026-10-13"
+
+    result = _run(paths, trade_date)
+
+    band = result["bands"]["450"]
+    assert band["missing_reasons"] != {}
+    assert band["selected_count"] == 0
+
+
+def test_midday_diagnostic_only_still_selects_midday_location(tmp_path):
+    paths = _paths(tmp_path)
+    trade_date = "2026-10-13"
+    _write_selection(paths, 450, trade_date, ["MORN"])
+    _write_activity_diagnostic(
+        paths.midday_filtering_dir / "450" / "diagnostics",
+        trade_date,
+        [{"selected": False, "reason_code": "MIDDAY_ZERO_VOLUME"}],
+        source="yahoo_minute_estimate",
+    )
+
+    result = _run(paths, trade_date)
+
+    assert result["bands"]["450"]["selected_count"] == 0
+    assert result["bands"]["450"]["missing_days"] == 1
+
+
+def test_270_band_ignores_midday_directory(tmp_path):
+    paths = _paths(tmp_path)
+    trade_date = "2026-10-13"
+    _write_selection(paths, 270, trade_date, ["AAA"])
+    _write_midday_selection(paths, 270, trade_date, ["ZZZ"])
+
+    assert price_band_trend_check._filtering_paths(paths, 270, trade_date) == paths
+
+
+def test_cache_update_symbols_include_midday_selection(tmp_path):
+    paths = _paths(tmp_path)
+    trade_date = "2026-10-13"
+    _write_selection(paths, 900, trade_date, ["CCC"])
+    _write_midday_selection(paths, 450, trade_date, ["BBB", "AAA"])
+    _write_midday_selection(paths, 900, trade_date, ["CCC", "DDD"])
+
+    assert price_band_symbols_for_update(paths, date.fromisoformat(trade_date)) == [
+        "AAA",
+        "BBB",
+        "CCC",
+        "DDD",
+    ]
+
+
+def test_mixed_sources_are_split_by_source_in_notification(tmp_path):
+    paths = _paths(tmp_path)
+    for symbol, day in (("M1", "2026-10-09"), ("M2", "2026-10-09"), ("D1", "2026-10-13")):
+        _write_daily_history(paths, symbol, day)
+    _write_selection(paths, 450, "2026-10-09", ["M1", "M2"])
+    _write_activity_diagnostic(
+        paths.filtering_dir.parent / "filtering_price_bands" / "450" / "diagnostics",
+        "2026-10-09",
+        [{"selected": True, "reason_code": None}] * 2,
+    )
+    _run(paths, "2026-10-09")
+    _write_midday_selection(paths, 450, "2026-10-13", ["D1"])
+    _run(paths, "2026-10-13")
+
+    result = load_price_band_trends(date(2026, 10, 9), date(2026, 10, 13), paths)
+
+    assert set(result["bands"]["450"]["by_source"]) == {
+        "morning_board",
+        "yahoo_minute_estimate",
+    }
+    line = price_band_rate_line(result)
+    assert "朝実測 2/2件 (100.0%)・選定2件(10件未満)" in line
+    assert "昼推定 1/1件 (100.0%)・選定1件(10件未満)" in line
+    monthly = price_band_monthly_lines(result)
+    assert any(row.startswith("|450円[朝実測]|") for row in monthly)
+    assert any(row.startswith("|450円[昼推定]|") for row in monthly)
+    activity = price_band_activity_lines(result)
+    assert any("混在" in row and row.startswith("450円") for row in activity)
