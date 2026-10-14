@@ -162,8 +162,8 @@ class TradingUseCase:
         self._liquidation_results: list[dict] = []
         # ADR-0002: ATRトレーリングストップ用の保有中最高値(銘柄ごと、メモリ保持・当日限り)
         self._holding_high_prices: dict[str, float] = {}
-        # ADR-0002: 銘柄ごとに初回ループの判定結果を必ずINFOで出力するための既出フラグ
-        self._logged_initial_judgment_symbols: set[str] = set()
+        # ADR-0002: 銘柄ごとの直前の判定。変化時だけINFOにする
+        self._last_logged_judgments: dict[str, str] = {}
         # kabu API認証の復旧失敗・板取得連続失敗の通知は1runにつき1回に抑える
         self._auth_recovery_notified = False
         self._board_fetch_all_failed_streak = 0
@@ -530,6 +530,13 @@ class TradingUseCase:
             return
         self._logged_trade_reasons.add(key)
         logger.log(level, "%s: 銘柄=%s | %s", reason_code, symbol, detail)
+
+    def _trade_judgment_log_level(self, symbol: str, judgment: str) -> int:
+        previous_judgment = self._last_logged_judgments.get(symbol)
+        self._last_logged_judgments[symbol] = judgment
+        if previous_judgment is None or previous_judgment != judgment:
+            return logging.INFO
+        return logging.DEBUG
 
     def _observe_missing_holding_sell_signal(
         self,
@@ -2233,7 +2240,7 @@ class TradingUseCase:
         self._buy_evaluated_symbols.clear()
         self._buy_signal_symbols.clear()
         self._holding_high_prices.clear()
-        self._logged_initial_judgment_symbols.clear()
+        self._last_logged_judgments.clear()
         self._shadow_positions.clear()
         self._shadow_pending_symbols.clear()
         reset_empty_daily_warning_dedupe()
@@ -2596,12 +2603,9 @@ class TradingUseCase:
                             symbol,
                             f"必要本数={config.ATR_PERIOD} | 実績本数={available_daily_bars}",
                         )
-                    # ADR-0002: シグナルなし(keep)はDEBUG、判定変化(buy/sell)はINFO。
-                    # ただし各監視銘柄の初回ループ判定は、何を監視しているか把握できるよう
-                    # レベルに関わらず必ずINFOで出力する。
-                    is_first_observation = symbol not in self._logged_initial_judgment_symbols
-                    self._logged_initial_judgment_symbols.add(symbol)
-                    log_level = logging.INFO if (signal is not None or is_first_observation) else logging.DEBUG
+                    # ADR-0002: 初回または判定状態の変化だけINFO、同じ判定の繰り返しはDEBUG。
+                    judgment = signal.side.name if signal else "なし"
+                    log_level = self._trade_judgment_log_level(symbol, judgment)
                     logger.log(
                         log_level,
                         "売買判定: 銘柄=%s | 現在値=%.1f | エントリー基準=%.1f | 決済基準=%.1f | "
@@ -2616,7 +2620,7 @@ class TradingUseCase:
                         config.RSI_EXIT_THRESHOLD,
                         f"{held_high:.1f}" if held_high is not None else "-",
                         f"{trailing_stop_line:.1f}" if trailing_stop_line is not None else "-",
-                        signal.side.name if signal else "なし",
+                        judgment,
                     )
                     if signal is None or signal.side == config.OrderSide.BUY:
                         self._observe_missing_holding_sell_signal(

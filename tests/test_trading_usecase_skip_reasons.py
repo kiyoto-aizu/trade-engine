@@ -34,6 +34,17 @@ class _OrderSender:
         return self.response
 
 
+def test_trade_judgment_logs_info_only_on_first_observation_or_state_change(tmp_path):
+    use_case = TradingUseCase(token='dummy', order_history_path=tmp_path / 'unused_history.json')
+
+    assert use_case._trade_judgment_log_level('7203', 'SELL') == logging.INFO
+    assert use_case._trade_judgment_log_level('7203', 'SELL') == logging.DEBUG
+    assert use_case._trade_judgment_log_level('7203', 'なし') == logging.INFO
+    assert use_case._trade_judgment_log_level('7203', 'なし') == logging.DEBUG
+    assert use_case._trade_judgment_log_level('7203', 'BUY') == logging.INFO
+    assert use_case._trade_judgment_log_level('8306', 'BUY') == logging.INFO
+
+
 def _build_loop(
     monkeypatch,
     tmp_path,
