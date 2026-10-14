@@ -36,6 +36,7 @@ from src.infrastructure.logging_config import configure_logging
 from src.infrastructure.calendar.japanese_calendar import is_trading_day
 from src.entrypoints.run_trend_check import run_daily_safely
 from src.entrypoints.run_index_minute_backfill import save_index_minute_bars
+from src.entrypoints.save_daily_minute_bars import save_daily_minute_bars
 from src.entrypoints.update_daily_bar_cache import latest_confirmed_trading_day, update_cache
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,15 @@ def run_daily_analysis(
         if not cache_update_ok:
             logger.error("日足更新が完了しませんでした。答え合わせは判定不能として通知します: %s", missing_symbols)
 
+        # 日足更新の後・グラフ生成の前に、当日の対象銘柄の分足を保存する。失敗しても後続を止めない。
+        minute_result = save_daily_minute_bars(
+            trade_date,
+            now=now,
+            filtering_dir=paths.filtering_dir,
+            output_dir=paths.minute_bar_dir,
+        )
+        minute_bar_line = minute_result.summary_line() if minute_result else None
+
         check_ok = False
         if cache_update_ok:
             check_ok = run_daily_safely(
@@ -195,6 +205,7 @@ def run_daily_analysis(
             price_band_trend=price_band_trend,
             check_ok=check_ok,
             no_trade_reason=no_trade_reason,
+            minute_bar_line=minute_bar_line,
         )
         message = format_result_notification(
             "分析運用",

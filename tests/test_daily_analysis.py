@@ -8,6 +8,11 @@ from src.application.trend_check_usecase import TrendCheckPaths
 from src.entrypoints import run_daily_analysis
 
 
+@pytest.fixture(autouse=True)
+def _no_real_minute_bar_fetch(monkeypatch):
+    monkeypatch.setattr(run_daily_analysis, "save_daily_minute_bars", lambda *args, **kwargs: None)
+
+
 def _paths(tmp_path):
     return TrendCheckPaths(
         filtering_dir=tmp_path / "filtering",

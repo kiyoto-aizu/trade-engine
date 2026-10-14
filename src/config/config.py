@@ -291,6 +291,10 @@ MINUTE_BAR_PARQUET_DIR = Path(
 INDEX_MINUTE_BAR_PARQUET_DIR = Path(
     os.getenv("INDEX_MINUTE_BAR_PARQUET_DIR", str(_repo_root / "data" / "index_minute_bars_parquet"))
 )
+# 日次分析での当日分足保存に、価格帯別(450円帯・900円帯)のフィルタ結果の銘柄も含めるか。
+DAILY_MINUTE_BAR_INCLUDE_PRICE_BANDS = os.getenv(
+    "DAILY_MINUTE_BAR_INCLUDE_PRICE_BANDS", "false"
+).strip().lower() in ("1", "true", "yes")
 SCREENING_RESULT_DIRECTORY = Path(
     os.getenv("SCREENING_RESULT_DIRECTORY", str(_repo_root / "data" / "screening"))
 )

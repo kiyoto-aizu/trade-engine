@@ -51,6 +51,7 @@
 |---|---|---|---|
 | `FILTERING_ANOMALY_MIN_SYMBOLS` | "3" | 任意 |  |
 | `FILTERING_DIAGNOSTICS_DIRECTORY` | str(_repo_root / 'data' / 'filtering_diagnostics') | 任意 |  |
+| `FILTERING_MORNING_ALTERNATE_BANDS_ENABLED` | "false" | 任意 | 朝(09:30)の追加価格帯(450円・900円)の板取得。既定は停止し、昼のYahoo分足推定へ回す。trueで朝の実施に戻せる |
 | `FILTERING_PRICE_BAND_DEADLINE_TIME` | "09:34" | 任意 |  |
 | `FILTERING_PRICE_BAND_RESULT_ROOT` | str(_repo_root / 'data' / 'filtering_price_bands') | 任意 |  |
 | `FILTERING_RESULT_DIRECTORY` | str(_repo_root / 'data' / 'filtering') | 任意 |  |
@@ -59,19 +60,17 @@
 | `FILTER_BOARD_MAX_CONCURRENCY` | "3" | 任意 | 全価格帯をまとめて板取得する際の最大同時リクエスト数 |
 | `FILTER_BOARD_RETRY_ENABLED` | "true" | 任意 | 全価格帯で板の売買代金・売買高が取れなかった銘柄を、結果保存前に再取得する |
 | `FILTER_BOARD_RETRY_MARGIN_SECONDS` | "30" | 任意 | リトライの打ち切り時刻 = FILTERING_PRICE_BAND_DEADLINE_TIME - この秒数 |
-| `FILTERING_MORNING_ALTERNATE_BANDS_ENABLED` | "false" | 任意 | trueで朝(09:30)の450/900円帯の板取得を復活。既定は停止し昼のYahoo分足推定へ回す |
-| `MIDDAY_FILTERING_START_TIME` | "12:00" | 任意 | 昼フィルタの実行時刻(タスク登録時の既定。HH:MM) |
-| `MIDDAY_FILTERING_DEADLINE_TIME` | "12:25" | 任意 | 昼フィルタ全体の締切。超過分は`FILTER_TIME_LIMIT`で評価対象外 |
-| `MIDDAY_FILTERING_FETCH_TIMEOUT_SECONDS` | "30" | 任意 | Yahoo分足1銘柄あたりのタイムアウト秒 |
-| `MIDDAY_FILTERING_FETCH_RETRIES` | "1" | 任意 | 分足取得失敗時の追加リトライ回数 |
-| `MIDDAY_FILTERING_RETRY_WAIT_SECONDS` | "2" | 任意 | リトライ前の待機秒 |
-| `MIDDAY_FILTERING_SKIP_DATES` | "" | 任意 | 昼フィルタを実行しない日(午前のみ取引日等、YYYY-MM-DDのカンマ区切り) |
-| `MIDDAY_FILTERING_RESULT_ROOT` | data/filtering_midday | 任意 | 昼の結果・診断・270円比較の保存先 |
-| `MIDDAY_FILTERING_VERIFY_RESULT_ROOT` | data/filtering_midday_verify | 任意 | 昼フィルタ検証用実行(`--verify`)の結果の保存先(日付ごと) |
-| `MINUTE_BAR_PARQUET_VERIFY_DIR` | data/minute_bars_parquet_verify | 任意 | 検証用実行で`--verify-save-bars`を付けたときの分足の保存先 |
 | `FILTER_BOARD_RETRY_MAX_ROUNDS` | "2" | 任意 |  |
 | `FILTER_BOARD_RETRY_WAIT_SECONDS` | "10" | 任意 |  |
 | `FILTER_DECISION_OBSERVATION_DAYS` | "5" | 任意 |  |
+| `MIDDAY_FILTERING_DEADLINE_TIME` | "12:25" | 任意 |  |
+| `MIDDAY_FILTERING_FETCH_RETRIES` | "1" | 任意 |  |
+| `MIDDAY_FILTERING_FETCH_TIMEOUT_SECONDS` | "30" | 任意 | Yahoo分足1銘柄あたりのタイムアウト秒と、失敗時の追加リトライ回数(0で再試行なし)・リトライ前の待機秒 |
+| `MIDDAY_FILTERING_RESULT_ROOT` | str(_repo_root / 'data' / 'filtering_midday') | 任意 | 昼の結果・診断・270円比較の保存先。朝の板の結果(FILTERING_*)とは別に保存する |
+| `MIDDAY_FILTERING_RETRY_WAIT_SECONDS` | "2" | 任意 |  |
+| `MIDDAY_FILTERING_SKIP_DATES` | "" | 任意 | 午前のみの取引日など、昼の処理を実行しない日付(YYYY-MM-DD, カンマ区切り) |
+| `MIDDAY_FILTERING_START_TIME` | "12:00" | 任意 | 昼フィルタ(追加価格帯をYahoo 1分足の09:00〜09:30売買代金から推定する処理) |
+| `MIDDAY_FILTERING_VERIFY_RESULT_ROOT` | str(_repo_root / 'data' / 'filtering_midday_verify') | 任意 | 昼フィルタの検証用実行(--verify)の保存先。本番の保存先とは分ける |
 
 ## paper
 
@@ -130,8 +129,10 @@
 | `BOARD_FETCH_CONSECUTIVE_FAILURE_THRESHOLD` | "3" | 任意 | 対象銘柄全件の板取得が何回連続で失敗したら通知するか（取引ループの1周を1回と数える） |
 | `DAILY_ANALYSIS_START_TIME` | "16:30" | 任意 | 日次分析(確定日足更新・答え合わせ・分析通知)の開始時刻 |
 | `DAILY_LOSS_LIMIT_RATIO` | "0.02" | 任意 | 1日の損失限度額（運用資本の比率、例：0.02 = 2%） |
+| `DAILY_MINUTE_BAR_INCLUDE_PRICE_BANDS` | "false" | 任意 | 日次分析での当日分足保存に、価格帯別(450円帯・900円帯)のフィルタ結果の銘柄も含めるか。 |
 | `EMERGENCY_STOP_FILE` | str(_repo_root / 'data' / 'trading' / 'emergency_stop') | 任意 |  |
 | `ENABLE_LIVE_ORDERING` | "false" | 任意 |  |
+| `INDEX_MINUTE_BAR_PARQUET_DIR` | str(_repo_root / 'data' / 'index_minute_bars_parquet') | 任意 | 日経225など指数の分足Parquetの保存先。個別銘柄用とはDuckDB読み込み(symbol列がBIGINT)を壊さないため分離する。 |
 | `IS_DEMO` | "true" | 任意 |  |
 | `KABU_TOKEN_REFRESH_FAILURE_BACKOFF_SECONDS` | (非表示) | 任意 | トークン再取得後も401が続く（復旧失敗）場合に、次の再取得試行まであける間隔（秒）。 他プロセスとのトークン発行の奪い合いを防ぐための間隔 |
 | `KABU_TOKEN_REFRESH_MIN_INTERVAL_SECONDS` | (非表示) | 任意 | 401応答を受けた際にトークンを再取得する最小間隔（秒）。この間隔内は取得済みの トークンで再試行し、/tokenへの呼び出し自体は増やさない |
@@ -142,6 +143,7 @@
 | `MAX_ORDER_AMOUNT_PER_TRADE` | "30000" | 任意 | 1回の取引あたりの最大注文金額（運用資金10万円の30%） |
 | `MAX_ORDER_COUNT_PER_DAY` | "10" | 任意 | 1日あたりの最大注文数 |
 | `MINUTE_BAR_PARQUET_DIR` | str(_repo_root / 'data' / 'minute_bars_parquet') | 任意 | 分足Parquetの保存先。 |
+| `MINUTE_BAR_PARQUET_VERIFY_DIR` | str(_repo_root / 'data' / 'minute_bars_parquet_verify') | 任意 |  |
 | `OPENAI_API_KEY` | (非表示) | 任意 |  |
 | `OPERATING_CAPITAL` | "100000" | 任意 | 取引に利用可能な運用資本 |
 | `PRICE_GAIN_WEIGHT` | "1.0" | 任意 | ADR-0001: 出来高ランキングと値上がり率ランキングを統合する際、値上がり率側に 掛ける重み係数。1.0が従来通りの等重み。値上がり率ランキング上位の銘柄ほど 既に株価が伸びており、予算上限(株価上限)に近づきやすいという診断結果 (2026-09-19, analyze_filter_entry_alignment.py)を踏まえ、値上がり率側の 影響を弱めることで、予算内に収まる候補を増やす狙い。 【要調整】この数値は実データでの検証前の暫定値であり、1.0(現状維持)としている。 値上がり率と事後の予算超過率との相関を見た上で、適切な値に調整すること。 |
@@ -160,4 +162,4 @@
 | `TRADING_PROGRESS_REPORT_2_HOUR` | "14" | 任意 |  |
 | `TRADING_PROGRESS_REPORT_2_MINUTE` | "0" | 任意 |  |
 
-説明欄が空の項目: 57件。
+説明欄が空の項目: 61件。
