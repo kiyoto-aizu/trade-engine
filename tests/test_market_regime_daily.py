@@ -1,19 +1,34 @@
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from src.application import market_regime_usecase
 from src.application.market_regime_usecase import MarketRegimeUseCase
 from src.application.trading_usecase import TradingUseCase
 from src.domain.market_regime import MarketRegime, MarketRegimeAssessment, MarketRegimeThresholds
 from src.domain.market_volatility import MarketDailyBar
+from src.infrastructure.calendar.japanese_calendar import is_trading_day
 from src.infrastructure.persistence.market_regime_daily_repository import MarketRegimeDailyRepository
 
 
 def _bars(closes, start=date(2026, 1, 1)):
-    from datetime import timedelta
     return [
         MarketDailyBar(start + timedelta(days=index), close, close, close, close)
         for index, close in enumerate(closes)
+    ]
+
+
+def _trading_bars(closes, last_date):
+    dates = []
+    candidate = last_date
+    while len(dates) < len(closes):
+        if is_trading_day(candidate):
+            dates.append(candidate)
+        candidate -= timedelta(days=1)
+    dates.reverse()
+    return [
+        MarketDailyBar(target_date, close, close, close, close)
+        for target_date, close in zip(dates, closes)
     ]
 
 
@@ -25,9 +40,19 @@ class FakeClient:
         return self.nikkei if symbol == "^N225" else self.vix
 
 
-def test_use_case_records_pre_relief_regime_and_last_bar_inputs():
-    nikkei = _bars([100.0 + index for index in range(40)])
+def test_use_case_records_pre_relief_regime_and_last_bar_inputs(monkeypatch):
+    nikkei = _trading_bars(
+        [100.0 + index for index in range(40)], date(2026, 2, 9)
+    )
     vix = _bars([30.0, 31.0])
+    monkeypatch.setattr(
+        market_regime_usecase, "_previous_trading_day", lambda today: nikkei[-1].date
+    )
+    monkeypatch.setattr(
+        market_regime_usecase,
+        "previous_us_equity_trading_day",
+        lambda today: vix[-1].date,
+    )
 
     result = MarketRegimeUseCase(
         FakeClient(nikkei, vix), MarketRegimeThresholds(), realized_volatility_window=20

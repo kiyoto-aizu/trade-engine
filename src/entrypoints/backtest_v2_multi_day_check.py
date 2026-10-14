@@ -299,6 +299,7 @@ def _run_period(
             realized_volatility_window=config.MARKET_REGIME_REALIZED_VOL_WINDOW,
             data_range=config.MARKET_REGIME_DATA_RANGE,
             adx_threshold=config.MARKET_REGIME_ADX_TREND_THRESHOLD,
+            as_of_date=clock.current_date(),
         )
         usecase = TradingUseCase(
             token="historical-replay",

@@ -12,6 +12,7 @@ from src.domain.market_volatility import (
     calculate_realized_volatility_series,
 )
 from src.domain.market_trend import calculate_adx_series
+from src.domain.us_market_calendar import previous_us_equity_trading_day
 
 
 class MarketRegime(str, Enum):
@@ -210,10 +211,16 @@ def calculate_market_regime_series_with_details(
     trend_relief_dates: set[date] = set()
     vix_index = 0
     latest_vix: float | None = None
+    latest_vix_date: date | None = None
     for target_date in sorted(volatility_points):
-        while vix_index < len(vix_closes) and vix_closes[vix_index].date <= target_date:
+        while vix_index < len(vix_closes) and vix_closes[vix_index].date < target_date:
             latest_vix = vix_closes[vix_index].close
+            latest_vix_date = vix_closes[vix_index].date
             vix_index += 1
+        expected_vix_date = previous_us_equity_trading_day(target_date)
+        if latest_vix_date != expected_vix_date:
+            result[target_date] = MarketRegime.DANGER
+            continue
         base_regime = calculate_market_regime(
             volatility_points[target_date],
             latest_vix,

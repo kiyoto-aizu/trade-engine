@@ -33,7 +33,7 @@
 | ATR倍率 | `data/filtering/*.json`の`symbols`、各銘柄のYahoo Finance日足OHLC | JSON | `data/analysis/atr_ratio_analysis_latest.json`。期間`max` |
 | VIX | Yahoo Finance日足`^VIX`・`^N225`（OHLC） | JSON | `data/analysis/vix_analysis_latest.json`。期間`10y` |
 | 実現ボラティリティ | Yahoo Finance指数日足`^N225`（OHLC） | JSON | `data/analysis/market_volatility_latest.json`。期間`max` |
-| MarketRegime | Yahoo Finance日足`^N225`・`^VIX`（確定OHLC） | 標準出力JSON | 日付が当日の日本時間日付以前のバーを取得。永続化しない |
+| MarketRegime | Yahoo Finance日足`^N225`・`^VIX`（確定OHLC） | 標準出力JSON | 日経225・VIXそれぞれの市場カレンダー上の前営業日付のバーが得られるまで最大3回取得。日経225の最新バーが前営業日と一致していても直近履歴に欠損があれば3か月分を再取得する。欠損が再試行後も残る場合は警告を記録し、取得できた日足系列で実現ボラ・ADXを計算する。最新バーが前営業日と一致しない場合は判定不能としてDANGER。永続化しない |
 
 `--output`は4分析CLIのJSON保存先を変更します。保存時に親ディレクトリを作成し、成功すると保存パスを標準出力へ表示します。
 
@@ -65,7 +65,7 @@ flowchart TD
     Danger --> Print
 ```
 
-取引起動時の`run_trading.py`は`TradingUseCase.prepare_market_regime()`からMarketRegime評価を取得し、結果を同一実行中で再利用します。評価結果(緩和前レジーム・使用した日足の日付と終値・閾値を含む)は検証用に`data/state/market_regime_daily.sqlite3`へ日次で1行保存します(詳細は[03](./03-trading-loop-design.md))。バックテストは`--compare-market-regime`を指定した`--live`の日付付き実行で指数履歴から日別レジーム系列を作り、比較結果に含めます。詳細は[03](./03-trading-loop-design.md)・[05](./05-backtest-design.md)を参照してください。
+取引起動時の`run_trading.py`は`TradingUseCase.prepare_market_regime()`からMarketRegime評価を取得し、結果を同一実行中で再利用します。日経225日足は日本市場、VIX日足は米国株式市場の前営業日と最新日が一致することを確認し、不一致なら各最大3回取得を試みます。一致しなければ古い日足を使わず、判定不能としてDANGERにします。履歴リプレイではシミュレーション日を基準に両市場の前営業日を検証します。評価結果(緩和前レジーム・使用した日足の日付と終値・閾値を含む)は検証用に`data/state/market_regime_daily.sqlite3`へ日次で1行保存します(詳細は[03](./03-trading-loop-design.md))。バックテスト時系列比較も、各対象日の米国市場前営業日付のVIXがない場合はDANGERとし、古いVIXを持ち越しません。詳細は[03](./03-trading-loop-design.md)・[05](./05-backtest-design.md)を参照してください。
 
 ## 5. 判断ルール・仕様
 
@@ -88,7 +88,7 @@ MarketRegimeの判定条件は次の通りです。まず実現ボラとVIXの�
 | 日経225 ADX（既定27） | 閾値未満または算出不可なら変更なし | 閾値以上なら1段階緩和 | DANGER→CAUTION、CAUTION→NORMAL |
 | 入力取得・計算 | — | — | 空データ・必要履歴不足・例外時は`data_available=false`、安全側のDANGER。理由を`failure_reason`に格納 |
 
-バックテスト時系列計算は対象日以前のVIXデータだけを対応させます。一方、日次`MarketRegimeUseCase`は取得した各系列末尾の値を使用します。`run_backtest.py --compare-market-regime`の指数系列生成は`MARKET_REGIME_THRESHOLDS`と窓設定を使いますが、ADX閾値は`calculate_market_regime_series()`の既定値27.0を使い、`MARKET_REGIME_ADX_TREND_THRESHOLD`は渡しません。通常の取引起動は環境設定値を`MarketRegimeUseCase`へ渡します。
+日次`MarketRegimeUseCase`は、日本市場の前営業日付の日経225と、米国株式市場の前営業日付のVIXをそれぞれ確認します。バックテスト時系列計算も対象日の前にある米国市場の直近営業日付のVIXだけを使い、その日付の値がなければ古い値を持ち越さずDANGERにします。`run_backtest.py --compare-market-regime`の指数系列生成は`MARKET_REGIME_THRESHOLDS`と窓設定を使いますが、ADX閾値は`calculate_market_regime_series()`の既定値27.0を使い、`MARKET_REGIME_ADX_TREND_THRESHOLD`は渡しません。通常の取引起動は環境設定値を`MarketRegimeUseCase`へ渡します。
 
 ## 6. レイヤー別の構成
 
@@ -152,11 +152,12 @@ MarketRegimeは市場データを使えない場合にも評価オブジェク�
 | 2026-10-08 | MarketRegimeの取得・計算失敗はDANGERとして扱う | `MarketRegimeUseCase._unavailable()`の実装に一致させるため |
 | 2026-10-11 | 判定時の入力値を日次で保存(`market_regime_daily.sqlite3`)。判定ロジックは変更しない | 朝一固定判定の影響を検証するため(`analyze_caution_regime_validity.py`の(c)) |
 | 2026-10-11 | 見送りイベントに日経225の日中値(`nikkei_intraday_*`)を追記。MarketRegimeには使わない | 見送り時点の市況と朝の判定値を比較するため |
+| 2026-10-14 | 日経225・VIXの日足鮮度を各市場の前営業日で検証。履歴系列でも古いVIXを持ち越さない | 古い入力値による現在状態の誤判定を避けるため |
 
 ## 10. 未決・既知の課題
 
 - 5つの分析CLIを定期実行する構成は、確認したエントリポイントと設定から特定できない。運用上の起動主体・頻度は未確認。
-- 日次`MarketRegimeUseCase`は日経225・VIX各系列の最終値を使うが、異なる最終取引日のクロス系列照合は実装していない。休場日差が評価へ及ぼす運用影響は未確認。
+- VIXカレンダーはNYSEの定例休場日を扱うが、国葬等の臨時休場日はカレンダーに含まれない。臨時休場日に最新バーの不一致としてDANGERになる可能性がある。
 - `--compare-market-regime`のADX緩和閾値は設定上書きを参照せず27.0固定相当である。取引時の設定値と意図的に別値を許容する運用かは未確認。
 - `run_market_regime.py`は結果を標準出力するだけで、評価の永続化や専用通知は行わない。後続運用で保存・通知が必要かは未確認。
 - ATR倍率分析はフィルタ結果全履歴を入力とする。履歴の対象期間や古い結果を除外する運用ルールは実装から確認できない。
