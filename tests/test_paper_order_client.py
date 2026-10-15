@@ -156,6 +156,28 @@ def test_paper_order_client_rejects_invalid_prices_without_mutating_state(
     assert "7203" in caplog.text
 
 
+def test_paper_order_client_keeps_price_quality_metadata_on_order():
+    executor = PaperOrderClient(
+        prices={}, cash=10_000.0, order_qty=100, fee_rate=0.0, market_slippage_bps=0.0,
+    )
+    executor.set_price(
+        "7203",
+        90.0,
+        {
+            "price_source": "last_valid_board",
+            "price_quality": "stale",
+            "price_observed_at": "2026-10-02T15:08:00",
+            "price_age_seconds": 56.0,
+        },
+    )
+
+    result = executor.place_market_order("unused", "7203", config.OrderSide.BUY.value)
+
+    assert result["price_quality"] == "stale"
+    assert result["price_source"] == "last_valid_board"
+    assert result["price_age_seconds"] == 56.0
+
+
 def test_paper_order_client_restores_account_state_after_restart(tmp_path):
     state_path = tmp_path / 'paper_account_state.json'
     executor = PaperOrderClient(

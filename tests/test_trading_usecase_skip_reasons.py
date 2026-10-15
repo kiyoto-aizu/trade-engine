@@ -366,7 +366,7 @@ def test_zero_quantity_reason_is_logged_once(
         assert any(event['event_type'] == 'ATR_DANGER_SKIP' for event in events)
 
 
-def test_zero_price_quantity_input_is_logged(monkeypatch, tmp_path, caplog):
+def test_zero_price_board_is_rejected_before_signal_evaluation(monkeypatch, tmp_path, caplog):
     monkeypatch.setattr(
         trading_usecase_module.TradeSignal,
         'evaluate',
@@ -383,7 +383,10 @@ def test_zero_price_quantity_input_is_logged(monkeypatch, tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger='src.application.trading_usecase'):
         use_case.run(symbols_path, now_provider=now_provider, sleep=sleep)
 
-    matching = [record for record in caplog.records if 'buy_quantity_invalid_inputs' in record.message]
+    matching = [
+        record for record in caplog.records
+        if 'ORDER_REJECTED_PAPER_PRICE_INVALID' in record.message
+    ]
     assert len(matching) == 1
     assert sender.orders == []
 

@@ -164,3 +164,26 @@ flowchart TD
   3. スナップショットの指数日足は現状`--compare-market-regime`指定時のみ保存されるため、新エンジンと比較する実行では同オプションを必須にするか、指数日足を常に保存する形へ拡張する。`ohlc_history`も`--live`時のみ保存される。
   4. 分足はコピーしていないため、`minute_manifest.json`との不一致警告（`find_minute_mismatches`）を新エンジンの分足読込にも流用する。
   5. 比較レポートには使用した`snapshot_path`を記録する。
+
+## 11. ペーパー価格品質と強制決済
+
+ペーパー注文は、通常のBUY/SELLでは有効な板価格（正の有限値、`current_price_status` が有効な場合）だけを
+注文価格として使用する。価格が欠落・不正、または現値ステータスが無効な場合は
+`ORDER_REJECTED_PAPER_PRICE_*` を記録して約定せず、次の監視ループで再試行する。
+
+`TradingUseCase` はプロセス内に銘柄ごとの直近有効板価格と観測時刻を保持する。持ち越し防止または手動緊急停止の
+ペーパー強制決済では、強制決済時の板が無効でも直近有効価格を `price_quality=stale` として使用する。
+有効価格が一度も観測されていない場合は買い時価格を `price_quality=entry_price_fallback` として使用する。
+このキャッシュは状態ファイルには保存せず、プロセス再起動後は買い時価格フォールバックになる。
+
+注文履歴には次の任意フィールドを追加する。過去行の欠落は許容する。
+
+- `price_source`
+- `price_quality`
+- `price_observed_at`
+- `price_age_seconds`
+
+履歴の `timestamp` は注文直前に注入時計（バックテストでは`now_provider`）から取得する。
+手動緊急停止による強制決済は `decision_reason=手動緊急停止`、通常の15:20清算は
+`持ち越し防止`、遅延復帰は `EOD_LATE_LIQUIDATION` として区別する。
+複数日・単日集計では通常の売り理由別集計を維持し、手動緊急停止件数を別フィールドでも集計する。

@@ -96,6 +96,7 @@ def test_trading_use_case_prefers_atr_exit_over_buy_signal_for_existing_holding(
             return {'Result': 0, 'OrderId': 'sell-1'}
 
     monkeypatch.setattr(config, 'IS_DEMO', True)
+    monkeypatch.setattr(config, 'ALLOW_OVERNIGHT_HOLDING', True)
     monkeypatch.setattr(config, 'API_SOFT_LIMIT', 100_000.0)
     monkeypatch.setattr(config, 'MAX_ORDER_AMOUNT_PER_TRADE', 100_000.0)
     monkeypatch.setattr('src.application.trading_usecase.calculate_price_limit', lambda closes: PriceLimit(70.0, 80.0))
@@ -886,6 +887,7 @@ def test_trading_use_case_sizes_new_buy_by_remaining_position_slots(monkeypatch,
             return {'Result': 0, 'OrderId': 'order-1'}
 
     monkeypatch.setattr(config, 'IS_DEMO', True)
+    monkeypatch.setattr(config, 'ALLOW_OVERNIGHT_HOLDING', True)
     monkeypatch.setattr(config, 'TARGET_POSITIONS', 5)
     monkeypatch.setattr(config, 'MAX_ORDER_AMOUNT_PER_TRADE', 1_000_000.0)
     monkeypatch.setattr(config, 'API_SOFT_LIMIT', 1_000_000.0)
@@ -934,6 +936,7 @@ def test_trading_use_case_uses_one_remaining_slot_for_existing_holding_at_positi
             return {'Result': 0, 'OrderId': 'order-1'}
 
     monkeypatch.setattr(config, 'IS_DEMO', True)
+    monkeypatch.setattr(config, 'ALLOW_OVERNIGHT_HOLDING', True)
     monkeypatch.setattr(config, 'TARGET_POSITIONS', 5)
     monkeypatch.setattr(config, 'MAX_ORDER_AMOUNT_PER_TRADE', 1_000_000.0)
     monkeypatch.setattr(config, 'API_SOFT_LIMIT', 1_000_000.0)
@@ -981,6 +984,7 @@ def test_trading_use_case_keeps_buy_budget_caps_with_remaining_position_slots(mo
             return {'Result': 0, 'OrderId': 'order-1'}
 
     monkeypatch.setattr(config, 'IS_DEMO', True)
+    monkeypatch.setattr(config, 'ALLOW_OVERNIGHT_HOLDING', True)
     monkeypatch.setattr(config, 'TARGET_POSITIONS', 5)
     monkeypatch.setattr(config, 'MAX_ORDER_AMOUNT_PER_TRADE', 300_000.0)
     monkeypatch.setattr(config, 'API_SOFT_LIMIT', 150_000.0)

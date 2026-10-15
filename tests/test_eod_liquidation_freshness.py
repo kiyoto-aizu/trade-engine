@@ -17,16 +17,16 @@ def _run_eod_scenario(
     monkeypatch,
     tmp_path,
     *,
+    trade_date: date = date(2026, 9, 25),
     resume_time: datetime,
     quote: dict | None,
     allow_overnight: bool = False,
     emergency_stop: bool = False,
     emergency_before_start: bool = False,
-    initial_time: datetime = datetime(2026, 9, 25, 15, 19),
+    initial_time: datetime | None = None,
     trading_mode: str = "paper",
 ):
-    trade_date = date(2026, 9, 25)
-    tick_times = [initial_time, resume_time]
+    tick_times = [initial_time or datetime(2026, 9, 25, 15, 19), resume_time]
     tick_index = [0]
     notifications = []
 
@@ -163,7 +163,7 @@ def test_normal_1520_liquidation_accepts_same_day_trade_from_six_minutes_earlier
         (_quote(quote_time='2026-09-25T15:19:00'), 'LIQUIDATION_PRICE_TIME_INVALID'),
     ],
 )
-def test_invalid_late_quote_leaves_position_and_aggregates_one_alert(
+def test_invalid_late_quote_uses_last_valid_paper_price(
     monkeypatch, tmp_path, caplog, quote, reason
 ):
     use_case, order_sender, board_client, notifications = _run_eod_scenario(
@@ -173,17 +173,13 @@ def test_invalid_late_quote_leaves_position_and_aggregates_one_alert(
         quote=quote,
     )
 
-    assert [order['Side'] for order in order_sender.orders] == [OrderSide.BUY.value]
-    assert order_sender.get_positions('test')[0]['HoldQty'] == 300
-    assert use_case._liquidation_results[0]['reason'] == reason
-    emergency_messages = [
-        message for message in notifications
-        if message.startswith('【緊急】EOD決済未完了')
+    assert [order['Side'] for order in order_sender.orders] == [
+        OrderSide.BUY.value, OrderSide.SELL.value,
     ]
-    assert len(emergency_messages) == 1
-    assert '7203' in emergency_messages[0]
-    assert reason in emergency_messages[0]
-    assert any('EOD_LIQUIDATION_UNRESOLVED' in record.message for record in caplog.records)
+    assert order_sender.get_positions('test') == []
+    assert use_case.order_history[-1].price_quality == 'stale'
+    assert use_case.order_history[-1].price_source == 'last_valid_board'
+    assert use_case.order_history[-1].decision_reason == 'EOD_LATE_LIQUIDATION'
     assert board_client.freshness_requests == 1
 
 
@@ -196,7 +192,7 @@ def test_invalid_late_quote_leaves_position_and_aggregates_one_alert(
         (_quote(price=0.0), 'LIQUIDATION_PRICE_INVALID'),
     ],
 )
-def test_paper_emergency_stop_rejects_invalid_freshness_quote_and_keeps_holding(
+def test_paper_emergency_stop_uses_last_valid_paper_price(
     monkeypatch, tmp_path, caplog, quote, reason
 ):
     use_case, order_sender, board_client, notifications = _run_eod_scenario(
@@ -207,17 +203,35 @@ def test_paper_emergency_stop_rejects_invalid_freshness_quote_and_keeps_holding(
         emergency_stop=True,
     )
 
-    assert [order['Side'] for order in order_sender.orders] == [OrderSide.BUY.value]
-    assert order_sender.get_positions('test')[0]['HoldQty'] == 300
-    assert use_case._liquidation_results[0]['reason'] == reason
-    alerts = [message for message in notifications if message.startswith('【緊急】EOD決済未完了')]
-    assert len(alerts) == 1
-    assert '7203' in alerts[0]
-    assert reason in alerts[0]
-    assert any(
-        record.levelno == logging.ERROR and 'EOD_LIQUIDATION_UNRESOLVED' in record.message
-        for record in caplog.records
+    assert [order['Side'] for order in order_sender.orders] == [
+        OrderSide.BUY.value, OrderSide.SELL.value,
+    ]
+    assert order_sender.get_positions('test') == []
+    assert use_case.order_history[-1].price_quality == 'stale'
+    assert use_case.order_history[-1].price_source == 'last_valid_board'
+    assert use_case.order_history[-1].decision_reason == '手動緊急停止'
+    assert board_client.freshness_requests == 1
+
+
+def test_october_2_emergency_stop_records_manual_reason_and_stale_price(
+    monkeypatch, tmp_path
+):
+    use_case, order_sender, board_client, _ = _run_eod_scenario(
+        monkeypatch,
+        tmp_path,
+        trade_date=date(2026, 10, 2),
+        initial_time=datetime(2026, 10, 2, 15, 8, 56),
+        resume_time=datetime(2026, 10, 2, 15, 9, 59),
+        quote=None,
+        emergency_stop=True,
     )
+
+    sell = use_case.order_history[-1]
+    assert sell.symbol == "7203"
+    assert sell.decision_reason == "手動緊急停止"
+    assert sell.price_quality == "stale"
+    assert sell.price_source == "last_valid_board"
+    assert sell.timestamp == "2026-10-02T15:09:59"
     assert board_client.freshness_requests == 1
 
 
