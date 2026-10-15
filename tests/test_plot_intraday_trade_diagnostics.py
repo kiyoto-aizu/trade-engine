@@ -45,6 +45,9 @@ def test_event_marker_uses_previous_bar_position():
     assert analysis._event_index(
         bars, analysis.datetime(2026, 10, 2, 15, 8, 56)
     ) == 0
+    assert analysis._event_marker(
+        bars, analysis.datetime(2026, 10, 2, 15, 8, 56)
+    ) == (analysis.compressed_minute_position(analysis.datetime(2026, 10, 2, 15, 8, 56)), 100.0)
 
 
 def test_filled_step_segments_keep_sessions_separate_and_fill_previous_price():

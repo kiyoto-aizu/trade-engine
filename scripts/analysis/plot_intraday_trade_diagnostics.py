@@ -146,6 +146,15 @@ def _event_index(bars: list[dict[str, Any]], moment: datetime | None) -> int | N
     return previous[-1] if previous else 0
 
 
+def _event_marker(
+    bars: list[dict[str, Any]], moment: datetime | None
+) -> tuple[int, float] | None:
+    index = _event_index(bars, moment)
+    if index is None or moment is None:
+        return None
+    return compressed_minute_position(moment), float(bars[index]["price"])
+
+
 def _filled_step_segments(
     bars: list[dict[str, Any]], start_time: datetime
 ) -> list[tuple[list[int], list[float]]]:
@@ -172,8 +181,17 @@ def _filled_step_segments(
 
 def _add_panel_annotations(axis, lines: list[str]) -> None:
     for index, line in enumerate(lines):
-        axis.text(0.01, 0.04 - index * 0.10, line, transform=axis.transAxes, fontsize=8,
-                  color="#d62728" if "価格が" in line else "black")
+        axis.text(
+            0.02,
+            0.96 - index * 0.085,
+            line,
+            transform=axis.transAxes,
+            fontsize=8,
+            va="top",
+            color="#d62728" if "価格が" in line else "black",
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.9, "pad": 1.5},
+            zorder=6,
+        )
 
 
 def select_multiplier(level: str, *, stop: bool) -> float:
@@ -534,19 +552,19 @@ def render(report: dict, output: Path) -> None:
             trailing = [None] * start + item["trailing"]
             axis.plot(x, trailing, color="#d5a400", linestyle=":", linewidth=1.0, label="トレーリング")
             buy_time = _parse_time((item["buy"] or {}).get("timestamp") or (item["buy"] or {}).get("occurred_at"))
-            buy_index = _event_index(bars, buy_time)
-            if buy_index is not None:
-                axis.scatter([x[buy_index]], [prices[buy_index]], color="green", s=18,
+            buy_marker = _event_marker(bars, buy_time)
+            if buy_marker is not None:
+                axis.scatter([buy_marker[0]], [buy_marker[1]], color="green", s=18,
                              zorder=3, label="買い")
             sell = next((row for row in report["orders"]
                          if str(row.get("symbol")) == item["symbol"] and str(row.get("side")) == "1"), None)
             if sell:
                 sell_time = _parse_time(sell.get("timestamp"))
-                index = _event_index(bars, sell_time)
-                if index is not None:
+                sell_marker = _event_marker(bars, sell_time)
+                if sell_marker is not None:
                     sell_price = _valid_order_price(sell)
                     if sell_price is not None:
-                        axis.scatter([x[index]], [sell_price], color="#e67e22", s=18, zorder=3, label="売り")
+                        axis.scatter([sell_marker[0]], [sell_marker[1]], color="#e67e22", s=18, zorder=3, label="売り")
         reference = item["skip_reference"]
         if reference:
             ref_x = compressed_minute_position(reference["time"])
@@ -564,14 +582,17 @@ def render(report: dict, output: Path) -> None:
                         filled_x, filled_prices, reference["price"],
                         where=[price >= reference["price"] for price in filled_prices],
                         color="#f39c12", alpha=0.16, step="post",
+                        linewidth=0, edgecolor="none", antialiased=False,
                     )
                     axis.fill_between(
                         filled_x, filled_prices, reference["price"],
                         where=[price < reference["price"] for price in filled_prices],
                         color="#2ca25f", alpha=0.14, step="post",
+                        linewidth=0, edgecolor="none", antialiased=False,
                     )
-                skip_index = _event_index(bars, reference["time"]) or 0
-                axis.scatter([x[skip_index]], [prices[skip_index]], color="#777777", s=18, marker="x", label="見送り")
+                skip_marker = _event_marker(bars, reference["time"])
+                if skip_marker is not None:
+                    axis.scatter([skip_marker[0]], [skip_marker[1]], color="#777777", s=18, marker="x", label="見送り")
         trailing_text = (
             f"T最小余裕 {item['trailing_min_margin']:.2f}円/{item['trailing_min_margin_atr']:.2f}ATR "
             f"@{_clock(_parse_time(item.get('trailing_min_time')))}"
@@ -598,10 +619,10 @@ def render(report: dict, output: Path) -> None:
         invalid_notes = []
         for order in item["invalid_orders"]:
             order_time = _parse_time(order.get("timestamp"))
-            index = _event_index(bars, order_time)
-            if index is not None:
+            marker = _event_marker(bars, order_time)
+            if marker is not None:
                 axis.scatter(
-                    [x[index]], [prices[index]], color="#d62728", marker="X", s=32,
+                    [marker[0]], [marker[1]], color="#d62728", marker="X", s=32,
                     zorder=5, label="注文価格不正",
                 )
             side = "売り" if str(order.get("side")) == "1" else "買い"
@@ -649,10 +670,10 @@ def render(report: dict, output: Path) -> None:
                 handles.append(handle)
                 labels.append(label)
     if handles:
-        figure.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.0),
+        figure.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.995),
                      ncol=6, fontsize=8)
-    figure.suptitle(f"分足トレード診断 {report['date']}", fontsize=16, y=0.94)
-    figure.subplots_adjust(top=0.88, bottom=0.07, left=0.05, right=0.98)
+    figure.suptitle(f"分足トレード診断 {report['date']}", fontsize=16, y=0.90)
+    figure.subplots_adjust(top=0.83, bottom=0.07, left=0.05, right=0.98)
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output, dpi=150)
     plt.close(figure)
@@ -679,17 +700,17 @@ def _render_detail(report: dict, item: dict, output: Path) -> None:
         axis.plot(x, [None] * start + item["trailing"], color="#d5a400",
                   linestyle=":", linewidth=1.2, label="トレーリング")
         buy_time = _parse_time((item["buy"] or {}).get("timestamp") or (item["buy"] or {}).get("occurred_at"))
-        buy_index = _event_index(bars, buy_time)
-        if buy_index is not None:
-            axis.scatter([x[buy_index]], [prices[buy_index]], color="green", s=35, label="買い", zorder=3)
+        buy_marker = _event_marker(bars, buy_time)
+        if buy_marker is not None:
+            axis.scatter([buy_marker[0]], [buy_marker[1]], color="green", s=35, label="買い", zorder=3)
         sell = next((row for row in report["orders"]
                      if str(row.get("symbol")) == item["symbol"] and str(row.get("side")) == "1"), None)
         if sell:
             sell_time = _parse_time(sell.get("timestamp"))
-            index = _event_index(bars, sell_time)
+            sell_marker = _event_marker(bars, sell_time)
             sell_price = _valid_order_price(sell)
-            if index is not None and sell_price is not None:
-                axis.scatter([x[index]], [sell_price], color="#e67e22", s=35, label="売り", zorder=3)
+            if sell_marker is not None and sell_price is not None:
+                axis.scatter([sell_marker[0]], [sell_marker[1]], color="#e67e22", s=35, label="売り", zorder=3)
     reference = item["skip_reference"]
     if reference:
         after = [(position, price) for position, price, bar in zip(x, prices, bars)
@@ -707,15 +728,18 @@ def _render_detail(report: dict, item: dict, output: Path) -> None:
                 filled_x, filled_prices, reference["price"],
                 where=[price >= reference["price"] for price in filled_prices],
                 color="#f39c12", alpha=0.16, step="post",
+                linewidth=0, edgecolor="none", antialiased=False,
             )
             axis.fill_between(
                 filled_x, filled_prices, reference["price"],
                 where=[price < reference["price"] for price in filled_prices],
                 color="#2ca25f", alpha=0.14, step="post",
+                linewidth=0, edgecolor="none", antialiased=False,
             )
         if after:
-            index = _event_index(bars, reference["time"]) or 0
-            axis.scatter([x[index]], [prices[index]], color="#777777", s=35, marker="x", label="見送り")
+            skip_marker = _event_marker(bars, reference["time"])
+            if skip_marker is not None:
+                axis.scatter([skip_marker[0]], [skip_marker[1]], color="#777777", s=35, marker="x", label="見送り")
     metrics = []
     if bought and item["trailing_min_margin"] is not None:
         metrics.append(
@@ -745,9 +769,9 @@ def _render_detail(report: dict, item: dict, output: Path) -> None:
     invalid_notes = []
     for order in item["invalid_orders"]:
         order_time = _parse_time(order.get("timestamp"))
-        index = _event_index(bars, order_time)
-        if index is not None:
-            axis.scatter([x[index]], [prices[index]], color="#d62728", marker="X", s=45,
+        marker = _event_marker(bars, order_time)
+        if marker is not None:
+            axis.scatter([marker[0]], [marker[1]], color="#d62728", marker="X", s=45,
                          zorder=5, label="注文価格不正")
         side = "売り" if str(order.get("side")) == "1" else "買い"
         raw_price = order.get("price")
@@ -760,10 +784,11 @@ def _render_detail(report: dict, item: dict, output: Path) -> None:
     axis.grid(alpha=0.2)
     handles, labels = axis.get_legend_handles_labels()
     if handles:
-        figure.legend(handles, labels, loc="upper center", ncol=6)
-    figure.suptitle(f"分足トレード診断 詳細 {report['date']}", y=0.94)
+        figure.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.94),
+                     ncol=6, fontsize=9)
+    figure.suptitle(f"分足トレード診断 詳細 {report['date']}", y=0.98)
     figure.text(0.01, 0.01, "買い後高値は分足から再計算した代用値です。", fontsize=9)
-    figure.tight_layout(rect=(0, 0.04, 1, 0.90))
+    figure.tight_layout(rect=(0.01, 0.04, 0.99, 0.87))
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output, dpi=160)
     plt.close(figure)
