@@ -1,6 +1,6 @@
 # 詳細設計書 08 日次分析・日足更新・トレンド答え合わせ
 
-> 状態: 現行    最終更新: 2026-10-08
+> 状態: 現行    最終更新: 2026-10-16
 > 起動: `run_daily_analysis.py`、`run_trend_check.py`、`update_daily_bar_cache.py`    関連: [03 取引ループ](./03-trading-loop-design.md)、[03b 価格帯別トレンド答え合わせ](./03b-price-band-trend-check.md)、[設定項目](../reference/config-reference.md)
 
 ## 1. 概要
@@ -33,6 +33,7 @@
 | 取引実績・注文情報 | 入力 | `data/reports/daily/`、`data/trading/order_history.json` | 日次通知用のレポートと買付情報 |
 | 日足キャッシュ | 入出力 | `data/cache/yahoo_daily/*.json` | Yahoo Financeの確定OHLCV。対象日までの不足銘柄を取得 |
 | 当日分足 | 出力 | `data/minute_bars_parquet/symbol=<銘柄>/date=<日付>/data.parquet` | 当日の通常フィルタ結果の銘柄(任意で価格帯別も)のYahoo 1分足。日足更新の後・グラフ生成の前に保存。詳細は[04](./04-minute-bar-backfill-design.md) |
+| 分足診断グラフ | 出力 | `data/reports/daily_charts/YYYY-MM-DD/` | 分足保存後に全体図1枚と銘柄別詳細図を生成。分析専用で、DB・売買状態・設定は変更しない |
 | トレンド判定 | 出力 | `data/analysis/trend_check.sqlite3` | 基準版・銘柄別結果・日次サマリ。対象日・版単位で置換 |
 | 日次トレンドレポート | 出力 | `data/reports/trend_check/YYYY-MM-DD.json` | `run_trend_check`が生成 |
 | 日次分析通知 | 出力 | Slack `analysis` | 日次実績、判定結果、次回確認、任意のLLM評価 |
@@ -56,7 +57,8 @@ flowchart TD
     Complete -->|はい| CacheOK
     CacheOK --> Minute[当日分足を保存: 取引日の引け後のみ・失敗しても継続]
     CacheFail --> Minute
-    Minute --> Check[run_daily_safelyで日次判定・保存]
+    Minute --> Charts[分足診断グラフをAggで生成: 失敗しても継続]
+    Charts --> Check[run_daily_safelyで日次判定・保存]
     Minute --> Report[取引レポートと判定状態を収集]
     Check --> Report
     Report --> Review[任意のLLMレビューと通知文を作成]
@@ -81,6 +83,7 @@ flowchart TD
 | 判定不能 | 当日足、始値、または必要なATRが得られない場合に判定不能として記録 |
 | LLM無効またはAPIキーなし | LLMレビューなしで通知を作成 |
 | 当日分足の保存 | 日足更新の後に実行。休場日・引け前(`latest_confirmed_trading_day`未満)・対象銘柄なしは何もしない。失敗は例外にせずログへ残して続行。保存済み直近10営業日の本数中央値(少なくとも3日必要)の50%未満だけを「本数少」とし、通知は正常時`分足 10銘柄すべて保存`、異常時だけ銘柄コードを含む1行を追加 |
+| 分足診断グラフ | 当日分足保存の後に既存の`plot_intraday_trade_diagnostics`を読み取り専用で実行。matplotlibはAggバックエンドを使用し、全体図と詳細図を`data/reports/daily_charts/YYYY-MM-DD/`へ保存。生成失敗は例外を日次分析へ伝播せず、理由をログへ記録して通知に失敗行を追加 |
 
 ## 6. レイヤー別の構成
 
@@ -90,6 +93,7 @@ flowchart TD
 | `src/entrypoints/run_trend_check.py` | entrypoints | 日次・期間判定CLI、基準版登録、全期間再計算の起動 |
 | `src/entrypoints/update_daily_bar_cache.py` | entrypoints | 銘柄探索、確定営業日の決定、手動キャッシュ更新CLI |
 | `src/entrypoints/save_daily_minute_bars.py` | entrypoints | 当日分足保存(対象銘柄収集・取引日/引け後判定・例外を投げない)と手動CLI |
+| `scripts/analysis/plot_intraday_trade_diagnostics.py` | analysis | 保存済み分足・履歴・イベントから全体図と詳細図を生成する読み取り専用処理 |
 | `src/application/trend_check_usecase.py` | application | 判定入力の読込、対象銘柄構成、日次判定実行・保存 |
 | `src/application/analysis_notification.py` | application | 当日・期間判定の表示、通知文・結論の組立て |
 | `src/application/price_band_trend_check.py` | application | 価格帯別対象取得・判定との連携。[03b](./03b-price-band-trend-check.md)参照 |
@@ -112,6 +116,7 @@ flowchart TD
 | 日次判定・レポート保存例外 | `run_daily_safely`の例外捕捉 | ERRORログ、判定失敗を返す。分析通知の後、全体終了コードを失敗にする | `run_daily_safely`が失敗通知を試行。通知自体の例外はログに記録 | 例外型・メッセージ |
 | LLM APIまたは応答形式の失敗 | HTTP・解析例外 | 警告ログ、レビューを`None`として通知の本体処理を続ける | 別途の失敗通知なし | なし |
 | Slack送信失敗 | HTTP例外またはWebhook未設定 | ログに記録し、送信結果`False`を返す。再送処理なし | 送信失敗自体の再通知なし | なし |
+| 分足診断グラフ生成失敗 | 描画処理の例外 | ERRORログを残し、日次分析は継続 | 通知に保存先と失敗を示す1行を追加 | 描画例外 |
 | 手動キャッシュ更新で対象銘柄なし | 対象リストが空 | エラーログ、終了コード1 | Slack通知なし | 対象銘柄なし |
 
 ## 8. 設定項目
@@ -133,6 +138,22 @@ flowchart TD
 
 当日分足の取得間隔(0.5秒)・再試行(2回、5秒間隔)は`DailyMinuteBarSaveUseCase`の既定値で、環境変数では変更しません。
 
+## 8.1 Slack画像通知の調査結果
+
+現行の日次分析通知は、`SLACK_WEBHOOK_ANALYSIS`に設定したIncoming Webhookへ
+`requests.post(..., json={"text": message})`でテキストだけを送信しています。
+Slack Web APIのトークンやファイルアップロード処理は現行実装にありません。
+
+画像を添付するには、WebhookではなくBotまたはUser Tokenを使い、
+`files.getUploadURLExternal`、画像データのアップロード、`files.completeUploadExternal`の
+3段階を実装する必要があります。公式APIの両メソッドには`files:write`スコープが必要で、
+共有先チャンネルのIDと、Botがそのチャンネルへ投稿できる権限も必要です。
+トークンはWebhook URLとは別の秘密情報として設定・管理する必要があります。
+
+画像添付を実装しない間は、日次通知に
+`グラフ 全体図1枚・詳細図N枚を保存: data/reports/daily_charts/YYYY-MM-DD/`
+の1行を追加し、Slackからローカル保存先を確認できるようにします。
+
 ## 9. 決定事項と変更履歴
 
 | 日付 | 決定 | 理由 |
@@ -141,6 +162,7 @@ flowchart TD
 | 2026-10-08 | トレンド基準を版管理し、同じ日・同じ版を再計算可能にする | 基準変更前後の結果を混在させず、再実行を冪等にするため |
 | 2026-10-08 | 価格帯別トレンドの固有仕様を03bへ分離 | 本書との仕様重複を避けるため |
 | 2026-10-14 | 日足更新の後・分析前に当日分足を保存し、通知に1行だけ要約を足す(専用の通知・タスクは作らない) | 引け後の分足グラフで当日分を見られるようにするため。取得失敗は日次分析を止めない |
+| 2026-10-16 | 当日分足保存の直後にAggで全体図・詳細図を生成し、通知へ保存先を1行追加する。Slack画像添付は未実装 | 日次分析の流れで確実に可視化し、Webhookの現行契約を変更せずに参照可能にする |
 
 ## 10. 未決・既知の課題
 

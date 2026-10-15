@@ -142,6 +142,65 @@ def test_daily_analysis_notifies_even_when_daily_refresh_fails(monkeypatch, tmp_
     assert "判定不能(日足更新失敗)" in notifications[0]
 
 
+def test_intraday_chart_generation_failure_is_logged_and_returns_notification_line(
+    tmp_path, caplog
+):
+    def fail(*args):
+        raise OSError("画像保存先が利用できません")
+
+    with caplog.at_level("ERROR"):
+        line = run_daily_analysis.generate_intraday_charts(
+            date(2026, 10, 6),
+            collect_report=fail,
+            write_report=fail,
+        )
+
+    assert "グラフ生成失敗" in line
+    assert "分足診断グラフの生成に失敗しました" in caplog.text
+
+
+def test_daily_analysis_continues_after_intraday_chart_failure(monkeypatch, tmp_path):
+    paths = _paths(tmp_path)
+    notifications = []
+    events = []
+    monkeypatch.setattr(
+        run_daily_analysis,
+        "refresh_cache_with_retries",
+        lambda *args, **kwargs: (False, ["AAA"]),
+    )
+    monkeypatch.setattr(
+        run_daily_analysis,
+        "run_daily_safely",
+        lambda *args, **kwargs: events.append("check") or True,
+    )
+    monkeypatch.setattr(run_daily_analysis, "_load_daily_report", lambda *args: None)
+    monkeypatch.setattr(run_daily_analysis, "create_daily_analyzer", lambda: None)
+    monkeypatch.setattr(run_daily_analysis, "notify_analysis", notifications.append)
+    monkeypatch.setattr(
+        run_daily_analysis,
+        "save_daily_minute_bars",
+        lambda *args, **kwargs: events.append("save") or None,
+    )
+    monkeypatch.setattr(
+        run_daily_analysis,
+        "generate_intraday_charts",
+        lambda *_: events.append("charts") or "グラフ生成失敗（保存先: test）",
+    )
+
+    success = run_daily_analysis.run_daily_analysis(
+        date(2026, 10, 6),
+        paths=paths,
+        database_file=tmp_path / "trend.sqlite3",
+        now=datetime(2026, 10, 6, 17, 0),
+        sleeper=lambda _: None,
+    )
+
+    assert success is False
+    assert events == ["save", "charts"]
+    assert len(notifications) == 1
+    assert "グラフ生成失敗" in notifications[0]
+
+
 def test_daily_analysis_main_runs_on_trading_day(monkeypatch):
     analysis_calls = []
     minute_bar_calls = []
