@@ -38,6 +38,7 @@ class PaperOrderClient:
     state_path: Optional[Path] = None
     _next_order_id: int = 1
     last_rejection_reason: Optional[str] = field(default=None, init=False)
+    _price_metadata: Dict[str, dict] = field(default_factory=dict, init=False, repr=False)
     # 状態ファイルの保存が連続して失敗した回数(成功で0に戻る)。TradingUseCaseが参照する
     consecutive_save_failures: int = field(default=0, init=False)
 
@@ -100,8 +101,9 @@ class PaperOrderClient:
         """現在のメモリ状態を保存し直す。"""
         return self._save_state()
 
-    def set_price(self, symbol: str, price: float) -> None:
+    def set_price(self, symbol: str, price: float, metadata: Optional[dict] = None) -> None:
         self.prices[symbol] = price
+        self._price_metadata[symbol] = dict(metadata or {})
 
     def place_market_order(self, token: str, symbol: str, side: str, quantity: Optional[int] = None) -> Optional[dict]:
         """成行注文を不利方向のスリッページ・手数料込みで仮想約定する。"""
@@ -178,6 +180,7 @@ class PaperOrderClient:
             "Fee": fee,
             "SlippageBps": self.market_slippage_bps,
         }
+        order.update(self._price_metadata.get(symbol, {}))
         self.orders.append(order)
         self._save_state()
         return order

@@ -352,6 +352,11 @@ def _run_period(
             for entry in daily_history_entries
             if entry.side == config.OrderSide.SELL
         )
+        manual_emergency_sells = sum(
+            entry.side == config.OrderSide.SELL
+            and entry.decision_reason == "手動緊急停止"
+            for entry in daily_history_entries
+        )
         positions_after = order_sender.get_positions("historical-replay")
         if positions_after:
             raise AssertionError(f"営業日終了後に保有が残っています: {target_date}: {positions_after}")
@@ -365,6 +370,7 @@ def _run_period(
             "evaluation_cycles": max(1, len(day_input["timestamps"]) - 1),
             "order_event_count": len(daily_history_entries),
             "sell_decision_reason_counts": dict(sell_reasons),
+            "manual_emergency_liquidation_count": manual_emergency_sells,
             "daily_realized_pnl": daily_realized_pnl,
             "independently_reconstructed_realized_pnl": reconstructed_daily_pnl,
             "cash_before": round(cash_before, 2),

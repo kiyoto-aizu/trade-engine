@@ -55,6 +55,10 @@ class OrderHistoryEntry:
     rsi_input: Optional[Dict] = None
     order_qty_before_atr: Optional[int] = None
     allocated_budget: Optional[float] = None
+    price_source: Optional[str] = None
+    price_quality: Optional[str] = None
+    price_observed_at: Optional[str] = None
+    price_age_seconds: Optional[float] = None
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'OrderHistoryEntry':
@@ -91,6 +95,10 @@ class OrderHistoryEntry:
             rsi_input=data.get('rsi_input'),
             order_qty_before_atr=data.get('order_qty_before_atr'),
             allocated_budget=data.get('allocated_budget'),
+            price_source=data.get('price_source'),
+            price_quality=data.get('price_quality'),
+            price_observed_at=data.get('price_observed_at'),
+            price_age_seconds=data.get('price_age_seconds'),
         )
 
     def to_dict(self) -> Dict:
@@ -124,6 +132,10 @@ class OrderHistoryEntry:
             'rsi_input': self.rsi_input,
             'order_qty_before_atr': self.order_qty_before_atr,
             'allocated_budget': self.allocated_budget,
+            'price_source': self.price_source,
+            'price_quality': self.price_quality,
+            'price_observed_at': self.price_observed_at,
+            'price_age_seconds': self.price_age_seconds,
         }
 
 
@@ -244,6 +256,10 @@ class TradeSignal:
             rsi_input=diagnostics.get('rsi_input'),
             order_qty_before_atr=diagnostics.get('order_qty_before_atr'),
             allocated_budget=diagnostics.get('allocated_budget'),
+            price_source=diagnostics.get('price_source'),
+            price_quality=diagnostics.get('price_quality'),
+            price_observed_at=diagnostics.get('price_observed_at'),
+            price_age_seconds=diagnostics.get('price_age_seconds'),
         )
 
 

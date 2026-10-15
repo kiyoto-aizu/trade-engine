@@ -237,6 +237,11 @@ def _run_once(
         for entry in usecase.order_history
         if entry.side == config.OrderSide.SELL
     )
+    manual_emergency_sells = sum(
+        entry.side == config.OrderSide.SELL
+        and entry.decision_reason == "手動緊急停止"
+        for entry in daily_history_entries
+    )
     evaluation_cycles = max(1, len(timestamps) - 1)
     evaluated_symbol_ticks = evaluation_cycles * len(symbols)
     projected_seconds = elapsed_seconds * EXPECTED_COMPARISON_TICKS / evaluated_symbol_ticks
@@ -248,6 +253,7 @@ def _run_once(
         "projected_seconds_for_246k_ticks": round(projected_seconds, 1),
         "order_event_count": len(usecase.order_history),
         "sell_decision_reason_counts": dict(sell_reasons),
+        "manual_emergency_liquidation_count": manual_emergency_sells,
         "order_history_path": str(usecase.order_history_path),
         "report_directory": str(usecase.daily_report_directory),
     }

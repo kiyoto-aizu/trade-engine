@@ -129,6 +129,7 @@ class TradingUseCase:
         self.notifier = notifier
         self._now_provider = datetime.now
         self._current_now: datetime | None = None
+        self._last_valid_board_prices: dict[str, dict] = {}
         self.daily_analyzer = daily_analyzer if daily_analyzer is not None else create_daily_analyzer()
         self.daily_report_directory = daily_report_directory or config.DAILY_REPORT_DIRECTORY
         self.filter_decision_repository = filter_decision_repository or FilterDecisionRepository(
@@ -1338,6 +1339,7 @@ class TradingUseCase:
         volatility_assessment=None,
         diagnostics: Optional[dict] = None,
         shadow_previous_close: float | None = None,
+        timestamp: datetime | None = None,
     ) -> None:
         """
         実行した注文を履歴に記録します。
@@ -1351,6 +1353,12 @@ class TradingUseCase:
             "market_regime": self.market_regime.value,
         }
         order_diagnostics.update(diagnostics or {})
+        if order_response:
+            for field_name in (
+                "price_source", "price_quality", "price_observed_at", "price_age_seconds",
+            ):
+                if field_name in order_response:
+                    order_diagnostics[field_name] = order_response[field_name]
         if volatility_assessment is not None:
             order_diagnostics.update({
                 "atr": volatility_assessment.atr,
@@ -1369,7 +1377,7 @@ class TradingUseCase:
                 limit,
                 order_response,
                 order_diagnostics,
-                timestamp=self._current_now or self._now_provider(),
+                timestamp=timestamp or self._current_now or self._now_provider(),
             )
         )
         self._save_order_history()
@@ -2020,6 +2028,90 @@ class TradingUseCase:
             return None, "LIQUIDATION_PRICE_INVALID", board
         return price, None, board
 
+    def _record_valid_board_price(self, symbol: str, price: float, observed_at: datetime) -> None:
+        self._last_valid_board_prices[symbol] = {
+            "price": price,
+            "observed_at": observed_at.isoformat(),
+        }
+
+    def _paper_board_price(self, board: dict) -> tuple[float | None, str | None]:
+        raw_price = board.get("current_price")
+        try:
+            price = float(raw_price)
+        except (TypeError, ValueError, OverflowError):
+            return None, "ORDER_REJECTED_PAPER_PRICE_INVALID"
+        if not math.isfinite(price) or price <= 0:
+            return None, "ORDER_REJECTED_PAPER_PRICE_INVALID"
+        status = board.get("current_price_status")
+        if status is not None and (isinstance(status, bool) or status not in (1, 8, "1", "8")):
+            return None, "ORDER_REJECTED_PAPER_PRICE_STATUS_INVALID"
+        return price, None
+
+    def _set_order_price(
+        self,
+        symbol: str,
+        price: float,
+        *,
+        source: str,
+        quality: str,
+        observed_at: datetime | None,
+        age_seconds: float | None = None,
+    ) -> None:
+        set_price = getattr(self.order_sender, "set_price", None) if self.order_sender else None
+        if not callable(set_price):
+            return
+        if self._is_paper_mode():
+            metadata = {
+                "price_source": source,
+                "price_quality": quality,
+                "price_observed_at": observed_at.isoformat() if observed_at else None,
+                "price_age_seconds": age_seconds,
+            }
+            try:
+                inspect.signature(set_price).bind(symbol, price, metadata)
+            except TypeError:
+                set_price(symbol, price)
+            else:
+                set_price(symbol, price, metadata)
+        else:
+            set_price(symbol, price)
+
+    def _last_valid_price_for_liquidation(
+        self, symbol: str, now: datetime
+    ) -> tuple[float | None, dict]:
+        cached = self._last_valid_board_prices.get(symbol)
+        if cached:
+            observed_at = datetime.fromisoformat(cached["observed_at"])
+            current = now
+            if observed_at.tzinfo is not None and current.tzinfo is None:
+                current = current.replace(tzinfo=observed_at.tzinfo)
+            elif observed_at.tzinfo is None and current.tzinfo is not None:
+                current = current.replace(tzinfo=None)
+            return float(cached["price"]), {
+                "price_source": "last_valid_board",
+                "price_quality": "stale",
+                "price_observed_at": cached["observed_at"],
+                "price_age_seconds": max(0.0, (current - observed_at).total_seconds()),
+            }
+        entry_price = next(
+            (
+                entry.price
+                for entry in reversed(self.order_history)
+                if entry.symbol == symbol and entry.side == config.OrderSide.BUY
+            ),
+            None,
+        )
+        if entry_price is None and self.order_sender is not None:
+            entry_price = getattr(self.order_sender, "average_costs", {}).get(symbol)
+        if entry_price is not None and entry_price > 0:
+            return float(entry_price), {
+                "price_source": "entry_price",
+                "price_quality": "entry_price_fallback",
+                "price_observed_at": None,
+                "price_age_seconds": None,
+            }
+        return None, {}
+
     def _fetch_positions_for_liquidation(self) -> List[dict] | None:
         """
         清算処理専用の保有株一覧取得。
@@ -2052,6 +2144,7 @@ class TradingUseCase:
         *,
         require_fresh_price: bool = False,
         late: bool = False,
+        decision_reason: str | None = None,
     ) -> None:
         """持ち越しを防ぐため、現物の全保有を成行で売却します。"""
         self._liquidation_results = []
@@ -2085,9 +2178,50 @@ class TradingUseCase:
 
         for symbol, quantity in holdings.items():
             try:
+                price_metadata: dict = {}
                 if require_fresh_price:
                     price, quote_failure, board = self._fresh_liquidation_quote(symbol)
-                    if quote_failure is not None or price is None:
+                    if quote_failure is None and price is not None:
+                        observed_at = self._current_now or self._now_provider()
+                        raw_observed_at = (board or {}).get("current_price_time")
+                        parsed_observed_at = (
+                            datetime.fromisoformat(raw_observed_at)
+                            if isinstance(raw_observed_at, str)
+                            else raw_observed_at
+                        )
+                        if isinstance(parsed_observed_at, datetime):
+                            observed_at = parsed_observed_at
+                        self._record_valid_board_price(symbol, price, observed_at)
+                        price_metadata = {
+                            "price_source": "board",
+                            "price_quality": "valid",
+                            "price_observed_at": observed_at.isoformat(),
+                            "price_age_seconds": 0.0,
+                        }
+                    elif self._is_paper_mode():
+                        price, price_metadata = self._last_valid_price_for_liquidation(
+                            symbol,
+                            self._current_now or self._now_provider(),
+                        )
+                        if price is None:
+                            reason = quote_failure or "LIQUIDATION_PRICE_INVALID"
+                            result = {
+                                "symbol": symbol,
+                                "quantity": quantity,
+                                "status": "未決済",
+                                "reason": reason,
+                            }
+                            self._liquidation_results.append(result)
+                            unresolved.append(result)
+                            logger.error(
+                                "EOD_LIQUIDATION_UNRESOLVED: 銘柄=%s | 数量=%s | 理由=%s | 板=%r",
+                                symbol,
+                                quantity,
+                                reason,
+                                board,
+                            )
+                            continue
+                    else:
                         reason = quote_failure or "LIQUIDATION_PRICE_INVALID"
                         result = {
                             "symbol": symbol,
@@ -2118,10 +2252,30 @@ class TradingUseCase:
                             symbol,
                             f"持ち越し防止売り価格={price} | 数量={quantity}",
                         )
-                decision_reason = "EOD_LATE_LIQUIDATION" if late else "持ち越し防止"
+                effective_decision_reason = (
+                    decision_reason
+                    or ("EOD_LATE_LIQUIDATION" if late else "持ち越し防止")
+                )
                 signal = TradeSignal(symbol, config.OrderSide.SELL, price, quantity)
-                if self.order_sender and hasattr(self.order_sender, 'set_price') and price > 0:
-                    self.order_sender.set_price(symbol, price)
+                order_timestamp = self._current_now or self._now_provider()
+                if price > 0 and not price_metadata:
+                    price_metadata = {
+                        "price_source": "board",
+                        "price_quality": "valid",
+                        "price_observed_at": order_timestamp.isoformat(),
+                        "price_age_seconds": 0.0,
+                    }
+                self._set_order_price(
+                    symbol,
+                    price,
+                    source=price_metadata.get("price_source", "board"),
+                    quality=price_metadata.get("price_quality", "valid"),
+                    observed_at=(
+                        datetime.fromisoformat(price_metadata["price_observed_at"])
+                        if price_metadata.get("price_observed_at") else None
+                    ),
+                    age_seconds=price_metadata.get("price_age_seconds"),
+                )
                 order_method = self.order_sender.place_market_order if self.order_sender else place_market_order
                 order_args = (self.token, symbol, config.OrderSide.SELL.value, quantity)
                 try:
@@ -2134,7 +2288,11 @@ class TradingUseCase:
                         signal,
                         PriceLimit(price, price),
                         order_result,
-                        diagnostics={"decision_reason": decision_reason},
+                        diagnostics={
+                            "decision_reason": effective_decision_reason,
+                            **price_metadata,
+                        },
+                        timestamp=order_timestamp,
                     )
                     self._liquidation_results.append({
                         "symbol": symbol,
@@ -2252,6 +2410,7 @@ class TradingUseCase:
         self._buy_evaluated_symbols.clear()
         self._buy_signal_symbols.clear()
         self._holding_high_prices.clear()
+        self._last_valid_board_prices.clear()
         self._last_logged_judgments.clear()
         self._shadow_positions.clear()
         self._shadow_pending_symbols.clear()
@@ -2322,9 +2481,13 @@ class TradingUseCase:
         use_preflight_market_data = bool(preflight_market_data)
         while not kill_switch_triggered:
             if self._is_emergency_stop_requested():
+                self._current_now = now_provider()
                 self.emergency_stop_triggered = True
                 self._trigger_kill_switch("手動緊急停止フラグが検知されました")
-                self._liquidate_all_positions(require_fresh_price=self._is_paper_mode())
+                self._liquidate_all_positions(
+                    require_fresh_price=self._is_paper_mode(),
+                    decision_reason="手動緊急停止",
+                )
                 break
             now = initial_now if first_loop else now_provider()
             self._current_now = now
@@ -2416,7 +2579,24 @@ class TradingUseCase:
                             "板価格取得が復旧しました",
                         )
                         self._board_unavailable_symbols.discard(symbol)
-                    current_price = float(board['current_price'])
+                    if self._is_paper_mode():
+                        current_price, price_reason = self._paper_board_price(board)
+                        if price_reason is not None:
+                            self._journal_decision(
+                                symbol, price_reason, now, current_price=board.get("current_price"),
+                                side="BUY_OR_SELL",
+                            )
+                            self._log_trade_reason_once(
+                                logging.WARNING,
+                                price_reason,
+                                symbol,
+                                f"板価格検証失敗: 価格={board.get('current_price')!r} | "
+                                f"現値ステータス={board.get('current_price_status')!r}",
+                            )
+                            continue
+                    else:
+                        current_price = float(board['current_price'])
+                    self._record_valid_board_price(symbol, current_price, now)
                     self._log_rsi_unavailable(
                         symbol, now, closes, rsi, entry_threshold, current_price
                     )
@@ -2889,8 +3069,14 @@ class TradingUseCase:
                             )
                         continue
                     # 注文を実行（成否はResultコードで判定。失敗時はNoneが返る）
-                    if self.order_sender and hasattr(self.order_sender, 'set_price'):
-                        self.order_sender.set_price(symbol, signal.price)
+                    order_timestamp = self._current_now or self._now_provider()
+                    self._set_order_price(
+                        symbol,
+                        signal.price,
+                        source="board",
+                        quality="valid",
+                        observed_at=order_timestamp,
+                    )
                     order_method = (
                         self.order_sender.place_market_order
                         if self.order_sender
@@ -2927,6 +3113,7 @@ class TradingUseCase:
                                 "allocated_budget": budget_per_position if signal.side == config.OrderSide.BUY else None,
                             },
                             shadow_previous_close=previous_close,
+                            timestamp=order_timestamp,
                         )
                         if decision_reason == "ATR損切り基準到達":
                             self._record_atr_stop_exit(
