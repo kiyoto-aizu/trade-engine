@@ -10,7 +10,6 @@ from datetime import date, datetime, timedelta
 from time import monotonic, perf_counter
 
 from src.config import config
-from src.application.market_regime_usecase import MarketRegimeUseCase
 from src.application.filtering_usecase import BoardRetryPolicy, FilteringUseCase
 from src.application.price_band_filtering_usecase import PriceBandFilteringUseCase
 from src.infrastructure.persistence.decision_journal_repository import DecisionJournalRepository
@@ -23,8 +22,6 @@ from src.infrastructure.logging_config import configure_logging
 from src.infrastructure.kabu.registration_aware_board_cache import RegistrationAwareBoardCache
 from src.infrastructure.market_data.cached_volume_client import CachedVolumeClient
 from src.infrastructure.market_data.yahoo_finance_client import YahooFinanceClient
-from src.infrastructure.market_data.index_daily_bar_fallback import create_index_daily_bar_fallback
-from src.infrastructure.market_data.yahoo_index_client import YahooIndexClient
 from src.infrastructure.notification.slack_notify import notify_daily, process_notification
 from src.infrastructure.persistence.filtering_result_repository import FilteringResultRepository
 from src.infrastructure.persistence.filtering_diagnostics_repository import FilteringDiagnosticsRepository
@@ -113,15 +110,6 @@ def main() -> None:
                 diagnostics_repository=(
                     FilteringDiagnosticsRepository(config.FILTERING_DIAGNOSTICS_DIRECTORY)
                     if args.target_date is None else None
-                ),
-                market_regime_usecase=MarketRegimeUseCase(
-                    market_data_client=YahooIndexClient(),
-                    thresholds=config.MARKET_REGIME_THRESHOLDS,
-                    realized_volatility_window=config.MARKET_REGIME_REALIZED_VOL_WINDOW,
-                    data_range=config.MARKET_REGIME_DATA_RANGE,
-                    fallback_bar_provider=create_index_daily_bar_fallback(),
-                    retry_wait_seconds=config.MARKET_REGIME_RETRY_WAIT_SECONDS,
-                    adx_threshold=config.MARKET_REGIME_ADX_TREND_THRESHOLD,
                 ),
             )
             try:

@@ -303,22 +303,20 @@ class ScreeningUseCase:
         activity_ratios = self._selected_turnover_ratios(
             symbols, turnover_by_symbol, target_date
         )
-        try:
-            assessment = (
-                self.market_regime_usecase.execute()
-                if self.market_regime_usecase is not None else None
-            )
-        except Exception:
-            logger.exception("TENDENCY_MARKET_UNAVAILABLE: MarketRegime取得に失敗しました")
-            assessment = None
-        details.extend(build_market_tendency_lines(
-            assessment,
-            activity_ratios,
-            period=TendencyPeriod.PREVIOUS_CLOSE,
-            activity_label="候補の活発度",
-            include_market_line=False,
-            include_tendency_line=False,
-        ))
+        if self.market_regime_usecase is not None:
+            try:
+                assessment = self.market_regime_usecase.execute()
+            except Exception:
+                logger.exception("TENDENCY_MARKET_UNAVAILABLE: MarketRegime取得に失敗しました")
+                assessment = None
+            details.extend(build_market_tendency_lines(
+                assessment,
+                activity_ratios,
+                period=TendencyPeriod.PREVIOUS_CLOSE,
+                activity_label="候補の活発度",
+                include_market_line=False,
+                include_tendency_line=False,
+            ))
         top_entries = []
         for symbol in exclusion_result.remaining[:3]:
             turnover_entry = turnover_by_symbol.get(symbol)

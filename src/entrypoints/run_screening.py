@@ -11,7 +11,6 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from src.config import config
-from src.application.market_regime_usecase import MarketRegimeUseCase
 from src.infrastructure.kabu.get_token import get_api_token
 from src.infrastructure.kabu.regulation_repository import RegulationRepository
 from src.infrastructure.kabu.primaryexchange_repository import PrimaryExchangeRepository
@@ -26,8 +25,6 @@ from src.infrastructure.persistence.historical_regulation_repository import Hist
 from src.infrastructure.persistence.screening_api_check_repository import ScreeningApiCheckRepository
 from src.infrastructure.market_data.historical_ranking_repository import HistoricalRankingRepository
 from src.infrastructure.market_data.yahoo_finance_client import YahooFinanceClient
-from src.infrastructure.market_data.index_daily_bar_fallback import create_index_daily_bar_fallback
-from src.infrastructure.market_data.yahoo_index_client import YahooIndexClient
 from src.application.screening_usecase import ScreeningUseCase
 from src.infrastructure.calendar.japanese_calendar import is_trading_day
 
@@ -123,15 +120,6 @@ def _run_screening() -> None:
                 exchange_repository,
                 ScreeningResultRepository(config.SCREENING_RESULT_DIRECTORY),
                 notify_result,
-                market_regime_usecase=MarketRegimeUseCase(
-                    market_data_client=YahooIndexClient(),
-                    thresholds=config.MARKET_REGIME_THRESHOLDS,
-                    realized_volatility_window=config.MARKET_REGIME_REALIZED_VOL_WINDOW,
-                    data_range=config.MARKET_REGIME_DATA_RANGE,
-                    fallback_bar_provider=create_index_daily_bar_fallback(),
-                    retry_wait_seconds=config.MARKET_REGIME_RETRY_WAIT_SECONDS,
-                    adx_threshold=config.MARKET_REGIME_ADX_TREND_THRESHOLD,
-                ),
                 turnover_client=market_data_client,
             )
             usecase.batch_started = lambda batch, _: register_symbols(token, batch) is not None

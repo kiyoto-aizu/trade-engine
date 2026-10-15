@@ -631,22 +631,21 @@ class FilteringUseCase:
             for candidate in scored
             if candidate.symbol in selected_symbols
         ]
-        try:
-            assessment = (
-                self.market_regime_usecase.execute()
-                if self.market_regime_usecase is not None else None
+        tendency_lines: list[str] = []
+        if self.market_regime_usecase is not None:
+            try:
+                assessment = self.market_regime_usecase.execute()
+            except Exception:
+                logger.exception("TENDENCY_MARKET_UNAVAILABLE: MarketRegime取得に失敗しました")
+                assessment = None
+            tendency_lines = build_market_tendency_lines(
+                assessment,
+                activity_ratios,
+                period=TendencyPeriod.PREVIOUS_CLOSE,
+                activity_label="通過銘柄の活発度",
+                include_market_line=False,
+                include_tendency_line=False,
             )
-        except Exception:
-            logger.exception("TENDENCY_MARKET_UNAVAILABLE: MarketRegime取得に失敗しました")
-            assessment = None
-        tendency_lines = build_market_tendency_lines(
-            assessment,
-            activity_ratios,
-            period=TendencyPeriod.PREVIOUS_CLOSE,
-            activity_label="通過銘柄の活発度",
-            include_market_line=False,
-            include_tendency_line=False,
-        )
         if not screening:
             message = format_result_notification(
                 "銘柄選定",
