@@ -26,6 +26,7 @@ from src.infrastructure.persistence.historical_regulation_repository import Hist
 from src.infrastructure.persistence.screening_api_check_repository import ScreeningApiCheckRepository
 from src.infrastructure.market_data.historical_ranking_repository import HistoricalRankingRepository
 from src.infrastructure.market_data.yahoo_finance_client import YahooFinanceClient
+from src.infrastructure.market_data.index_daily_bar_fallback import create_index_daily_bar_fallback
 from src.infrastructure.market_data.yahoo_index_client import YahooIndexClient
 from src.application.screening_usecase import ScreeningUseCase
 from src.infrastructure.calendar.japanese_calendar import is_trading_day
@@ -127,6 +128,8 @@ def _run_screening() -> None:
                     thresholds=config.MARKET_REGIME_THRESHOLDS,
                     realized_volatility_window=config.MARKET_REGIME_REALIZED_VOL_WINDOW,
                     data_range=config.MARKET_REGIME_DATA_RANGE,
+                    fallback_bar_provider=create_index_daily_bar_fallback(),
+                    retry_wait_seconds=config.MARKET_REGIME_RETRY_WAIT_SECONDS,
                     adx_threshold=config.MARKET_REGIME_ADX_TREND_THRESHOLD,
                 ),
                 turnover_client=market_data_client,

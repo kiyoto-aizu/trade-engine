@@ -61,6 +61,7 @@ class MarketRegimeAssessment:
     nikkei_last_close: float | None = None
     vix_last_bar_date: date | None = None
     vix_last_close: float | None = None
+    nikkei_fallback_dates: tuple[date, ...] = ()
 
 
 @dataclass(frozen=True)

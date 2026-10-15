@@ -1,6 +1,8 @@
 """市場全体の荒れ具合を日次データから判定するユースケース。"""
 import logging
+import time
 from datetime import date, datetime, timedelta, timezone
+from typing import Callable
 
 from src.domain.market_regime import (
     apply_trend_relief,
@@ -51,6 +53,9 @@ class MarketRegimeUseCase:
         data_range: str = "3mo",
         adx_threshold: float = 27.0,
         as_of_date: date | None = None,
+        fallback_bar_provider: Callable[[str, date], MarketDailyBar | None] | None = None,
+        retry_wait_seconds: float = 0.0,
+        sleep: Callable[[float], None] = time.sleep,
     ):
         if realized_volatility_window <= 0:
             raise ValueError("実現ボラティリティ期間は正数で指定してください")
@@ -60,6 +65,44 @@ class MarketRegimeUseCase:
         self.data_range = data_range
         self.adx_threshold = adx_threshold
         self.as_of_date = as_of_date
+        self.fallback_bar_provider = fallback_bar_provider
+        self.retry_wait_seconds = retry_wait_seconds
+        self._sleep = sleep
+        self._fallback_dates: tuple[date, ...] = ()
+
+    def _fill_from_fallback(
+        self,
+        symbol: str,
+        bars: list[MarketDailyBar],
+        expected_date: date,
+        expected_history_dates: list[date],
+    ) -> tuple[list[MarketDailyBar], list[date]] | None:
+        """最新の日足より後ろの欠けた営業日だけ、分足由来の日足で補う。"""
+        if self.fallback_bar_provider is None or symbol != "^N225" or not bars:
+            return None
+        available_dates = {bar.date for bar in bars}
+        extra: list[MarketDailyBar] = []
+        for target_date in expected_history_dates:
+            if target_date <= bars[-1].date or target_date in available_dates:
+                continue
+            try:
+                bar = self.fallback_bar_provider(symbol, target_date)
+            except Exception:
+                logger.exception("分足による日足補完に失敗しました: %s %s", symbol, target_date)
+                bar = None
+            if bar is not None:
+                extra.append(bar)
+        if expected_date not in {bar.date for bar in extra}:
+            return None
+        merged = sorted([*bars, *extra], key=lambda bar: bar.date)
+        merged_dates = {bar.date for bar in merged}
+        self._fallback_dates = tuple(bar.date for bar in extra)
+        logger.warning(
+            "%s日足が更新されていないため、1分足から日足を補完しました: %s",
+            symbol,
+            ",".join(map(str, self._fallback_dates)),
+        )
+        return merged, [d for d in expected_history_dates if d not in merged_dates]
 
     def _get_daily_bars_for_date(
         self,
@@ -79,6 +122,8 @@ class MarketRegimeUseCase:
             else _previous_trading_days(expected_date, required_bar_count)
         )
         for attempt in range(1, max_attempts + 1):
+            if attempt > 1 and self.retry_wait_seconds > 0:
+                self._sleep(self.retry_wait_seconds)
             bars = sorted(
                 self.market_data_client.get_daily_ohlc(symbol, range_=self.data_range),
                 key=lambda bar: bar.date,
@@ -111,6 +156,9 @@ class MarketRegimeUseCase:
             )
         if best_fresh_bars is not None:
             return best_fresh_bars, expected_date, best_missing_dates
+        filled = self._fill_from_fallback(symbol, bars, expected_date, expected_history_dates)
+        if filled is not None:
+            return filled[0], expected_date, filled[1]
         return None, actual_date, missing_dates
 
     def _unavailable(self, reason: str) -> MarketRegimeAssessment:
@@ -125,6 +173,7 @@ class MarketRegimeUseCase:
         )
 
     def execute(self) -> MarketRegimeAssessment:
+        self._fallback_dates = ()
         try:
             reference_date = self.as_of_date or datetime.now(JST).date()
             expected_nikkei_date = _previous_trading_day(reference_date)
@@ -203,6 +252,7 @@ class MarketRegimeUseCase:
                 nikkei_last_close=float(nikkei_bars[-1].close),
                 vix_last_bar_date=vix_bars[-1].date,
                 vix_last_close=float(vix_bars[-1].close),
+                nikkei_fallback_dates=self._fallback_dates,
             )
         except Exception as exc:
             logger.exception("MarketRegime判定用データの取得または計算に失敗しました")

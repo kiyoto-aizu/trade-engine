@@ -528,3 +528,70 @@ def test_use_case_falls_back_to_danger_when_client_raises():
     assert result.regime == MarketRegime.DANGER
     assert result.data_available is False
     assert "Yahoo unavailable" in result.failure_reason
+
+def test_use_case_waits_between_retries(monkeypatch):
+    previous_day = date(2026, 10, 13)
+    monkeypatch.setattr(
+        "src.application.market_regime_usecase._previous_trading_day",
+        lambda today: previous_day,
+    )
+    waits = []
+    client = FakeMarketDataClient(nikkei_bars=_bars([100.0 + index for index in range(22)]))
+
+    MarketRegimeUseCase(
+        client, THRESHOLDS, realized_volatility_window=20,
+        retry_wait_seconds=20, sleep=waits.append,
+    ).execute()
+
+    assert waits == [20, 20]
+
+
+def test_use_case_fills_missing_previous_day_from_minute_bar_fallback(monkeypatch):
+    previous_day = date(2026, 10, 13)
+    monkeypatch.setattr(
+        "src.application.market_regime_usecase._previous_trading_day",
+        lambda today: previous_day,
+    )
+    full_bars = _trading_bars([100.0 + index for index in range(29)], previous_day)
+    vix = _bars([20.0])
+    monkeypatch.setattr(
+        "src.application.market_regime_usecase.previous_us_equity_trading_day",
+        lambda today: vix[-1].date,
+    )
+    requested = []
+
+    def fallback(symbol, target_date):
+        requested.append((symbol, target_date))
+        return MarketDailyBar(target_date, 130.0, 130.0, 130.0, 130.0)
+
+    result = MarketRegimeUseCase(
+        FakeMarketDataClient(nikkei_bars=full_bars[:-1], vix_bars=vix),
+        THRESHOLDS,
+        realized_volatility_window=20,
+        fallback_bar_provider=fallback,
+    ).execute()
+
+    assert requested == [("^N225", previous_day)]
+    assert result.data_available is True
+    assert result.nikkei_last_bar_date == previous_day
+    assert result.nikkei_last_close == 130.0
+    assert result.nikkei_fallback_dates == (previous_day,)
+
+
+def test_use_case_stays_danger_when_minute_bar_fallback_has_no_data(monkeypatch):
+    previous_day = date(2026, 10, 13)
+    monkeypatch.setattr(
+        "src.application.market_regime_usecase._previous_trading_day",
+        lambda today: previous_day,
+    )
+    full_bars = _trading_bars([100.0 + index for index in range(29)], previous_day)
+
+    result = MarketRegimeUseCase(
+        FakeMarketDataClient(nikkei_bars=full_bars[:-1]),
+        THRESHOLDS,
+        realized_volatility_window=20,
+        fallback_bar_provider=lambda symbol, target_date: None,
+    ).execute()
+
+    assert result.data_available is False
+    assert result.nikkei_fallback_dates == ()

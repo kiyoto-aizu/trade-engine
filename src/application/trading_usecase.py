@@ -1264,6 +1264,12 @@ class TradingUseCase:
             f"VIX: {vix:.2f}（状態: {'危険' if vix >= thresholds.vix_danger else '注意' if vix >= thresholds.vix_caution else '通常'}）",
             f"ADX: {adx:.2f}（状態: {'強いトレンド' if adx >= config.MARKET_REGIME_ADX_TREND_THRESHOLD else '強いトレンドなし'}）",
         ]
+        fallback_dates = getattr(assessment, "nikkei_fallback_dates", ())
+        if fallback_dates:
+            lines.append(
+                "補足: 日経225の日足が未更新のため、" + "・".join(map(str, fallback_dates))
+                + "の日足は1分足から補完しました（終値などに若干の誤差があります）。"
+            )
         return lines
 
     @staticmethod

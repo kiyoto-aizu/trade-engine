@@ -27,6 +27,7 @@ from src.infrastructure.execution_lock import market_workflow_lock
 from src.infrastructure.notification.slack_notify import notify_critical, notify_daily, process_notification
 from src.infrastructure.paper.paper_order_client import PaperOrderClient
 from src.infrastructure.persistence.storage import StateFileCorruptError
+from src.infrastructure.market_data.index_daily_bar_fallback import create_index_daily_bar_fallback
 from src.infrastructure.market_data.yahoo_index_client import YahooIndexClient
 from src.infrastructure.calendar.japanese_calendar import is_trading_session
 
@@ -129,6 +130,8 @@ def create_trading_use_case(token: str) -> TradingUseCase:
             thresholds=config.MARKET_REGIME_THRESHOLDS,
             realized_volatility_window=config.MARKET_REGIME_REALIZED_VOL_WINDOW,
             data_range=config.MARKET_REGIME_DATA_RANGE,
+            fallback_bar_provider=create_index_daily_bar_fallback(),
+            retry_wait_seconds=config.MARKET_REGIME_RETRY_WAIT_SECONDS,
             adx_threshold=config.MARKET_REGIME_ADX_TREND_THRESHOLD,
         ),
     )
