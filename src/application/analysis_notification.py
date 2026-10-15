@@ -424,6 +424,7 @@ def daily_notification_lines(
     check_ok: bool = True,
     no_trade_reason: dict | None = None,
     minute_bar_line: str | None = None,
+    chart_line: str | None = None,
 ) -> list[str]:
     lines = [
         "A. ペーパートレード実績",
@@ -440,6 +441,8 @@ def daily_notification_lines(
     lines.extend(price_band_activity_lines(price_band_trend))
     if minute_bar_line:
         lines.append(minute_bar_line)
+    if chart_line:
+        lines.append(chart_line)
     lines.append("D. 次回確認")
     lines.extend(
         next_check_lines(trend, price_band_trend, cache_update_ok=cache_update_ok, check_ok=check_ok)

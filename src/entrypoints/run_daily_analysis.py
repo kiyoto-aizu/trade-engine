@@ -42,6 +42,7 @@ from src.entrypoints.update_daily_bar_cache import latest_confirmed_trading_day,
 logger = logging.getLogger(__name__)
 DEFAULT_RETRY_COUNT = 3
 DEFAULT_RETRY_WAIT_SECONDS = 60
+DAILY_CHARTS_ROOT = Path(__file__).resolve().parents[2] / "data" / "reports" / "daily_charts"
 
 
 def refresh_cache_with_retries(
@@ -116,6 +117,40 @@ def resolve_no_trade_reason(report: dict | None, paths: TrendCheckPaths, trade_d
     return {"reason": OTHER, "detail": "日次レポートなし"}
 
 
+def generate_intraday_charts(
+    trade_date: date,
+    *,
+    collect_report: Callable | None = None,
+    write_report: Callable | None = None,
+) -> str:
+    """分足診断図を生成し、失敗しても日次分析を継続する。"""
+    output_dir = DAILY_CHARTS_ROOT / trade_date.isoformat()
+    output_base = output_dir / "intraday_trade_diagnostics"
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        if collect_report is None or write_report is None:
+            from scripts.analysis.plot_intraday_trade_diagnostics import collect, write_outputs
+            collect_report = collect
+            write_report = write_outputs
+
+        root = Path(__file__).resolve().parents[2]
+        report = collect_report(root, trade_date.isoformat())
+        write_report(report, output_base)
+        detail_count = len(report.get("symbols", []))
+        relative_dir = output_dir.relative_to(root)
+        line = (
+            f"グラフ 全体図1枚・詳細図{detail_count}枚を保存: "
+            f"{relative_dir}\\"
+        )
+        logger.info("%s", line)
+        return line
+    except Exception:
+        logger.exception("分足診断グラフの生成に失敗しました: %s", output_dir)
+        return f"グラフ生成失敗（保存先: {output_dir}。詳細はログを確認）"
+
+
 def run_daily_analysis(
     trade_date: date,
     *,
@@ -148,6 +183,7 @@ def run_daily_analysis(
             output_dir=paths.minute_bar_dir,
         )
         minute_bar_line = minute_result.summary_line() if minute_result else None
+        chart_line = generate_intraday_charts(trade_date)
 
         check_ok = False
         if cache_update_ok:
@@ -206,6 +242,7 @@ def run_daily_analysis(
             check_ok=check_ok,
             no_trade_reason=no_trade_reason,
             minute_bar_line=minute_bar_line,
+            chart_line=chart_line,
         )
         message = format_result_notification(
             "分析運用",

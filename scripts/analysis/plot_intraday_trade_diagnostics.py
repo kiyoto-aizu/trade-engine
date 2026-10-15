@@ -672,8 +672,8 @@ def render(report: dict, output: Path) -> None:
     if handles:
         figure.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.995),
                      ncol=6, fontsize=8)
-    figure.suptitle(f"分足トレード診断 {report['date']}", fontsize=16, y=0.90)
-    figure.subplots_adjust(top=0.83, bottom=0.07, left=0.05, right=0.98)
+    figure.suptitle(f"分足トレード診断 {report['date']}", fontsize=16, y=0.94)
+    figure.subplots_adjust(top=0.88, bottom=0.07, left=0.05, right=0.98)
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output, dpi=150)
     plt.close(figure)
