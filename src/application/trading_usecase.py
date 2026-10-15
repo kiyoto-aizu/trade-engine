@@ -55,6 +55,7 @@ from src.domain.no_trade_reason import classify_no_trade_reason
 from src.infrastructure.persistence.decision_journal_repository import STAGE_TRADING
 from src.infrastructure.analysis.daily_analyzer import create_daily_analyzer
 from src.application.shadow_position_tracker import ShadowPosition, resolve_reference
+from src.application.error_summary import summarize_errors
 
 logger = logging.getLogger(__name__)
 JST = timezone(timedelta(hours=9))
@@ -1664,6 +1665,7 @@ class TradingUseCase:
             "has_errors": bool(messages),
             "count": len(messages),
             "summaries": [message for message, _ in counts.most_common(5)],
+            "grouped_summaries": summarize_errors(messages),
         }
 
     def _record_atr_danger_skip(self, symbol: str, observed_at: datetime, price: float, assessment, quantity: int) -> None:
@@ -1926,8 +1928,12 @@ class TradingUseCase:
             f"{item.get('Symbol', '')}({float(item.get('ProfitLoss', 0) or 0):+.0f}円)"
             for item in self.last_positions
         ]
-        error_summaries = log_error_summary.get("summaries") or []
-        error_detail = " / ".join(str(item) for item in error_summaries[:2]) or "なし"
+        grouped_errors = [str(item) for item in log_error_summary.get("grouped_summaries") or []]
+        error_lines = (
+            [f"エラー概要: {grouped_errors[0]}", *(f"　{item}" for item in grouped_errors[1:])]
+            if grouped_errors
+            else []
+        )
         liquidation_results = self._liquidation_results
         liquidation_detail = "、".join(
             f"{item['symbol']}:{item['status']}" for item in liquidation_results
@@ -1941,7 +1947,7 @@ class TradingUseCase:
                 f"実現損益: {daily_realized_pnl:+.0f}円",
                 f"評価損益: {total_unrealized_pnl:+.0f}円",
                 f"保有: {', '.join(positions) if positions else 'なし'}",
-                f"エラー概要: {error_detail}",
+                *error_lines,
                 f"強制売却確認: {liquidation_detail}",
                 *([] if report_saved else ["日次レポート保存失敗"]),
             ],
