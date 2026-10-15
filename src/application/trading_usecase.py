@@ -1932,7 +1932,7 @@ class TradingUseCase:
         error_lines = (
             [f"エラー概要: {grouped_errors[0]}", *(f"　{item}" for item in grouped_errors[1:])]
             if grouped_errors
-            else []
+            else ["エラー概要: なし"]
         )
         liquidation_results = self._liquidation_results
         liquidation_detail = "、".join(
