@@ -281,13 +281,12 @@ def period_paper_lines(summary: dict, kind: str) -> list[str]:
     ops = daily["operational_summary"]
     reports = daily["reports"]
     lines = [
-        f"ペーパートレード: 損益 {daily['total_profit_loss']:+.0f}円 / "
-        f"約定 {daily['order_count']}件 / 日次レポート {daily['report_count']}日",
-        _market_status_text(
+        f"・損益: {daily['total_profit_loss']:+.0f}円",
+        f"・約定 {daily['order_count']}件 / 日次レポート {daily['report_count']}日",
+        "・" + _market_status_text(
             ops["market_assessment_status_counts"], daily["report_count"]
         ),
-        f"エラー・データ抜け: エラー {ops['log_error_count']}件 / "
-        f"緊急停止 {ops['emergency_stop_days']}日",
+        f"・緊急停止: {ops['emergency_stop_days']}日",
     ]
     skip_totals: dict[str, int] = {}
     skip_events: dict[str, list[dict]] = {}
@@ -296,13 +295,14 @@ def period_paper_lines(summary: dict, kind: str) -> list[str]:
             skip_totals[label] = skip_totals.get(label, 0) + count
         for label, events in report.get("skip_evaluations", {}).items():
             skip_events.setdefault(label, []).extend(events)
-    lines.append(
-        "見送り内訳: "
-        + ("、".join(
-            _format_skip_group(label, count, skip_events.get(label, []))
+    if skip_totals:
+        lines.append(f"・見送り {sum(skip_totals.values())}件")
+        lines.extend(
+            "  " + _format_skip_group(label, count, skip_events.get(label, []))
             for label, count in sorted(skip_totals.items())
-        ) if skip_totals else "記録なし")
-    )
+        )
+    else:
+        lines.append("・見送り 記録なし")
 
     if kind == "週次":
         by_weekday: dict[int, list[float]] = {}
@@ -310,40 +310,56 @@ def period_paper_lines(summary: dict, kind: str) -> list[str]:
             day = date.fromisoformat(str(report["date"])[:10])
             by_weekday.setdefault(day.weekday(), []).append(float(report.get("total_profit_loss") or 0))
         lines.append(
-            "曜日別損益: "
+            "・曜日別損益: "
             + (", ".join(
                 f"{WEEKDAYS_JA[weekday]} {sum(values):+.0f}円"
                 for weekday, values in sorted(by_weekday.items())
             ) if by_weekday else "記録なし")
         )
-        lines.append("市場状態の推移: " + " → ".join(
+        lines.append("・市場状態の推移: " + " → ".join(
             f"{str(item['date'])[-5:]} {item.get('market_regime') or item.get('market_assessment_status') or '不明'}"
             for item in reports
-        ) if reports else "市場状態の推移: 記録なし")
+        ) if reports else "・市場状態の推移: 記録なし")
     return lines
+
+
+def period_error_lines(summary: dict) -> list[str]:
+    """期間内の日次エラーを重複なく集め、日次と同じ「■ エラー N件」へ集約する。"""
+    daily = summary["daily"]
+    messages: list[str] = []
+    for report in daily["reports"]:
+        for message in report.get("log_error_summaries") or []:
+            if str(message) not in messages:
+                messages.append(str(message))
+    total = int(daily["operational_summary"].get("log_error_count") or 0)
+    return error_section_lines(messages, total)
 
 
 def period_notification_lines(summary: dict, trend: dict | None, kind: str, analysis: str | None) -> list[str]:
     backtest = summary["backtest"]
-    backtest_line = (
-        f"対象期間一致: 損益 {backtest['total_pnl']}円 / 約定 {backtest['total_trades']}件"
+    backtest_lines = (
+        [f"・対象期間一致: 損益 {backtest['total_pnl']}円 / 約定 {backtest['total_trades']}件"]
         if backtest["exact_period_run_available"]
-        else "なし（対象期間に一致するバックテスト結果なし）"
+        else ["なし（対象期間に一致するバックテスト結果なし）"]
     )
+    price_band_trend = summary.get("price_band_trend_check")
     lines = [
-        f"A. ペーパートレード実績 ({kind})",
+        f"■ A. ペーパートレード実績({kind})",
         *period_paper_lines(summary, kind),
-        "B. 戦略の答え合わせ",
+        "",
+        *period_error_lines(summary),
+        "",
+        trend_check_heading(trend),
         *trend_check_lines(trend, include_progression=kind == "週次"),
     ]
-    price_band_trend = summary.get("price_band_trend_check")
-    lines.extend(price_band_activity_lines(price_band_trend))
     if kind == "月次":
-        lines.extend(price_band_monthly_lines(price_band_trend))
+        lines.extend(["", *price_band_monthly_lines(price_band_trend)])
+        activity = price_band_block_lines(price_band_trend, with_rate=False)
+        lines.extend(["", "価格帯別の取引機会（選定10銘柄）", *activity[1:]])
     else:
-        lines.append(price_band_rate_line(price_band_trend))
+        lines.extend(["", *price_band_block_lines(price_band_trend)])
     if kind == "月次" and trend is None:
-        lines.append("判定できなかった日: 日次判定結果なし（原因を特定できる保存データなし）")
+        lines.append("・判定できなかった日: 日次判定結果なし（原因を特定できる保存データなし）")
     elif kind == "月次" and trend is not None:
         undecidable_days = [
             item for item in trend["summaries"] if item["selected_undecidable"] or item["candidate_undecidable"]
@@ -354,32 +370,33 @@ def period_notification_lines(summary: dict, trend: dict | None, kind: str, anal
                 for row in trend["rows"]
                 if row["label"] not in JUDGED_LABELS
             )
-            lines.append("判定できなかった日: " + ", ".join(
+            lines.append("・判定できなかった日: " + ", ".join(
                 f"{item['trade_date']} (選定{item['selected_undecidable']}件/候補{item['candidate_undecidable']}件)"
                 for item in undecidable_days
             ))
             if reason_counts:
-                lines.append("判定不能の原因: " + ", ".join(
+                lines.append("・判定不能の原因: " + ", ".join(
                     f"{reason} {count}件" for reason, count in sorted(reason_counts.items())
                 ))
         else:
-            lines.append("判定できなかった日: なし")
+            lines.append("・判定できなかった日: なし")
     lines.extend([
-        "C. バックテスト（別枠）",
-        backtest_line,
-        "D. 次回確認",
-        *next_check_lines(trend, price_band_trend),
+        "",
+        "■ C. バックテスト（別枠）",
+        *backtest_lines,
+        "",
+        *_next_check_section(next_check_lines(trend, price_band_trend)),
     ])
     if analysis:
         sanitized_analysis = sanitize_period_review(analysis)
         if sanitized_analysis:
-            lines.extend(["LLM評価（参考）:", sanitized_analysis])
+            lines.extend(["", "■ LLM評価(参考)", sanitized_analysis])
     if (
         trend_check_has_reference(trend, include_progression=kind == "週次")
         or price_band_has_reference(price_band_trend)
         or price_band_activity_has_reference(price_band_trend)
     ):
-        lines.append(REFERENCE_NOTE)
+        lines.extend(["", REFERENCE_NOTE])
     return lines
 
 

@@ -353,10 +353,10 @@ def test_period_notification_uses_same_rules_as_daily():
     )
     assert sum(line.startswith("※参考値") for line in lines) == 1
     assert "参考値" not in "".join(line for line in lines if not line.startswith("※参考値"))
-    assert lines.index("C. バックテスト（別枠）") < lines.index("D. 次回確認")
-    assert lines[lines.index("D. 次回確認") + 1:-1] == [
-        "450円帯の欠測: フィルタ時間切れ",
-        "900円帯の欠測: フィルタ時間切れ",
+    assert lines.index("■ C. バックテスト（別枠）") < lines.index("■ D. 次回確認")
+    assert lines[lines.index("■ D. 次回確認") + 1:-2] == [
+        "・450円帯の欠測: フィルタ時間切れ",
+        "・900円帯の欠測: フィルタ時間切れ",
     ]
     assert lines[-1].startswith("※参考値:")
 
@@ -383,9 +383,10 @@ def test_period_status_and_skip_summary_are_human_readable():
 
     lines = period_notification_lines(summary, _trend(), "週次", None)
 
-    assert "市場状態: 5日とも判定あり" in lines
+    assert "・市場状態: 5日とも判定あり" in lines
+    assert "・見送り 1件" in lines
     assert (
-        "見送り内訳: 注意レジームRSI 1件（当日基準: 見送って正解1件・"
+        "  注意レジームRSI 1件（当日基準: 見送って正解1件・"
         "買っていたら-5,600円（手数料前）"
         "／照合不能0件）"
     ) in lines
@@ -456,9 +457,9 @@ def test_period_notification_sanitizes_llm_output_and_localizes_status():
     for kind in ("週次", "月次"):
         lines = period_notification_lines(summary, _trend(), kind, analysis)
         message = "\n".join(lines)
-        llm_section = message.split("LLM評価（参考）:\n", 1)[1]
+        llm_section = message.split("■ LLM評価(参考)\n", 1)[1]
 
-        assert "市場状態: 5日とも判定あり" in lines
+        assert "・市場状態: 5日とも判定あり" in lines
         assert "市場評価は 判定あり でした。" in llm_section
         assert "{'available': 5}" not in message
         assert "複数営業日" not in message
@@ -474,7 +475,30 @@ def test_monthly_next_check_is_none_without_problems():
     lines = period_notification_lines(summary, _trend(), "月次", None)
 
     assert period_conclusion(summary, "月次") == "月次分析が完了しました。今月は約定2件、損益+300円。"
-    assert lines[lines.index("D. 次回確認") + 1:] == ["なし"]
+    assert lines[lines.index("■ D. 次回確認") + 1:] == ["なし"]
+
+
+def test_period_errors_are_aggregated_with_total_and_no_raw_dict():
+    summary = _period_summary()
+    summary["daily"]["operational_summary"]["log_error_count"] = 8
+    summary["daily"]["operational_summary"]["market_assessment_status_counts"] = {"available": 5}
+    summary["daily"]["reports"] = [
+        {"date": "2026-10-05", "total_profit_loss": 0,
+         "log_error_summaries": [_timeout_message("4265"), _timeout_message("2764")]},
+        {"date": "2026-10-06", "total_profit_loss": 0,
+         "log_error_summaries": [_timeout_message("4265")]},
+    ]
+
+    for kind in ("週次", "月次"):
+        lines = period_notification_lines(summary, _trend(), kind, None)
+        message = "\n".join(lines)
+
+        assert lines[lines.index("■ エラー 8件") + 1:][:2] == [
+            "・板情報GETタイムアウト(read timeout=10秒)",
+            "  対象: 4265, 2764",
+        ]
+        assert "localhost" not in message and "{" not in message
+        assert "■ A. ペーパートレード実績" in message and "■ B. 戦略の答え合わせ" in message
 
 
 def test_no_trade_reason_line_only_on_zero_trade_days_and_marks_unrecorded():

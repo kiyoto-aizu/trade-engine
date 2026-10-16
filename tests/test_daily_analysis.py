@@ -318,8 +318,8 @@ def test_period_notice_separates_backtest_and_states_missing_exact_period():
 
     lines = period_notification_lines(summary, None, "月次", None)
 
-    assert lines.index("A. ペーパートレード実績 (月次)") < lines.index("B. 戦略の答え合わせ")
-    assert lines.index("B. 戦略の答え合わせ") < lines.index("C. バックテスト（別枠）")
-    assert lines.index("C. バックテスト（別枠）") < lines.index("D. 次回確認")
+    a = lines.index("■ A. ペーパートレード実績(月次)")
+    b = next(i for i, line in enumerate(lines) if line.startswith("■ B. 戦略の答え合わせ"))
+    assert a < b < lines.index("■ C. バックテスト（別枠）") < lines.index("■ D. 次回確認")
     assert "なし（対象期間に一致するバックテスト結果なし）" in lines
     assert any("判定できなかった日:" in line for line in lines)

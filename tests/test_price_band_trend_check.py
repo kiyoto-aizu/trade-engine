@@ -213,7 +213,7 @@ def test_price_band_checks_use_only_selected_symbols_and_save_separate_results(t
         "price_band_trend_check": result,
     }
     weekly_lines = period_notification_lines(summary, None, "週次", None)
-    assert sum(line.startswith("価格帯別（選定10銘柄）:") for line in weekly_lines) == 1
+    assert sum(line == "価格帯別（選定10銘柄）" for line in weekly_lines) == 1
     assert not any("買える枠" in line for line in weekly_lines)
     monthly_notice = period_notification_lines(summary, None, "月次", None)
     assert any(line.startswith("|270円|") for line in monthly_notice)
