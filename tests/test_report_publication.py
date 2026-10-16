@@ -119,6 +119,59 @@ def test_push_copies_only_given_charts(monkeypatch, tmp_path):
     assert copied.read_bytes() == b"png"
 
 
+def test_public_chart_data_accepts_only_valid_data_for_the_date(tmp_path):
+    day = date(2026, 10, 6)
+    good = {"version": 1, "date": "2026-10-06", "market_regime": None, "index": None, "symbols": []}
+    path = tmp_path / report_publication.CHART_DATA_NAME
+
+    assert report_publication.public_chart_data(None, day) is None
+    assert report_publication.public_chart_data(tmp_path, day) is None
+
+    path.write_text(json.dumps(good), encoding="utf-8")
+    assert json.loads(report_publication.public_chart_data(tmp_path, day)) == good
+
+    for bad in (
+        {**good, "date": "2026-10-07"},
+        {**good, "token": "secret"},
+        {**good, "symbols": "x"},
+    ):
+        path.write_text(json.dumps(bad), encoding="utf-8")
+        assert report_publication.public_chart_data(tmp_path, day) is None
+
+    path.write_text("not json", encoding="utf-8")
+    assert report_publication.public_chart_data(tmp_path, day) is None
+
+
+def test_push_writes_chart_data_under_data_charts(monkeypatch, tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+
+    def fake_git(arguments, environment, *, check=True):
+        if arguments[0] == "clone":
+            (work / "trade-report").mkdir()
+        return subprocess.CompletedProcess(arguments, 0)
+
+    class TemporaryDirectory:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return str(work)
+
+        def __exit__(self, *_):
+            return False
+
+    monkeypatch.setattr(report_publication, "_run_git", fake_git)
+    monkeypatch.setattr(report_publication, "_git_auth_environment", lambda token: {})
+    monkeypatch.setattr(report_publication.tempfile, "TemporaryDirectory", TemporaryDirectory)
+    report_publication._push_payload({"date": "2026-10-06"}, _settings(), None, '{"symbols": []}')
+
+    written = work / "trade-report" / "data" / "charts" / "2026-10-06.json"
+    assert written.read_text(encoding="utf-8") == '{"symbols": []}'
+    index = json.loads((work / "trade-report" / "data" / "index.json").read_text(encoding="utf-8"))
+    assert index == {"dates": ["2026-10-06"]}
+
+
 def test_payload_rejects_mismatched_report_date():
     try:
         report_publication.public_report_payload({"date": "2026-10-14"}, date(2026, 10, 15))

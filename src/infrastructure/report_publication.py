@@ -46,6 +46,31 @@ class PublicationResult:
 
 
 _CHART_NAME = re.compile(r"intraday_trade_diagnostics(_detail_[0-9A-Z]{4,5})?\.png")
+CHART_DATA_NAME = "intraday_chart_data.json"
+_CHART_DATA_KEYS = frozenset({"version", "date", "market_regime", "index", "symbols"})
+_CHART_DATA_MAX_BYTES = 500_000
+
+
+def public_chart_data(chart_dir: Path | None, trade_date: date) -> str | None:
+    """HTML版の分足診断JSONを検証して返す。不正・巨大・日付違いなら公開しない。"""
+    if chart_dir is None:
+        return None
+    path = chart_dir / CHART_DATA_NAME
+    if not path.is_file() or path.stat().st_size > _CHART_DATA_MAX_BYTES:
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+        data = json.loads(text)
+    except (OSError, ValueError):
+        return None
+    if (
+        not isinstance(data, dict)
+        or set(data) - _CHART_DATA_KEYS
+        or data.get("date") != trade_date.isoformat()
+        or not isinstance(data.get("symbols"), list)
+    ):
+        return None
+    return text
 
 
 def public_chart_files(chart_dir: Path | None) -> list[Path]:
@@ -152,8 +177,9 @@ def publish_daily_report(
         return PublicationResult(True, False, "公開: 失敗（公開先設定が不正。詳細は内部ログを確認）")
     try:
         charts = public_chart_files(chart_dir)
+        chart_data = public_chart_data(chart_dir, trade_date)
         payload = public_report_payload(report, trade_date, now=now, charts=charts)
-        _push_payload(payload, settings, charts)
+        _push_payload(payload, settings, charts, chart_data)
         ready = _wait_for_public_url(settings, sleeper=sleeper)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         stderr = getattr(exc, "stderr", "") or ""
@@ -169,7 +195,12 @@ def publish_daily_report(
     return PublicationResult(True, False, "公開: 失敗（Pagesの到達確認がタイムアウト。詳細は内部ログを確認）")
 
 
-def _push_payload(payload: dict, settings: PublicationSettings, charts: list[Path] | None = None) -> None:
+def _push_payload(
+    payload: dict,
+    settings: PublicationSettings,
+    charts: list[Path] | None = None,
+    chart_data: str | None = None,
+) -> None:
     with tempfile.TemporaryDirectory(prefix="trade-report-") as temporary:
         root = Path(temporary) / "trade-report"
         environment = _git_auth_environment(settings.token)
@@ -181,6 +212,9 @@ def _push_payload(payload: dict, settings: PublicationSettings, charts: list[Pat
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
         _write_index(data_dir, payload["date"])
+        if chart_data:
+            (data_dir / "charts").mkdir(exist_ok=True)
+            (data_dir / "charts" / f"{payload['date']}.json").write_text(chart_data, encoding="utf-8")
         if charts:
             chart_target = root / "charts" / payload["date"]
             chart_target.mkdir(parents=True, exist_ok=True)

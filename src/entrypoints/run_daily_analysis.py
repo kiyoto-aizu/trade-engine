@@ -24,7 +24,7 @@ from src.infrastructure.notification.slack_notify import (
     notify_analysis,
     process_notification,
 )
-from src.infrastructure.report_publication import publish_daily_report
+from src.infrastructure.report_publication import CHART_DATA_NAME, publish_daily_report
 from src.infrastructure.persistence.trend_check_repository import TrendCheckRepository
 from src.application.trend_check_usecase import (
     DEFAULT_DATABASE_FILE,
@@ -118,6 +118,16 @@ def resolve_no_trade_reason(report: dict | None, paths: TrendCheckPaths, trade_d
     return {"reason": OTHER, "detail": "日次レポートなし"}
 
 
+def write_chart_data(report: dict, path: Path) -> None:
+    """HTML版の分足診断用JSONを書き出す。失敗してもPNG生成と日次分析は止めない。"""
+    try:
+        from scripts.analysis.intraday_chart_payload import write_chart_payload
+
+        write_chart_payload(report, path)
+    except Exception:
+        logger.exception("分足診断JSONの生成に失敗しました: %s", path)
+
+
 def generate_intraday_charts(
     trade_date: date,
     *,
@@ -139,6 +149,7 @@ def generate_intraday_charts(
         root = Path(__file__).resolve().parents[2]
         report = collect_report(root, trade_date.isoformat())
         write_report(report, output_base)
+        write_chart_data(report, output_dir / CHART_DATA_NAME)
         detail_count = len(report.get("symbols", []))
         relative_dir = output_dir.relative_to(root)
         line = (
