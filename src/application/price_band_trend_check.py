@@ -1009,7 +1009,7 @@ def _non_morning_sources(item: dict) -> dict:
     return sources
 
 
-def _rate_text(item: dict, *, include_missing: bool = False) -> str:
+def _rate_text(item: dict, *, include_missing: bool = False, tag_source: bool = True) -> str:
     sources = _non_morning_sources(item)
     mixed = len(sources) > 1
     if mixed:
@@ -1031,7 +1031,7 @@ def _rate_text(item: dict, *, include_missing: bool = False) -> str:
             f"{item['trend_count']}/{item['rate_denominator']}件 "
             f"({item['trend_rate']:.1%})"
         )
-        if sources:
+        if sources and tag_source:
             value += f"[{source_label(next(iter(sources)))}]"
     if not mixed and item["price_band"] != 270 and 0 < item["selected_count"] < 10:
         value = f"{value}・選定{item['selected_count']}件(10件未満)"
@@ -1086,6 +1086,125 @@ def price_band_rate_line(result: dict | None) -> str:
             for band in PRICE_BANDS
         )
     return f"価格帯別（選定10銘柄）: {rates}"
+
+
+_EMPTY_ACTIVITY = {
+    "signal_count": 0,
+    "skip_count": 0,
+    "skip_reason_counts": {},
+    "candidate_count": 0,
+    "valid_days": 0,
+    "missing_days": 0,
+    "missing_reasons": {},
+}
+
+
+def _source_note(sources: dict) -> str:
+    """朝板以外の取得元を、脚注用の短い文言にする。"""
+    if len(sources) == 1:
+        return source_label(next(iter(sources)))
+    return "・".join(
+        f"{source_label(source)}{count}日" for source, count in sorted(sources.items())
+    ) + "混在"
+
+
+def _activity_text(activity: dict) -> str:
+    """シグナル・見送りの表示(有効日数は呼び出し側で扱う)。"""
+    if not activity["valid_days"]:
+        reasons = activity["missing_reasons"] or {"FILTERING_RESULT_NOT_SAVED": 1}
+        missing = "・".join(
+            f"{_missing_reason_label(reason)}{count}日"
+            for reason, count in sorted(reasons.items())
+        )
+        signal = (
+            f"シグナル{activity['signal_count']}({activity.get('signal_days', 0)}日記録)・"
+            "見送り未照合 / "
+            if activity.get("signal_days", 0)
+            else ""
+        )
+        return f"{signal}欠測({missing}) / 有効0日"
+    signal_suffix = (
+        f"({activity['signal_days']}日記録)"
+        if activity.get("signal_days", activity["valid_days"]) > activity["valid_days"]
+        else ""
+    )
+    skip_suffix = f"(診断完備{activity['valid_days']}日分)" if signal_suffix else ""
+    reasons = activity["skip_reason_counts"]
+    skip_detail = (
+        "(" + "、".join(
+            f"{_missing_reason_label(reason)}×{count}"
+            for reason, count in sorted(reasons.items())
+        ) + ")"
+        if reasons
+        else ""
+    )
+    text = (
+        f"シグナル{activity['signal_count']}{signal_suffix}・"
+        f"見送り{activity['skip_count']}{skip_suffix}{skip_detail}"
+    )
+    if activity["missing_days"]:
+        missing = "・".join(
+            _missing_reason_label(reason) for reason in sorted(activity["missing_reasons"])
+        )
+        text += f" / 欠測{activity['missing_days']}日({missing})"
+    return text
+
+
+def price_band_block_lines(result: dict | None, *, with_rate: bool = True) -> list[str]:
+    """価格帯別の1帯1行表示。朝板以外の取得元は行頭「※」+末尾の注釈1つにまとめる。"""
+    lines = ["価格帯別（選定10銘柄）"]
+    notes: dict[int, str] = {}
+    valid_days: dict[int, int] = {}
+    for band in PRICE_BANDS:
+        item = result["bands"][str(band)] if result is not None else None
+        activity = ((item or {}).get("activity")) or _EMPTY_ACTIVITY
+        sources = {
+            source: count
+            for source, count in (activity.get("source_days") or {}).items()
+            if source != SOURCE_MORNING_BOARD
+        } if band != 270 and activity["valid_days"] else {}
+        rate_sources = _non_morning_sources(item) if item is not None else {}
+        marked = bool(sources or rate_sources)
+        if marked:
+            notes[band] = _source_note(sources or {key: 1 for key in rate_sources})
+            if activity["valid_days"]:
+                valid_days[band] = activity["valid_days"]
+
+        activity_text = _activity_text(activity) if result is not None else (
+            "欠測(集計記録なし) / 有効0日"
+        )
+        if not marked and activity["valid_days"] > 1:
+            activity_text += f" / 有効{activity['valid_days']}日"
+        parts = []
+        if with_rate:
+            rate = (
+                _rate_text(item, include_missing=True, tag_source=False)
+                if item is not None
+                else "判定不能"
+            )
+            if not (rate.startswith("欠測") and activity_text.startswith("欠測")):
+                parts.append(rate)
+        parts.append(activity_text)
+        lines.append(f"・{band}円{'※' if marked else ' '}: " + " / ".join(parts))
+
+    if notes:
+        texts = set(notes.values())
+        source_text = (
+            next(iter(texts))
+            if len(texts) == 1
+            else "、".join(f"{band}円 {text}" for band, text in notes.items())
+        )
+        days = set(valid_days.values())
+        if len(days) == 1:
+            days_text = f" / 有効{next(iter(days))}日"
+        elif days:
+            days_text = " / " + "・".join(
+                f"{band}円 有効{count}日" for band, count in valid_days.items()
+            )
+        else:
+            days_text = ""
+        lines.append(f"※{source_text}{days_text}")
+    return lines
 
 
 def price_band_monthly_lines(result: dict | None) -> list[str]:

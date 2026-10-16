@@ -135,27 +135,123 @@ def test_daily_notification_sample_for_2026_10_07():
         "【概要】",
         "日足更新・答え合わせ・日次レビューが完了しました。今日は売買なし。450円・900円帯は欠測です。",
         "【詳細】",
-        "A. ペーパートレード実績",
-        "損益 実現 +0円・評価 +0円 / 約定 0件 / 保有 0銘柄",
-        "市場状態: NORMAL（日経 -0.35%）",
-        "見送り 0件 / エラー 0件",
-        "売買0件の理由: 買い条件に届かず",
-        "B. 戦略の答え合わせ",
-        "判定基準: v1",
-        "買った銘柄 0件: 判定可能な件数なし (判定不能 0件)",
-        "選定銘柄: 6/10件 (60.0%) (判定不能 0件)",
-        "候補全体: 40/100件 (40.0%) (判定不能 0件)",
-        "価格帯別（選定10銘柄）: 270円 5/12件 (41.7%) / 450円 欠測(フィルタ時間切れ) / 900円 欠測(フィルタ時間切れ)",
-        "270円: シグナル3・見送り2・売買代金データなし×2 / 有効1日",
-        "450円: 欠測(フィルタ時間切れ1日) / 有効0日",
-        "900円: 欠測(フィルタ時間切れ1日) / 有効0日",
-        "D. 次回確認",
-        "450円帯の欠測: フィルタ時間切れ",
-        "900円帯の欠測: フィルタ時間切れ",
-        "LLM日次評価（参考）:",
-        "所見: 売買なしの日。欠測帯の原因確認が優先。",
+        "■ A. ペーパートレード実績",
+        "・損益: 実現 +0円 / 評価 +0円",
+        "・約定 0件 / 保有 0銘柄",
+        "・市場状態: NORMAL(日経 -0.35%)",
+        "・見送り 0件",
+        "・売買0件の理由: 買い条件に届かず",
+        "",
+        "■ エラー なし",
+        "",
+        "■ B. 戦略の答え合わせ(判定基準 v1)",
+        "・買った銘柄: 判定可能なし",
+        "・選定銘柄: 6/10件 (60.0%)",
+        "・候補全体: 40/100件 (40.0%)",
+        "",
+        "価格帯別（選定10銘柄）",
+        "・270円 : 5/12件 (41.7%) / シグナル3・見送り2(売買代金データなし×2)",
+        "・450円 : 欠測(フィルタ時間切れ1日) / 有効0日",
+        "・900円 : 欠測(フィルタ時間切れ1日) / 有効0日",
+        "",
+        "■ D. 次回確認",
+        "・450円帯の欠測: フィルタ時間切れ",
+        "・900円帯の欠測: フィルタ時間切れ",
+        "",
+        "■ LLM日次評価(参考)",
+        "【所見】売買なしの日。欠測帯の原因確認が優先。",
+        "※ロジック変更・認証修正・投資判断・売買指示は行わない参考意見です。",
+        "",
         "※参考値: 標本数10件未満、または対象総数30件未満の価格帯別集計は参考値です。",
     ])
+
+
+def _timeout_message(symbol):
+    return (
+        f"❌ [GET通信エラー] URL: http://localhost:18080/kabusapi/board/{symbol}@1 | "
+        "理由: HTTPConnectionPool(host='localhost', port=18080): Read timed out. (read timeout=10)"
+    )
+
+
+def test_daily_errors_are_aggregated_without_url_and_keep_total_count():
+    report = _report_1007(
+        log_errors={
+            "count": 8,
+            "summaries": [_timeout_message("4265"), _timeout_message("2764")],
+        }
+    )
+
+    lines = daily_notification_lines(report, None, cache_update_ok=True, analysis=None)
+    section = lines[lines.index("■ エラー 8件"):][:3]
+
+    assert section == [
+        "■ エラー 8件",
+        "・板情報GETタイムアウト(read timeout=10秒)",
+        "  対象: 4265, 2764",
+    ]
+    assert not any("localhost" in line or "http" in line for line in lines)
+
+
+def test_price_band_source_is_marked_once_with_footnote():
+    bands = _price_band_trend()
+    for band in ("450", "900"):
+        bands["bands"][band].update(
+            missing_days=0, missing_reasons={}, selected_count=10, judged_count=10,
+            rate_denominator=10, trend_count=0, trend_rate=0.0, reference=True,
+            by_source={"yahoo_minute_estimate": {}},
+            activity={
+                "signal_count": 10, "skip_count": 1,
+                "skip_reason_counts": {"FILTER_TURNOVER_MISSING": 1},
+                "candidate_count": 10, "valid_days": 1, "missing_days": 0,
+                "missing_reasons": {}, "source_days": {"yahoo_minute_estimate": 1},
+            },
+        )
+
+    lines = daily_notification_lines(
+        _report_1007(), _trend(), cache_update_ok=True, analysis=None, price_band_trend=bands
+    )
+    block = lines[lines.index("価格帯別（選定10銘柄）"):][:5]
+
+    assert block[2].startswith("・450円※: ") and block[3].startswith("・900円※: ")
+    assert "シグナル10・見送り1(売買代金データなし×1)" in block[2]
+    assert block[4] == "※昼推定 / 有効1日"
+    assert "[昼推定]" not in "\n".join(lines)
+
+
+def test_data_save_section_puts_path_on_next_line():
+    lines = daily_notification_lines(
+        _report_1007(), None, cache_update_ok=True, analysis=None,
+        minute_bar_line="分足 8/10銘柄保存、0本: 1111,2222",
+        chart_line="グラフ 全体図1枚・詳細図10枚を保存: data\\reports\\daily_charts\\2026-10-15\\",
+    )
+    start = lines.index("■ データ保存")
+
+    assert lines[start:start + 4] == [
+        "■ データ保存",
+        "・分足: 8/10銘柄保存、0本: 1111,2222",
+        "・グラフ: 全体図1枚・詳細図10枚",
+        "  保存先: data\\reports\\daily_charts\\2026-10-15\\",
+    ]
+
+
+def test_llm_review_gets_headings_one_line_each_and_single_caveat():
+    from src.application.analysis_notification import format_daily_review
+
+    text = "\n".join([
+        "本日の事実", "- 売買なしです。",
+        "所見：", "- 一点目です。", "- 二点目です。ロジック変更は行わない参考意見です。",
+        "【次回確認】欠測の原因。",
+        "ロジック変更や投資判断は行わず、検証期間中の参考意見です。",
+    ])
+
+    assert format_daily_review(text) == [
+        "【事実】売買なしです。",
+        "【所見】",
+        "・一点目です。",
+        "・二点目です。",
+        "【次回確認】欠測の原因。",
+        "※ロジック変更・認証修正・投資判断・売買指示は行わない参考意見です。",
+    ]
 
 
 def test_daily_next_check_is_none_when_nothing_to_check():
@@ -164,9 +260,9 @@ def test_daily_next_check_is_none_when_nothing_to_check():
         _report_1007(), _trend(), cache_update_ok=True, analysis=None, price_band_trend=bands
     )
 
-    assert lines[lines.index("D. 次回確認") + 1:] == ["なし"]
+    assert lines[lines.index("■ D. 次回確認") + 1:] == ["なし"]
     assert "参考値" not in "\n".join(lines)
-    assert any(line.startswith("270円: 欠測(") for line in lines)
+    assert any(line.startswith("・270円") and "欠測(" in line for line in lines)
 
 
 def test_daily_skip_summary_distinguishes_zero_from_unrecorded():
@@ -179,12 +275,11 @@ def test_daily_skip_summary_distinguishes_zero_from_unrecorded():
         None, cache_update_ok=True, analysis=None,
     )
 
-    assert "見送り 0件 / エラー 0件" in zero
-    assert "見送り 未記録 / エラー 0件" in unrecorded
-    assert (
-        "見送り 3件（ATR危険度 2件（当日基準結果なし／照合不能2件）・"
-        "市場危険度 1件（当日基準結果なし／照合不能1件）） / エラー 0件"
-    ) in with_skips
+    assert "・見送り 0件" in zero
+    assert "・見送り 未記録" in unrecorded
+    assert "・見送り 3件" in with_skips
+    assert "  ATR危険度 2件（当日基準結果なし／照合不能2件）" in with_skips
+    assert "  市場危険度 1件（当日基準結果なし／照合不能1件）" in with_skips
 
 
 def test_daily_skip_summary_shows_finalized_same_day_outcome():
@@ -204,10 +299,11 @@ def test_daily_skip_summary_shows_finalized_same_day_outcome():
 
     lines = daily_notification_lines(report, None, cache_update_ok=True, analysis=None)
 
+    assert "・見送り 1件" in lines
     assert (
-        "見送り 1件（注意レジームRSI 1件（当日基準: 見送って正解1件・"
+        "  注意レジームRSI 1件（当日基準: 見送って正解1件・"
         "買っていたら-5,600円（手数料前）"
-        "／照合不能0件）） / エラー 0件"
+        "／照合不能0件）"
     ) in lines
 
 
@@ -226,7 +322,7 @@ def test_daily_next_check_reports_undecidable_only_when_present():
         cache_update_ok=True, analysis=None,
     )
 
-    assert lines[-1] == "判定不能 選定1件/候補3件（原因を確認）"
+    assert "・判定不能 選定1件/候補3件（原因を確認）" in lines
 
 
 def _period_summary():
@@ -392,9 +488,9 @@ def test_no_trade_reason_line_only_on_zero_trade_days_and_marks_unrecorded():
         no_trade_reason={"reason": "候補なし", "detail": "当日のフィルタ結果なし"},
     )
 
-    assert "売買0件の理由: 未記録" in unrecorded
-    assert not any(line.startswith("売買0件の理由") for line in traded)
-    assert "売買0件の理由: 候補なし" in missing_report
+    assert "・売買0件の理由: 未記録" in unrecorded
+    assert not any(line.startswith("・売買0件の理由") for line in traded)
+    assert "・売買0件の理由: 候補なし" in missing_report
 
 
 def test_resolve_no_trade_reason_uses_report_or_filtering_result(monkeypatch):

@@ -14,6 +14,7 @@ from src.application.analysis_notification import (
     daily_notification_lines,
     load_trend_check,
 )
+from src.application.error_summary import group_errors
 from src.application.price_band_trend_check import (
     price_band_symbols_for_update,
     run_price_band_checks,
@@ -163,6 +164,19 @@ def generate_intraday_charts(
         return f"グラフ生成失敗（保存先: {output_dir}。詳細はログを確認）"
 
 
+def _llm_log_errors(errors: dict) -> dict:
+    """LLMへ渡すエラーは集約済みの概要だけにする(URLや接続先を含む生文言は渡さない)。"""
+    messages = errors.get("unique_messages") or errors.get("summaries") or []
+    return {
+        "has_errors": bool(errors.get("has_errors") or errors.get("count")),
+        "count": errors.get("count", 0),
+        "groups": [
+            f"{group.title}(対象: {', '.join(group.symbols)})" if group.symbols else group.title
+            for group in group_errors([str(item) for item in messages])
+        ],
+    }
+
+
 def run_daily_analysis(
     trade_date: date,
     *,
@@ -230,7 +244,7 @@ def run_daily_analysis(
             "unrealized_profit_loss": (report or {}).get("unrealized_profit_loss", 0),
             "positions": (report or {}).get("positions", []),
             "market_conditions": (report or {}).get("market_conditions", {}),
-            "log_errors": (report or {}).get("log_errors", {}),
+            "log_errors": _llm_log_errors((report or {}).get("log_errors") or {}),
             "no_trade_reason": (
                 None
                 if (report or {}).get("order_count")
@@ -259,7 +273,7 @@ def run_daily_analysis(
             minute_bar_line=minute_bar_line,
             chart_line=chart_line,
         )
-        lines.append(publication.message)
+        lines.extend(["", publication.message])
         message = format_result_notification(
             "分析運用",
             "日次分析",

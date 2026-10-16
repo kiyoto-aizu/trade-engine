@@ -176,7 +176,7 @@ def test_daily_analyzer_prompt_uses_event_agnostic_review_contract(monkeypatch):
     )
 
     prompt = captured["payload"]["messages"][1]["content"]
-    assert "本日の事実" in prompt
+    assert "【事実】" in prompt
     assert "運用・データ状態" in prompt
     assert "skip_countsが空でない場合" in prompt
     assert "assessment_statusがnot_evaluated" in prompt

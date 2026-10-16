@@ -72,7 +72,7 @@ def test_daily_notification_marks_failed_daily_refresh_as_undecidable():
         analysis=None,
     )
 
-    assert "判定不能(日足更新失敗)" in lines
+    assert "・判定不能(日足更新失敗)" in lines
     assert not any("候補全体:" in line for line in lines)
 
 
@@ -205,7 +205,7 @@ def test_daily_analysis_continues_after_intraday_chart_failure(monkeypatch, tmp_
     assert success is False
     assert events == ["save", "charts"]
     assert len(notifications) == 1
-    assert "グラフ生成失敗" in notifications[0]
+    assert "生成失敗" in notifications[0]
 
 
 def test_daily_analysis_main_runs_on_trading_day(monkeypatch):

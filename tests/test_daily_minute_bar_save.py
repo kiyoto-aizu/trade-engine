@@ -281,4 +281,4 @@ def test_daily_analysis_continues_and_notifies_when_minute_save_fails(monkeypatc
 
     assert success is True
     assert len(notifications) == 1
-    assert "分足 0/1銘柄保存、0本: 1111" in notifications[0]
+    assert "・分足: 0/1銘柄保存、0本: 1111" in notifications[0]
