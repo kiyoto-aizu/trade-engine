@@ -52,6 +52,8 @@
     .sw-entry { background: var(--entry); } .sw-buy { background: var(--buy); border-radius: 50% !important; height: .8rem !important; width: .8rem !important; }
     .sw-sell { background: var(--sell); border-radius: 50% !important; height: .8rem !important; width: .8rem !important; }
     .sw-skip { background: var(--skip); border-radius: 50% !important; height: .6rem !important; width: .6rem !important; }
+    .index-card { border: 1px solid rgba(128,128,128,.5); border-radius: .6rem; padding: .75rem; }
+    .index-card h4 { margin: 0 0 .4rem; font-size: 1rem; }
     .chart-wrap { position: relative; }
     .chart { width: 100%; height: auto; display: block; touch-action: pan-y; user-select: none; }
     .chart .grid { stroke: var(--grid); stroke-width: 1; }
@@ -357,10 +359,52 @@
       if (symbol.price_missing) card.append(el("p", "価格欠測: 価格が記録されていない注文は印を表示していません。", "note"));
       return card;
     }
+    const regimeColors = { NORMAL: "#16a34a", CAUTION: "#ca8a04", DANGER: "#dc2626" };
+    function indexChart(diagnostics) {
+      const section = el("section", undefined, "index-card");
+      section.append(el("h4", "日経225ミニ 前日比"));
+      const regime = diagnostics.market_regime;
+      const points = ((diagnostics.index || {}).points || []).map(([time, pct]) => ({ at: position(time), pct }));
+      if (!points.length) {
+        section.append(el("p", "日経225ミニのデータがありません。", "note"));
+        return section;
+      }
+      const W = 360, H = 150, L = 44, R = 8, T = 8, B = 22, plotW = W - L - R, plotH = H - T - B;
+      const values = points.map((point) => point.pct).concat(0);
+      let low = Math.min(...values), high = Math.max(...values);
+      if (!(high > low)) { low -= 0.5; high += 0.5; }
+      const pad = (high - low) * 0.1;
+      low -= pad; high += pad;
+      const X = (at) => L + (at / SESSION) * plotW;
+      const Y = (value) => T + (1 - (value - low) / (high - low)) * plotH;
+      const wrap = el("div", undefined, "chart-wrap");
+      const svg = svgEl(wrap, "svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "日経225ミニの前日比" });
+      svg.classList.add("chart");
+      if (regime && regimeColors[regime]) {
+        svgEl(svg, "rect", { x: L, y: T, width: plotW, height: 6, fill: regimeColors[regime], opacity: 0.85 });
+      }
+      const { ticks } = niceTicks(low, high);
+      for (const tick of ticks) {
+        svgEl(svg, "line", { x1: L, x2: W - R, y1: Y(tick), y2: Y(tick), class: tick === 0 ? "break" : "grid" });
+        const label = svgEl(svg, "text", { x: L - 4, y: Y(tick) + 4, class: "axis", "text-anchor": "end" });
+        label.textContent = `${tick.toFixed(1)}%`;
+      }
+      for (const [at, text] of xTicks) {
+        const label = svgEl(svg, "text", { x: X(at), y: H - 6, class: "axis", "text-anchor": "middle" });
+        label.textContent = text;
+      }
+      svgEl(svg, "line", { x1: X(BREAK_START), x2: X(BREAK_START), y1: T, y2: T + plotH, class: "break" });
+      svgEl(svg, "polyline", { points: points.map((point) => `${X(point.at)},${Y(point.pct)}`).join(" "), class: "line-price" });
+      section.append(wrap);
+      const band = el("p", regime ? `市場状態（朝に固定）: ${regimes[regime] || regime}` : "市場状態の記録なし", "note");
+      if (regime && regimeColors[regime]) band.style.borderLeft = `6px solid ${regimeColors[regime]}`, band.style.paddingLeft = ".5rem";
+      section.append(band);
+      return section;
+    }
     function renderDiagnostics(box, diagnostics) {
       box.className = "diag";
       const cards = (diagnostics.symbols || []).map(symbolCard);
-      box.replaceChildren(...(cards.length ? cards : [el("p", "この日の監視銘柄はありません。")]));
+      box.replaceChildren(indexChart(diagnostics), ...(cards.length ? cards : [el("p", "この日の監視銘柄はありません。")]));
     }
     function chartSection(data) {
       const box = el("div", undefined, "diag");
