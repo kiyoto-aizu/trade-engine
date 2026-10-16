@@ -6,13 +6,16 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.analysis import entry_condition
 from scripts.analysis import plot_intraday_trade_diagnostics as analysis
 
-PAYLOAD_VERSION = 1
+PAYLOAD_VERSION = 2
+CONDITION_DETAILS_ENV = "TRADE_REPORT_PUBLISH_CONDITION_DETAILS"
 _UNSAFE_LABEL_CHARACTERS = frozenset("\\/:@")
 _MAX_LABEL_LENGTH = 40
 
@@ -87,6 +90,82 @@ def _order_payload(order: dict) -> dict | None:
     }
 
 
+def _entry_check(report: dict, item: dict) -> dict | None:
+    """買いなし銘柄の「買い条件」(パターン1・2)または「仮の売りライン」(パターン3)。"""
+    skips = sorted(
+        (row for row in item["skips"] if row.get("event_type") in entry_condition.SIGNAL_SKIP_EVENTS),
+        key=lambda row: str(row.get("occurred_at") or ""),
+    )
+    if skips:
+        return _skipped_signal_check(item, skips[0])
+    return _condition_check(report, item)
+
+
+def _condition_check(report: dict, item: dict) -> dict:
+    condition = entry_condition.evaluate_entry_condition(
+        item.get("daily_closes") or [],
+        report.get("condition_regime") or report.get("market_regime"),
+        entry_condition.recorded_rsi(item["skips"]),
+    )
+    if condition["status"] != "ok":
+        return {"pattern": None, "unavailable": condition["reason"]}
+    if not item["bars"]:
+        return {"pattern": None, "unavailable": "分足データなし"}
+    rsi_ok = condition["rsi_ok"]
+    check: dict[str, Any] = {
+        "pattern": entry_condition.PATTERN_BAND_SHORT if rsi_ok else entry_condition.PATTERN_RSI_SHORT,
+        "upper_band": _round(condition["upper_band"]),
+        "rsi_ok": rsi_ok,
+        "gap": None,
+        "details": {
+            "rsi": round(condition["rsi"], 1),
+            "rsi_threshold": _round(condition["rsi_threshold"]),
+            "rsi_short": round(max(condition["rsi_threshold"] - condition["rsi"], 0.0), 1),
+            "regime": condition["regime"],
+            "source": condition["sources"],
+        },
+    }
+    if rsi_ok:
+        found = entry_condition.closest_approach(item["bars"], condition["upper_band"])
+        if found is not None:
+            check["gap"] = {"value": _round(found[0]), "time": _hhmm(found[1]), "reached": found[0] == 0}
+    return check
+
+
+def _skipped_signal_check(item: dict, skip: dict) -> dict:
+    moment = analysis._parse_time(skip.get("occurred_at"))
+    price = skip.get("reference_price")
+    if moment is None or not isinstance(price, (int, float)) or price <= 0:
+        return {"pattern": None, "unavailable": "見送り時の価格の記録なし"}
+    start = moment.replace(second=0, microsecond=0)
+    after = [bar for bar in item["bars"] if bar["time"] >= start]
+    atr, level = skip.get("atr"), skip.get("atr_level")
+    recorded = (float(atr), str(level).upper()) if isinstance(atr, (int, float)) and level else None
+    try:
+        hypo = entry_condition.hypothetical_exit(after, float(price), item.get("daily_bars") or [], recorded)
+    except ValueError:
+        return {"pattern": None, "unavailable": "ATR算出不可(記録の不整合)"}
+    if hypo["status"] != "ok":
+        return {"pattern": None, "unavailable": hypo["reason"]}
+    exit_bar = hypo["exit"]
+    return {
+        "pattern": entry_condition.PATTERN_SKIPPED_SIGNAL,
+        "reason": _label(analysis._skip_reason(skip)),
+        "skip": {"time": _hhmmss(moment), "price": _round(price)},
+        "stop": _round(hypo["stop"]),
+        "line": _step_points(hypo["times"], hypo["lines"]),
+        "min_margin": _margin(earliest_minimum(hypo["times"], hypo["margins"])),
+        "exit": {"time": _hhmm(exit_bar["time"]), "price": _round(exit_bar["price"])} if exit_bar else None,
+        "details": {
+            "atr": _round(hypo["atr"]),
+            "atr_level": hypo["atr_level"],
+            "atr_source": hypo["atr_source"],
+            "stop_multiplier": _round(hypo["stop_multiplier"]),
+            "final_multiplier": _round(hypo["final_multiplier"]),
+        },
+    }
+
+
 def _symbol_payload(report: dict, item: dict) -> dict:
     symbol = str(item["symbol"])
     bars = item["bars"]
@@ -108,6 +187,7 @@ def _symbol_payload(report: dict, item: dict) -> dict:
         "min_margin": None,
         "pnl": None,
         "price_missing": bool(item.get("invalid_orders")),
+        "entry_check": None,
     }
     for skip in sorted(item["skips"], key=lambda row: str(row.get("occurred_at") or "")):
         moment = analysis._parse_time(skip.get("occurred_at"))
@@ -120,6 +200,7 @@ def _symbol_payload(report: dict, item: dict) -> dict:
             "reason": _label(analysis._skip_reason(skip)),
         })
     if not bought:
+        payload["entry_check"] = _entry_check(report, item)
         return payload
 
     buy_orders = _symbol_orders(report, symbol, "2")
@@ -192,10 +273,20 @@ def _index_payload(report: dict) -> dict | None:
     }
 
 
-def build_chart_payload(report: dict) -> dict:
+def condition_details_enabled() -> bool:
+    """RSI基準・ATR倍率などの数値を公開JSONに含めるか。初期値は含める。"""
+    return os.getenv(CONDITION_DETAILS_ENV, "true").strip().lower() in {"1", "true", "yes"}
+
+
+def build_chart_payload(report: dict, *, details: bool | None = None) -> dict:
     """collect()の結果から、買いあり→見送りあり→買いなしの順に並べた描画用データを作る。"""
+    show_details = condition_details_enabled() if details is None else details
     order = {"buy": 0, "skip": 1, "none": 2}
     symbols = [_symbol_payload(report, item) for item in report["symbols"]]
+    if not show_details:
+        for row in symbols:
+            if row.get("entry_check"):
+                row["entry_check"].pop("details", None)
     symbols.sort(key=lambda row: order[row["result"]])
     return {
         "version": PAYLOAD_VERSION,

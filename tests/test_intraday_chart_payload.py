@@ -158,3 +158,155 @@ def test_payload_is_json_serializable_and_has_only_allowed_keys(tmp_path):
 
     assert set(data) == {"version", "date", "market_regime", "index", "symbols"}
     assert "paper-1" not in text and "order_id" not in text
+
+
+# --- 買いなし銘柄の買い条件・仮の売りライン ---------------------------------------------
+
+from src.domain.volatility import DailyBar  # noqa: E402
+
+
+def _daily(closes, spread=2.0):
+    rows = {}
+    for index, close in enumerate(closes):
+        rows[f"2026-09-{index + 1:02d}"] = {"high": close + spread / 2, "low": close - spread / 2, "close": close}
+    return payload_module.entry_condition.daily_history(rows, "2026-10-06")
+
+
+def _checked_item(symbol, prices, closes, skips=None, spread=2.0, minute=0):
+    closes_list, bars = _daily(closes, spread)
+    item = _item(symbol, bars=_bars(prices, minute), skips=skips)
+    item["daily_closes"], item["daily_bars"] = closes_list, bars
+    return item
+
+
+def _check(item, **extra):
+    data = payload_module.build_chart_payload(_report([item], condition_regime="CAUTION", **extra), details=True)
+    return data["symbols"][0]["entry_check"]
+
+
+RISING = [100 + index for index in range(30)]
+FALLING = [130 - index for index in range(30)]
+
+
+def test_pattern1_rsi_ok_reports_closest_approach_to_upper_band():
+    band = payload_module.entry_condition.calculate_price_limit(RISING).upper_band
+    prices = [band - 5, band - 1.5, band - 3]
+    check = _check(_checked_item("1111", prices, RISING))
+
+    assert check["pattern"] == 1
+    assert check["upper_band"] == band
+    assert check["gap"] == {"value": 1.5, "time": "09:01", "reached": False}
+    assert check["rsi_ok"] is True
+    assert check["details"]["rsi_threshold"] == 60.0
+    assert check["details"]["source"] == {"upper_band": "recomputed", "rsi": "recomputed", "rsi_threshold": "recomputed"}
+
+
+def test_pattern2_rsi_short_has_no_gap():
+    check = _check(_checked_item("2222", [100, 101], FALLING))
+
+    assert check["pattern"] == 2
+    assert check["rsi_ok"] is False and check["gap"] is None
+    assert check["details"]["rsi_short"] == 60.0 - check["details"]["rsi"]
+
+
+def test_recorded_rsi_is_preferred_and_marked_as_recorded():
+    skip = {"event_type": "MARKET_REGIME_CAUTION_RSI_FILTER", "occurred_at": "2026-10-06T09:01:00",
+            "reference_price": 100.0, "rsi": 58.0, "rsi_applied_threshold": 60.0}
+    check = _check(_checked_item("3333", [100, 101], RISING, skips=[skip]))
+
+    assert check["pattern"] == 2
+    assert check["details"]["rsi"] == 58.0
+    assert check["details"]["source"]["rsi"] == "recorded"
+    assert check["details"]["source"]["upper_band"] == "recomputed"
+
+
+def test_unavailable_when_history_or_regime_is_missing():
+    short = _check(_checked_item("4444", [100], [100, 101, 102]))
+    assert short["pattern"] is None and "日足不足" in short["unavailable"]
+
+    item = _checked_item("4444", [100], RISING)
+    data = payload_module.build_chart_payload(_report([item]), details=True)
+    assert data["symbols"][0]["entry_check"] == {"pattern": None, "unavailable": "市場状態の記録なし"}
+
+
+def test_pattern3_hypothetical_line_matches_production_atr_calculation_including_step_down():
+    closes = [100.0] * 20
+    skips = [
+        {"event_type": "ATR_DANGER_SKIP", "occurred_at": "2026-10-06T09:00:10", "reference_price": 100.0},
+        {"event_type": "MARKET_REGIME_DANGER_SKIP", "occurred_at": "2026-10-06T09:03:10", "reference_price": 102.0},
+    ]
+    check = _check(_checked_item("5555", [100, 101, 103, 102, 98], closes, skips=skips))
+
+    # ATR=2(NORMAL)。損切り1.5倍→含み益がATR×0.5以上で利確2.5倍に切り替わり、線が一度下がる
+    assert check["pattern"] == 3
+    assert check["skip"] == {"time": "09:00:10", "price": 100.0}
+    assert check["reason"] == "ATR危険"
+    assert check["stop"] == 100.0 - 2.0 * 1.5
+    assert check["line"] == [["09:00", 97.0], ["09:01", 96.0], ["09:02", 98.0], ["09:04", 98.0]]
+    assert check["min_margin"] == {"value": 0.0, "time": "09:04"}
+    assert check["exit"] == {"time": "09:04", "price": 98.0}
+    assert check["details"]["atr"] == 2.0 and check["details"]["final_multiplier"] == 2.5
+
+
+def test_pattern3_uses_recorded_atr_when_daily_history_is_short():
+    skip = {"event_type": "ATR_DANGER_SKIP", "occurred_at": "2026-10-06T09:00:00",
+            "reference_price": 100.0, "atr": 4.0, "atr_level": "DANGER"}
+    item = _checked_item("6666", [100, 101], [100, 101], skips=[skip])
+
+    check = _check(item)
+
+    assert check["details"]["atr_source"] == "recorded"
+    assert check["stop"] == 100.0 - 4.0 * 0.7
+
+
+def test_pattern3_unavailable_without_atr():
+    skip = {"event_type": "ATR_DANGER_SKIP", "occurred_at": "2026-10-06T09:00:00", "reference_price": 100.0}
+
+    check = _check(_checked_item("7777", [100, 101], [100, 101], skips=[skip]))
+
+    assert check == {"pattern": None, "unavailable": "ATR算出不可(日足不足)"}
+
+
+def test_bought_symbol_has_no_entry_check():
+    buy = _order("1111", "2", 1, 101.0)
+    report = _report([_item("1111", bars=_bars([100, 101]), buy=buy, entry=101.0, atr=2.0)], [buy])
+
+    assert payload_module.build_chart_payload(report)["symbols"][0]["entry_check"] is None
+
+
+def test_private_mode_removes_threshold_and_multiplier_numbers():
+    closes = [100.0] * 20
+    skip = {"event_type": "ATR_DANGER_SKIP", "occurred_at": "2026-10-06T09:00:10", "reference_price": 100.0}
+    items = [
+        _checked_item("5555", [100, 101, 103], closes, skips=[skip]),
+        _checked_item("2222", [100, 101], FALLING),
+    ]
+    report = _report(items, condition_regime="CAUTION")
+
+    data = payload_module.build_chart_payload(report, details=False)
+    text = json.dumps(data, ensure_ascii=False)
+
+    for row in data["symbols"]:
+        assert "details" not in row["entry_check"]
+    for key in ("rsi_threshold", "rsi_short", "atr", "stop_multiplier", "final_multiplier", "atr_level"):
+        assert f'"{key}"' not in text
+    assert "line" in next(row for row in data["symbols"] if row["symbol"] == "5555")["entry_check"]
+
+
+def test_details_setting_defaults_to_public_and_can_be_turned_off(monkeypatch):
+    monkeypatch.delenv(payload_module.CONDITION_DETAILS_ENV, raising=False)
+    assert payload_module.condition_details_enabled() is True
+    monkeypatch.setenv(payload_module.CONDITION_DETAILS_ENV, "false")
+    assert payload_module.condition_details_enabled() is False
+
+
+def test_payload_with_entry_checks_stays_within_publication_validation(tmp_path):
+    from src.infrastructure import report_publication as publication
+
+    closes = [100.0] * 20
+    skip = {"event_type": "ATR_DANGER_SKIP", "occurred_at": "2026-10-06T09:00:10", "reference_price": 100.0}
+    report = _report([_checked_item("5555", [100, 101, 103], closes, skips=[skip])], condition_regime="CAUTION")
+    payload_module.write_chart_payload(report, tmp_path / publication.CHART_DATA_NAME)
+
+    assert publication.public_chart_data(tmp_path, datetime(2026, 10, 6).date()) is not None
+

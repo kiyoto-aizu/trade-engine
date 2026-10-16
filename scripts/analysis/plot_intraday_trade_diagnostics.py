@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from src.config import config
+from scripts.analysis.entry_condition import daily_history
 
 DEFAULT_OUTPUT = ROOT / "data" / "backtest_v2_scratch" / "diagnostics" / "intraday_trade_diagnostics"
 MARKET_BREAK_START = time(11, 30)
@@ -292,6 +293,13 @@ def _read_market_regime(path: Path, day: str) -> str | None:
     return str(row[0]).upper() if row and row[0] else None
 
 
+def _report_regime(root: Path, day: str) -> str | None:
+    """日別DBに無い日は、日次レポートに保存された市場状態を使う。"""
+    report = _json(root / "data" / "reports" / "daily" / f"{day}.json", {})
+    regime = (report.get("market_conditions") or {}).get("regime") if isinstance(report, dict) else None
+    return str(regime).upper() if regime else None
+
+
 def _index_bars(root: Path, day: str) -> tuple[list[dict[str, Any]], float | None]:
     path = partition_path(root / "data" / "index_minute_bars_parquet", day, "^N225")
     bars = load_minute_bars(path)
@@ -469,6 +477,7 @@ def collect(root: Path, day: str) -> dict:
                 "stop_min_time": stop_time.isoformat(timespec="minutes") if stop_time else None,
             })
         skip_reference = _reference_skip({"skips": [row for row in skips if str(row["symbol"]) == symbol]})
+        daily_closes, daily_bars = daily_history(_json(daily_root / f"{symbol}.json", {}), day)
         skip_after = (
             [bar for bar in bars if skip_reference and bar["time"] >= skip_reference["time"]]
             if skip_reference else []
@@ -499,6 +508,7 @@ def collect(root: Path, day: str) -> dict:
             "skip_close_delta": skip_close_delta,
             "skip_close_time": skip_close_time.isoformat(timespec="minutes") if skip_close_time else None,
             "atr": atr, "atr_source": atr_source, "atr_level": level,
+            "daily_closes": daily_closes, "daily_bars": daily_bars,
             "entry": entry or None, "stop": stop_value, "trailing": line_values, **metric,
             "invalid_orders": [row for row in invalid_orders if str(row.get("symbol")) == symbol],
         })
@@ -513,6 +523,7 @@ def collect(root: Path, day: str) -> dict:
         "index_bars": index_bars, "index_previous_close": index_previous_close,
         "index_validation": index_validation, "invalid_orders": invalid_orders,
         "market_regime": market_regime,
+        "condition_regime": market_regime or _report_regime(root, day),
     }
 
 
