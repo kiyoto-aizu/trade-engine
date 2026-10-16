@@ -24,6 +24,7 @@ from src.infrastructure.notification.slack_notify import (
     notify_analysis,
     process_notification,
 )
+from src.infrastructure.report_publication import publish_daily_report
 from src.infrastructure.persistence.trend_check_repository import TrendCheckRepository
 from src.application.trend_check_usecase import (
     DEFAULT_DATABASE_FILE,
@@ -205,6 +206,9 @@ def run_daily_analysis(
             paths,
             cache_update_ok=cache_update_ok,
         )
+        publication = publish_daily_report(
+            report, trade_date, chart_dir=DAILY_CHARTS_ROOT / trade_date.isoformat()
+        )
         no_trade_reason = resolve_no_trade_reason(report, paths, trade_date)
         analyzer = create_daily_analyzer()
         analysis_input = {
@@ -244,6 +248,7 @@ def run_daily_analysis(
             minute_bar_line=minute_bar_line,
             chart_line=chart_line,
         )
+        lines.append(publication.message)
         message = format_result_notification(
             "分析運用",
             "日次分析",

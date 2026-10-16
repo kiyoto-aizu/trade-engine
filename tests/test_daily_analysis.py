@@ -6,6 +6,7 @@ import pytest
 from src.application.analysis_notification import daily_notification_lines, period_notification_lines
 from src.application.trend_check_usecase import TrendCheckPaths
 from src.entrypoints import run_daily_analysis
+from src.infrastructure.report_publication import PublicationResult
 
 
 @pytest.fixture(autouse=True)
@@ -126,6 +127,11 @@ def test_daily_analysis_notifies_even_when_daily_refresh_fails(monkeypatch, tmp_
     monkeypatch.setattr(run_daily_analysis, "_load_daily_report", lambda *args: None)
     monkeypatch.setattr(run_daily_analysis, "create_daily_analyzer", lambda: None)
     monkeypatch.setattr(run_daily_analysis, "notify_analysis", notifications.append)
+    monkeypatch.setattr(
+        run_daily_analysis,
+        "publish_daily_report",
+        lambda *_, **__: PublicationResult(True, False, "公開: 失敗（詳細は内部ログを確認）"),
+    )
 
     success = run_daily_analysis.run_daily_analysis(
         date(2026, 10, 6),
@@ -140,6 +146,7 @@ def test_daily_analysis_notifies_even_when_daily_refresh_fails(monkeypatch, tmp_
     assert trend_check_calls == []
     assert "【機能】日次分析" in notifications[0]
     assert "判定不能(日足更新失敗)" in notifications[0]
+    assert notifications[0].endswith("公開: 失敗（詳細は内部ログを確認）")
 
 
 def test_intraday_chart_generation_failure_is_logged_and_returns_notification_line(
