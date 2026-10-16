@@ -1758,6 +1758,7 @@ class TradingUseCase:
         atr_danger_skips: list,
         market_regime_danger_skips: list,
         market_regime_caution_rsi_filters: list,
+        market_conditions: dict | None = None,
     ) -> dict | None:
         """約定0件の日の理由を1つ選ぶ。記録専用で、失敗しても日次レポートは出す。"""
         if order_count > 0:
@@ -1783,6 +1784,8 @@ class TradingUseCase:
                 len(market_regime_danger_skips) + len(market_regime_caution_rsi_filters)
             ),
             atr_danger_skip_count=len(atr_danger_skips),
+            market_assessment_status=(market_conditions or {}).get("assessment_status"),
+            market_failure_reason=(market_conditions or {}).get("failure_reason"),
         )
 
     def _send_end_of_day_report(self) -> None:
@@ -1876,7 +1879,7 @@ class TradingUseCase:
         }
         no_trade_reason = self._classify_no_trade_reason(
             today, len(daily_orders), atr_danger_skips,
-            market_regime_danger_skips, market_regime_caution_rsi_filters,
+            market_regime_danger_skips, market_regime_caution_rsi_filters, market_conditions,
         )
         daily_summary = {
             "date": today,

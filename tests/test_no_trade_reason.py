@@ -1,12 +1,14 @@
 from src.domain.no_trade_reason import (
     CAPACITY_OR_FUNDS,
     CONDITION_NOT_MET,
+    MARKET_ASSESSMENT_UNAVAILABLE,
     MARKET_STATE_SKIP,
     NO_CANDIDATE,
     OTHER,
     TRADING_HALTED,
     classify_no_trade_reason,
     describe_no_trade_reason,
+    summarize_market_failure,
 )
 
 
@@ -60,3 +62,50 @@ def test_data_unavailable_does_not_hide_condition_not_met_but_is_other_without_e
 def test_describe_marks_missing_record_as_unrecorded():
     assert describe_no_trade_reason(None) == "未記録"
     assert describe_no_trade_reason({"reason": CONDITION_NOT_MET, "detail": "x"}) == CONDITION_NOT_MET
+
+
+def test_sell_signal_without_holdings_is_info_and_keeps_condition_not_met():
+    result = _classify(journal_reason_codes=["SELL_SIGNAL_WITHOUT_HOLDINGS"] * 3)
+
+    assert result == {"reason": CONDITION_NOT_MET, "detail": "売りシグナルだが未保有あり"}
+
+
+def test_unknown_code_is_still_other_and_not_swallowed_by_info_code():
+    result = _classify(journal_reason_codes=["SELL_SIGNAL_WITHOUT_HOLDINGS", "NEW_UNKNOWN_CODE"])
+
+    assert result == {"reason": OTHER, "detail": "NEW_UNKNOWN_CODE"}
+
+
+def test_market_assessment_unavailable_with_market_skip_is_dedicated_reason():
+    failure = "日経225日足が前営業日まで更新されていません(期待日=2026-10-14, 取得最新日=2026-10-13, 試行=3回)"
+
+    for kwargs in (
+        {"market_regime_skip_count": 1, "buy_signal_count": 1},
+        {"journal_reason_codes": ["MARKET_REGIME_DANGER_SKIP"], "buy_signal_count": 1},
+    ):
+        result = _classify(
+            market_assessment_status="unavailable", market_failure_reason=failure, **kwargs
+        )
+        assert result == {"reason": MARKET_ASSESSMENT_UNAVAILABLE, "detail": "日経225日足の更新不備"}
+
+    available = _classify(
+        market_assessment_status="available", market_regime_skip_count=1, buy_signal_count=1
+    )
+    assert available["reason"] == MARKET_STATE_SKIP
+
+
+def test_market_assessment_unavailable_without_skip_is_not_blamed():
+    result = _classify(
+        market_assessment_status="unavailable",
+        market_failure_reason="日経225日足が前営業日まで更新されていません",
+        journal_reason_codes=["SELL_SIGNAL_WITHOUT_HOLDINGS"],
+    )
+
+    assert result["reason"] == CONDITION_NOT_MET
+
+
+def test_market_failure_summary_hides_raw_exception_text():
+    assert summarize_market_failure("データ取得または計算エラー: HTTPConnectionPool(host='x')") == (
+        "市場判定データの取得・計算エラー"
+    )
+    assert summarize_market_failure("よく分からない") == "市場判定データの取得不可"
