@@ -55,7 +55,9 @@ from src.domain.no_trade_reason import classify_no_trade_reason
 from src.infrastructure.persistence.decision_journal_repository import STAGE_TRADING
 from src.infrastructure.analysis.daily_analyzer import create_daily_analyzer
 from src.application.shadow_position_tracker import ShadowPosition, resolve_reference
-from src.application.error_summary import summarize_errors
+from src.application.error_summary import error_section_lines
+
+MAX_UNIQUE_ERROR_MESSAGES = 50
 
 logger = logging.getLogger(__name__)
 JST = timezone(timedelta(hours=9))
@@ -1673,7 +1675,7 @@ class TradingUseCase:
             "has_errors": bool(messages),
             "count": len(messages),
             "summaries": [message for message, _ in counts.most_common(5)],
-            "grouped_summaries": summarize_errors(messages),
+            "unique_messages": list(counts)[:MAX_UNIQUE_ERROR_MESSAGES],
         }
 
     def _record_atr_danger_skip(self, symbol: str, observed_at: datetime, price: float, assessment, quantity: int) -> None:
@@ -1936,11 +1938,8 @@ class TradingUseCase:
             f"{item.get('Symbol', '')}({float(item.get('ProfitLoss', 0) or 0):+.0f}円)"
             for item in self.last_positions
         ]
-        grouped_errors = [str(item) for item in log_error_summary.get("grouped_summaries") or []]
-        error_lines = (
-            [f"エラー概要: {grouped_errors[0]}", *(f"　{item}" for item in grouped_errors[1:])]
-            if grouped_errors
-            else ["エラー概要: なし"]
+        error_lines = error_section_lines(
+            log_error_summary.get("unique_messages") or [], log_error_summary.get("count")
         )
         liquidation_results = self._liquidation_results
         liquidation_detail = "、".join(
