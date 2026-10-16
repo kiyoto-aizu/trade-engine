@@ -514,7 +514,7 @@ def test_no_trade_reason_line_only_on_zero_trade_days_and_marks_unrecorded():
 
     assert "・売買0件の理由: 未記録" in unrecorded
     assert not any(line.startswith("・売買0件の理由") for line in traded)
-    assert "・売買0件の理由: 候補なし" in missing_report
+    assert "・売買0件の理由: 候補なし(当日のフィルタ結果なし)" in missing_report
 
 
 def test_resolve_no_trade_reason_uses_report_or_filtering_result(monkeypatch):

@@ -69,7 +69,7 @@ class OpenAIDailyAnalyzer:
             "「事実」は必ず使いますが、通知本文のA・Bに同じ数値や用語が載るため、入力の数値や用語の再掲はせず、所見(読み取れること・注意点)だけを書いてください。"
             "URL・ホスト名・ポート・例外クラス名は書かないでください。"
             "数値を出す場合は割合を%表記にそろえ(例: 0.1は10%)、mean_selected_rateのようなキー名や小数表記は使わないでください。"
-            "no_trade_reasonがある場合は、売買0件の理由として所見に反映し、reasonが未記録の場合は理由が記録されていないことだけを示してください。"
+            "no_trade_reasonがある場合は、売買0件の理由として所見に反映し、reasonは通知本文と同じ表記なので言い換えず、食い違う理由を新たに作らないでください。reasonが未記録の場合は理由が記録されていないことだけを示してください。"
             "注文数、損益、保有、market_conditions、log_errors、trend_checkから重要な点だけを扱ってください。"
             "market_conditions.assessment_statusがnot_evaluatedまたはunavailable、またはlog_errors.has_errorsがtrueの場合だけ、"
             "「運用・データ状態」を使い、取引・戦略を評価できる状態だったかを事実として示してください。"

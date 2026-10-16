@@ -64,6 +64,26 @@ def test_describe_marks_missing_record_as_unrecorded():
     assert describe_no_trade_reason({"reason": CONDITION_NOT_MET, "detail": "x"}) == CONDITION_NOT_MET
 
 
+def test_describe_appends_japanese_detail_and_hides_codes():
+    assert describe_no_trade_reason(
+        {"reason": CONDITION_NOT_MET, "detail": "評価10銘柄で買いシグナルなし"}
+    ) == CONDITION_NOT_MET
+    assert describe_no_trade_reason(
+        {"reason": CONDITION_NOT_MET, "detail": "売りシグナルだが未保有あり"}
+    ) == "買い条件に届かず(売りシグナルだが未保有あり)"
+    assert describe_no_trade_reason(
+        {"reason": MARKET_ASSESSMENT_UNAVAILABLE, "detail": "日経225日足の更新不備"}
+    ) == "市場判定不可(日経225日足の更新不備)"
+    # 保存済みの過去分(コード名のdetail)は、分類はそのまま・表示だけ日本語化する
+    assert describe_no_trade_reason(
+        {"reason": "その他", "detail": "SELL_SIGNAL_WITHOUT_HOLDINGS"}
+    ) == "その他(売りシグナルだが未保有あり)"
+    assert describe_no_trade_reason(
+        {"reason": "その他", "detail": "NEW_UNKNOWN_CODE"}
+    ) == "その他"
+    assert describe_no_trade_reason({"reason": "SOME_CODE", "detail": "x"}) == "その他"
+
+
 def test_sell_signal_without_holdings_is_info_and_keeps_condition_not_met():
     result = _classify(journal_reason_codes=["SELL_SIGNAL_WITHOUT_HOLDINGS"] * 3)
 

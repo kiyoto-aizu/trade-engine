@@ -33,7 +33,7 @@ from src.application.trend_check_usecase import (
     load_selected_symbols,
     symbols_for_date,
 )
-from src.domain.no_trade_reason import NO_CANDIDATE, OTHER
+from src.domain.no_trade_reason import NO_CANDIDATE, OTHER, describe_no_trade_reason
 from src.infrastructure.logging_config import configure_logging
 from src.infrastructure.calendar.japanese_calendar import is_trading_day
 from src.entrypoints.run_trend_check import run_daily_safely
@@ -248,7 +248,7 @@ def run_daily_analysis(
             "no_trade_reason": (
                 None
                 if (report or {}).get("order_count")
-                else no_trade_reason or {"reason": "未記録"}
+                else {"reason": describe_no_trade_reason(no_trade_reason)}
             ),
             "trading_evaluation": (report or {}).get("trading_evaluation"),
             "skip_counts": {

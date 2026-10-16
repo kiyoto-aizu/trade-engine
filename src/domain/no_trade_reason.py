@@ -138,8 +138,26 @@ def classify_no_trade_reason(
     return {"reason": OTHER, "detail": "買いシグナルありだが見送り・注文の記録なし"}
 
 
+def _detail_labels(reason: str, detail: object) -> list[str]:
+    labels: list[str] = []
+    for token in str(detail or "").split(_DETAIL_SEPARATOR):
+        token = token.strip()
+        if not token or _CODE_TOKEN.fullmatch(token) and token not in CODE_LABELS:
+            continue
+        label = CODE_LABELS.get(token, token)
+        if reason == CONDITION_NOT_MET and label not in CODE_LABELS.values():
+            continue
+        if label not in labels:
+            labels.append(label)
+    return labels
+
+
 def describe_no_trade_reason(value: Mapping | None) -> str:
-    """通知用の短い表記。記録がない(古いレポートなど)場合は「未記録」。"""
+    """通知・LLM共通の表記「理由(補足)」。コード名は出さず、記録がなければ「未記録」。"""
     if not value or not value.get("reason"):
         return "未記録"
-    return str(value["reason"])
+    reason = str(value["reason"])
+    if reason not in NO_TRADE_REASONS and reason != "未記録":
+        reason = OTHER
+    labels = _detail_labels(reason, value.get("detail"))
+    return f"{reason}({'・'.join(labels)})" if labels else reason

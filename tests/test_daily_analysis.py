@@ -149,6 +149,42 @@ def test_daily_analysis_notifies_even_when_daily_refresh_fails(monkeypatch, tmp_
     assert notifications[0].endswith("公開: 失敗（詳細は内部ログを確認）")
 
 
+def test_body_and_llm_input_use_the_same_no_trade_reason_label(monkeypatch, tmp_path):
+    report = {
+        "date": "2026-10-15", "order_count": 0, "positions": [],
+        "market_conditions": {"assessment_status": "unavailable", "regime": "DANGER"},
+        "no_trade_reason": {"reason": "買い条件に届かず", "detail": "SELL_SIGNAL_WITHOUT_HOLDINGS"},
+    }
+    inputs, notifications = [], []
+
+    class Analyzer:
+        def analyze(self, data):
+            inputs.append(data)
+            return None
+
+    monkeypatch.setattr(run_daily_analysis, "refresh_cache_with_retries", lambda *a, **k: (True, []))
+    monkeypatch.setattr(run_daily_analysis, "run_daily_safely", lambda *a, **k: True)
+    monkeypatch.setattr(run_daily_analysis, "_load_daily_report", lambda *a: report)
+    monkeypatch.setattr(run_daily_analysis, "create_daily_analyzer", lambda: Analyzer())
+    monkeypatch.setattr(run_daily_analysis, "notify_analysis", notifications.append)
+    monkeypatch.setattr(run_daily_analysis, "generate_intraday_charts", lambda *_: "グラフ 保存なし")
+    monkeypatch.setattr(run_daily_analysis, "run_price_band_checks", lambda *a, **k: None)
+    monkeypatch.setattr(
+        run_daily_analysis, "publish_daily_report",
+        lambda *_, **__: PublicationResult(True, True, "公開: 成功"),
+    )
+
+    run_daily_analysis.run_daily_analysis(
+        date(2026, 10, 15), paths=_paths(tmp_path), database_file=tmp_path / "trend.sqlite3",
+        now=datetime(2026, 10, 15, 17, 0), sleeper=lambda _: None,
+    )
+
+    label = "買い条件に届かず(売りシグナルだが未保有あり)"
+    assert inputs[0]["no_trade_reason"] == {"reason": label}
+    assert f"・売買0件の理由: {label}" in notifications[0]
+    assert "SELL_SIGNAL_WITHOUT_HOLDINGS" not in notifications[0]
+
+
 def test_intraday_chart_generation_failure_is_logged_and_returns_notification_line(
     tmp_path, caplog
 ):
