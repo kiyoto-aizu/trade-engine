@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trade Report</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { max-width: 58rem; margin: 2rem auto; padding: 0 1rem; }
+    #calendar { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1rem; }
+    .month { border: 1px solid #888; border-radius: .5rem; padding: .75rem; }
+    .month h2 { margin-top: 0; font-size: 1.1rem; }
+    .dates { display: grid; grid-template-columns: repeat(7, 1fr); gap: .35rem; padding: 0; list-style: none; }
+    .dates button { width: 100%; padding: .5rem .1rem; cursor: pointer; }
+    #report { border: 1px solid #888; border-radius: .5rem; padding: 1rem; min-height: 10rem; }
+    h3 { margin: 1.25rem 0 .5rem; font-size: 1rem; }
+    .rows { display: grid; grid-template-columns: 12rem 1fr; gap: .4rem 1rem; margin: 0; }
+    .rows dt { font-weight: 700; } .rows dd { margin: 0; }
+    .bar-row { display: grid; grid-template-columns: 12rem 1fr 3rem; gap: .75rem; align-items: center; margin: .35rem 0; }
+    .bar-track { background: rgba(128,128,128,.2); border-radius: .25rem; height: 1rem; }
+    .bar { background: #3b82f6; height: 100%; border-radius: .25rem; min-width: 2px; }
+    .bar.zero { background: transparent; }
+    .trend { display: flex; align-items: flex-end; gap: .75rem; overflow-x: auto; padding-bottom: .25rem; }
+    .trend-day { display: flex; flex-direction: column; align-items: center; font-size: .8rem; }
+    .trend-bars { display: flex; align-items: flex-end; gap: 2px; height: 8rem; }
+    .trend-bars span { width: .8rem; border-radius: .2rem .2rem 0 0; min-height: 2px; }
+    .legend { display: flex; gap: 1rem; font-size: .85rem; margin-top: .5rem; }
+    .legend i { display: inline-block; width: .8rem; height: .8rem; margin-right: .3rem; border-radius: .2rem; }
+    .error { color: #b00020; }
+    .charts { display: grid; gap: 1rem; }
+    .charts img { width: 100%; height: auto; border: 1px solid #ddd; border-radius: .4rem; }
+    :root { --price: #2563eb; --trailing: #ca8a04; --stop: #dc2626; --entry: #6b7280; --buy: #16a34a; --sell: #ea580c; --skip: #7c3aed; --grid: rgba(128,128,128,.25); --card: rgba(128,128,128,.08); }
+    @media (prefers-color-scheme: dark) { :root { --price: #60a5fa; --trailing: #facc15; --stop: #f87171; --entry: #9ca3af; --buy: #4ade80; --sell: #fb923c; --skip: #c4b5fd; } }
+    .diag { display: grid; gap: 1rem; }
+    .symbol-card { border: 1px solid rgba(128,128,128,.5); border-radius: .6rem; padding: .75rem; }
+    .symbol-head { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .6rem; font-size: 1rem; }
+    .symbol-code { font-size: 1.2rem; }
+    .symbol-range { opacity: .75; }
+    .badge { padding: .1rem .5rem; border-radius: 1rem; font-size: .85rem; border: 1px solid currentColor; }
+    .badge-buy { color: var(--buy); } .badge-skip { color: var(--skip); } .badge-none { opacity: .7; }
+    .pnl-up { color: var(--buy); font-weight: 700; } .pnl-down { color: var(--stop); font-weight: 700; }
+    .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin: .6rem 0; }
+    .metric { background: var(--card); border-radius: .5rem; padding: .5rem .6rem; display: flex; flex-direction: column; gap: .1rem; }
+    .metric-label { font-size: .8rem; opacity: .8; }
+    .metric strong { font-size: 1.3rem; }
+    .metric-none { opacity: .6; font-size: 1rem !important; }
+    .metric-time { font-size: .85rem; opacity: .8; }
+    .no-buy, .note { margin: .5rem 0; font-size: .9rem; opacity: .8; }
+    .diag .legend { flex-wrap: wrap; gap: .3rem .8rem; margin: .4rem 0; }
+    .legend i[class^="sw-"] { width: 1rem; height: .6rem; }
+    .sw-price { background: var(--price); } .sw-trailing { background: var(--trailing); } .sw-stop { background: var(--stop); }
+    .sw-entry { background: var(--entry); } .sw-buy { background: var(--buy); border-radius: 50% !important; height: .8rem !important; width: .8rem !important; }
+    .sw-sell { background: var(--sell); border-radius: 50% !important; height: .8rem !important; width: .8rem !important; }
+    .sw-skip { background: var(--skip); border-radius: 50% !important; height: .6rem !important; width: .6rem !important; }
+    .chart-wrap { position: relative; }
+    .chart { width: 100%; height: auto; display: block; touch-action: pan-y; user-select: none; }
+    .chart .grid { stroke: var(--grid); stroke-width: 1; }
+    .chart .frame { fill: none; stroke: var(--grid); }
+    .chart .break { stroke: var(--entry); stroke-width: .8; }
+    .chart .axis { fill: currentColor; font-size: 10px; opacity: .8; }
+    .chart .line-price { fill: none; stroke: var(--price); stroke-width: 1.8; stroke-linejoin: round; }
+    .chart .line-trailing { fill: none; stroke: var(--trailing); stroke-width: 1.8; stroke-dasharray: 5 3; }
+    .chart .line-stop { stroke: var(--stop); stroke-width: 1.8; stroke-dasharray: 1.5 3; stroke-linecap: round; }
+    .chart .line-entry { stroke: var(--entry); stroke-width: 1.2; }
+    .chart .mark-buy { fill: var(--buy); stroke: #fff; stroke-width: 1.5; }
+    .chart .mark-sell { fill: var(--sell); stroke: #fff; stroke-width: 1.5; }
+    .chart .mark-skip { fill: var(--skip); stroke: #fff; stroke-width: 1; }
+    .chart .cross { stroke: currentColor; stroke-width: .8; opacity: .5; }
+    .tip { position: absolute; top: 4px; background: Canvas; color: CanvasText; border: 1px solid rgba(128,128,128,.7); border-radius: .4rem; padding: .3rem .5rem; font-size: .85rem; line-height: 1.35; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,.25); max-width: 80%; }
+    @media (max-width: 40rem) { body { margin: 1rem auto; padding: 0 .5rem; } #report { padding: .6rem; } .rows, .bar-row { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>Trade Report</h1>
+  <p>カレンダーの日付を選択すると、その日の公開用集計データを表示します。</p>
+  <div id="calendar" aria-label="公開日カレンダー"></div>
+  <section id="report" aria-live="polite">読み込み中です。</section>
+  <script>
+    const calendar = document.querySelector("#calendar");
+    const report = document.querySelector("#report");
+    const marketStatus = { available: "判定あり", unavailable: "判定不可", not_evaluated: "未判定", not_recorded: "未記録" };
+    const regimes = { NORMAL: "通常", CAUTION: "注意", DANGER: "危険" };
+    const skipLabels = { atr_danger: "ATR危険度見送り", market_regime_danger: "市場危険度見送り", market_regime_caution_rsi: "注意レジームRSI見送り" };
+    const cache = new Map();
+    const el = (tag, text, className) => {
+      const node = document.createElement(tag);
+      if (text !== undefined) node.textContent = text;
+      if (className) node.className = className;
+      return node;
+    };
+    function rows(pairs) {
+      const dl = el("dl", undefined, "rows");
+      for (const [term, value] of pairs) dl.append(el("dt", term), el("dd", String(value ?? "未記録")));
+      return dl;
+    }
+    function bars(pairs) {
+      const box = el("div");
+      const max = Math.max(1, ...pairs.map(([, value]) => value));
+      for (const [label, value] of pairs) {
+        const row = el("div", undefined, "bar-row");
+        const track = el("div", undefined, "bar-track");
+        const bar = el("div", undefined, value ? "bar" : "bar zero");
+        bar.style.width = `${(value / max) * 100}%`;
+        track.append(bar);
+        row.append(el("span", label), track, el("span", String(value)));
+        box.append(row);
+      }
+      return box;
+    }
+    function trend(days) {
+      const series = [["候補数", "candidate_count", "#94a3b8"], ["評価数", "evaluated_count", "#3b82f6"], ["買いシグナル数", "buy_signal_count", "#16a34a"], ["約定件数", "order_count", "#f59e0b"]];
+      const max = Math.max(1, ...days.flatMap((d) => series.map(([, key]) => d[key] || 0)));
+      const wrap = el("div", undefined, "trend");
+      for (const day of days) {
+        const column = el("div", undefined, "trend-day");
+        const group = el("div", undefined, "trend-bars");
+        for (const [name, key, color] of series) {
+          const bar = el("span");
+          bar.style.height = `${((day[key] || 0) / max) * 100}%`;
+          bar.style.background = color;
+          bar.title = `${name}: ${day[key] || 0}`;
+          group.append(bar);
+        }
+        column.append(group, el("span", day.date.slice(5)));
+        wrap.append(column);
+      }
+      const legend = el("div", undefined, "legend");
+      for (const [name, , color] of series) {
+        const item = el("span");
+        const swatch = el("i");
+        swatch.style.background = color;
+        item.append(swatch, name);
+        legend.append(item);
+      }
+      const box = el("div");
+      box.append(wrap, legend);
+      return box;
+    }
+    const chartName = /^intraday_trade_diagnostics(_detail_[0-9A-Z]{4,5})?[.]png$/;
+    function pngFallback(data, box) {
+      const names = (data.charts || []).filter((name) => chartName.test(name));
+      box.className = "charts";
+      box.textContent = names.length ? "" : "この日の分足診断データはありません。";
+      for (const name of names) {
+        const link = el("a");
+        link.href = `charts/${data.date}/${name}`;
+        link.target = "_blank";
+        link.rel = "noopener";
+        const image = el("img");
+        image.src = link.href;
+        image.alt = name.includes("_detail_") ? "銘柄別の分足診断図" : "分足診断図（全体）";
+        image.loading = "lazy";
+        link.append(image);
+        box.append(link);
+      }
+    }
+    const SESSION = 330;
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const BREAK_START = 150;
+    const xTicks = [[0, "9:00"], [60, "10:00"], [120, "11:00"], [180, "13:00"], [240, "14:00"], [300, "15:00"]];
+    const resultLabels = { buy: "買い", skip: "見送り", none: "買いなし" };
+    function position(text) {
+      const [hour, minute, second] = text.split(":").map(Number);
+      let minutes = hour * 60 + minute + (second || 0) / 60;
+      if (minutes >= 750) minutes -= 60;
+      else if (minutes > 690) minutes = 690;
+      return Math.min(SESSION, Math.max(0, minutes - 540));
+    }
+    const fmtPrice = (value) => value.toLocaleString("ja-JP", { maximumFractionDigits: 2 });
+    const fmtMargin = (value) => `${value.toFixed(1)}円`;
+    const fmtMoney = (value) => `${value >= 0 ? "+" : "-"}${Math.abs(value).toLocaleString("ja-JP")}円`;
+    function svgEl(parent, name, attributes) {
+      const node = document.createElementNS(SVG_NS, name);
+      for (const [key, value] of Object.entries(attributes || {})) node.setAttribute(key, String(value));
+      parent.append(node);
+      return node;
+    }
+    function niceTicks(low, high) {
+      const raw = (high - low) / 5;
+      const power = 10 ** Math.floor(Math.log10(raw));
+      const step = [1, 2, 2.5, 5, 10].map((unit) => unit * power).find((candidate) => candidate >= raw);
+      const ticks = [];
+      for (let value = Math.ceil(low / step) * step; value <= high + 1e-9; value += step) ticks.push(Math.round(value / step) * step);
+      const digits = step % 1 === 0 ? 0 : (Math.round(step * 10) / 10 === step ? 1 : 2);
+      return { ticks, digits };
+    }
+    function holdEnd(symbol) {
+      const sold = (symbol.sells || [])[0];
+      if (sold) return position(sold.time);
+      return symbol.bars.length ? position(symbol.bars[symbol.bars.length - 1][0]) : SESSION;
+    }
+    function trailingAt(symbol, at) {
+      let value = null;
+      for (const [time, line] of symbol.trailing || []) {
+        if (position(time) <= at + 1e-9) value = line;
+      }
+      return value;
+    }
+    function symbolEvents(symbol) {
+      const events = [];
+      if (symbol.buy && !symbol.buy.price_missing) events.push({ kind: "buy", label: "買い", ...symbol.buy });
+      for (const sell of symbol.sells || []) if (!sell.price_missing) events.push({ kind: "sell", label: "売り", ...sell });
+      for (const skip of symbol.skips || []) events.push({ kind: "skip", label: "見送り", ...skip });
+      return events;
+    }
+    function priceChart(symbol) {
+      const W = 360, H = 230, L = 44, R = 8, T = 10, B = 22;
+      const plotW = W - L - R, plotH = H - T - B;
+      const X = (at) => L + (at / SESSION) * plotW;
+      const events = symbolEvents(symbol);
+      const barPoints = symbol.bars.map(([time, price]) => ({ at: position(time), time, price }));
+      const values = barPoints.map((point) => point.price);
+      for (const value of [symbol.entry, symbol.stop]) if (value) values.push(value);
+      for (const [, value] of symbol.trailing || []) values.push(value);
+      for (const event of events) if (event.price) values.push(event.price);
+      let low = Math.min(...values), high = Math.max(...values);
+      if (!(high > low)) { low -= 1; high += 1; }
+      const pad = (high - low) * 0.06;
+      low -= pad; high += pad;
+      const Y = (value) => T + (1 - (value - low) / (high - low)) * plotH;
+      const wrap = el("div", undefined, "chart-wrap");
+      const svg = svgEl(wrap, "svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${symbol.symbol} の株価推移` });
+      svg.classList.add("chart");
+      const { ticks, digits } = niceTicks(low, high);
+      for (const tick of ticks) {
+        svgEl(svg, "line", { x1: L, x2: W - R, y1: Y(tick), y2: Y(tick), class: "grid" });
+        const label = svgEl(svg, "text", { x: L - 4, y: Y(tick) + 4, class: "axis", "text-anchor": "end" });
+        label.textContent = tick.toLocaleString("ja-JP", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+      }
+      for (const [at, text] of xTicks) {
+        const label = svgEl(svg, "text", { x: X(at), y: H - 6, class: "axis", "text-anchor": "middle" });
+        label.textContent = text;
+      }
+      svgEl(svg, "line", { x1: X(BREAK_START), x2: X(BREAK_START), y1: T, y2: T + plotH, class: "break" });
+      svgEl(svg, "rect", { x: L, y: T, width: plotW, height: plotH, class: "frame" });
+      const end = holdEnd(symbol);
+      if (symbol.entry && symbol.buy) {
+        const start = position(symbol.buy.time);
+        svgEl(svg, "line", { x1: X(start), x2: X(end), y1: Y(symbol.entry), y2: Y(symbol.entry), class: "line-entry" });
+        if (symbol.stop) svgEl(svg, "line", { x1: X(position(symbol.stop_from || symbol.buy.time)), x2: X(end), y1: Y(symbol.stop), y2: Y(symbol.stop), class: "line-stop" });
+        if ((symbol.trailing || []).length) {
+          let path = "";
+          symbol.trailing.forEach(([time, value], index) => {
+            path += index === 0 ? `M${X(position(time))} ${Y(value)}` : `H${X(position(time))}V${Y(value)}`;
+          });
+          svgEl(svg, "path", { d: path, class: "line-trailing" });
+        }
+      }
+      svgEl(svg, "polyline", { points: barPoints.map((point) => `${X(point.at)},${Y(point.price)}`).join(" "), class: "line-price" });
+      const nearestPrice = (at) => {
+        let best = barPoints[0];
+        for (const point of barPoints) if (Math.abs(point.at - at) < Math.abs(best.at - at)) best = point;
+        return best ? best.price : (low + high) / 2;
+      };
+      const placed = events.map((event) => {
+        const at = position(event.time);
+        return { ...event, at, y: Y(event.price || nearestPrice(at)), x: X(at) };
+      });
+      for (const item of placed) {
+        svgEl(svg, "circle", { cx: item.x, cy: item.y, r: item.kind === "skip" ? 3.5 : 6.5, class: `mark-${item.kind}` });
+      }
+      const cross = svgEl(svg, "line", { y1: T, y2: T + plotH, class: "cross", visibility: "hidden" });
+      const tip = el("div", undefined, "tip");
+      tip.hidden = true;
+      wrap.append(tip);
+      const show = (event) => {
+        const rect = svg.getBoundingClientRect();
+        const scale = W / rect.width;
+        const px = (event.clientX - rect.left) * scale;
+        const py = (event.clientY - rect.top) * scale;
+        if (px < L - 4 || px > W - R + 4 || !barPoints.length) { hide(); return; }
+        const hit = placed.find((item) => Math.hypot(item.x - px, item.y - py) <= 12);
+        const at = Math.min(SESSION, Math.max(0, ((px - L) / plotW) * SESSION));
+        const point = hit ? { at: hit.at, time: hit.time.slice(0, 5), price: hit.price ?? nearestPrice(hit.at) } : barPoints.reduce((best, item) => (Math.abs(item.at - at) < Math.abs(best.at - at) ? item : best));
+        const lines = [];
+        if (hit) {
+          lines.push(`${hit.label} ${hit.time}`);
+          if (hit.price) lines.push(`価格 ${fmtPrice(hit.price)}円`);
+          lines.push(`理由 ${hit.reason}`);
+        } else {
+          lines.push(point.time, `株価 ${fmtPrice(point.price)}円`);
+          const inHold = symbol.buy && point.at >= position(symbol.buy.time) && point.at <= end;
+          if (inHold) {
+            const trail = trailingAt(symbol, point.at);
+            if (trail !== null) lines.push(`トレーリング ${fmtPrice(trail)}円（余裕 ${fmtMargin(point.price - trail)}）`);
+            if (symbol.stop) lines.push(`損切り ${fmtPrice(symbol.stop)}円（余裕 ${fmtMargin(point.price - symbol.stop)}）`);
+            if (symbol.entry) lines.push(`買値 ${fmtPrice(symbol.entry)}円`);
+          }
+        }
+        tip.replaceChildren(...lines.map((line) => el("div", line)));
+        tip.hidden = false;
+        cross.setAttribute("x1", X(point.at));
+        cross.setAttribute("x2", X(point.at));
+        cross.setAttribute("visibility", "visible");
+        const ratio = X(point.at) / W;
+        tip.style.left = ratio < 0.5 ? `${ratio * 100 + 2}%` : "auto";
+        tip.style.right = ratio < 0.5 ? "auto" : `${(1 - ratio) * 100 + 2}%`;
+      };
+      const hide = () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); };
+      svg.addEventListener("pointerdown", show);
+      svg.addEventListener("pointermove", (event) => { if (event.pointerType === "mouse" || event.buttons) show(event); });
+      svg.addEventListener("pointerleave", (event) => { if (event.pointerType === "mouse") hide(); });
+      return wrap;
+    }
+    function legendFor(symbol) {
+      const items = [["price", "株価"]];
+      if (symbol.result === "buy") {
+        if ((symbol.trailing || []).length) items.push(["trailing", "トレーリング（利確）"]);
+        if (symbol.stop) items.push(["stop", "損切り"]);
+        items.push(["entry", "買値"]);
+        if (symbol.buy && !symbol.buy.price_missing) items.push(["buy", "買い"]);
+        if ((symbol.sells || []).some((sell) => !sell.price_missing)) items.push(["sell", "売り"]);
+      }
+      if ((symbol.skips || []).length) items.push(["skip", "見送り"]);
+      const legend = el("div", undefined, "legend");
+      for (const [kind, text] of items) {
+        const item = el("span");
+        item.append(el("i", undefined, `sw-${kind}`), text);
+        legend.append(item);
+      }
+      return legend;
+    }
+    function metric(label, found, unavailable) {
+      const card = el("div", undefined, "metric");
+      card.append(el("span", label, "metric-label"));
+      if (found) {
+        card.append(el("strong", fmtMargin(found.value)), el("span", `(${found.time})`, "metric-time"));
+      } else {
+        card.append(el("strong", unavailable, "metric-none"));
+      }
+      return card;
+    }
+    function symbolCard(symbol) {
+      const card = el("article", undefined, "symbol-card");
+      const head = el("div", undefined, "symbol-head");
+      head.append(el("strong", symbol.symbol, "symbol-code"));
+      if (symbol.low !== null) head.append(el("span", `${fmtPrice(symbol.low)}〜${fmtPrice(symbol.high)}円`, "symbol-range"));
+      head.append(el("span", resultLabels[symbol.result] || symbol.result, `badge badge-${symbol.result}`));
+      if (symbol.pnl !== null && symbol.pnl !== undefined) head.append(el("span", `実現損益 ${fmtMoney(symbol.pnl)}`, symbol.pnl >= 0 ? "pnl pnl-up" : "pnl pnl-down"));
+      card.append(head);
+      if (symbol.result === "buy") {
+        const metrics = el("div", undefined, "metrics");
+        const margins = symbol.min_margin || {};
+        metrics.append(
+          metric("トレーリングまでの最小余裕", margins.trailing, symbol.min_margin ? "未発動" : "算出不可"),
+          metric("損切りまでの最小余裕", margins.stop, "算出不可"),
+        );
+        card.append(metrics);
+      } else {
+        card.append(el("p", "買いなし", "no-buy"));
+      }
+      if (!symbol.bars.length) {
+        card.append(el("p", "分足データがありません。", "note"));
+        return card;
+      }
+      card.append(legendFor(symbol), priceChart(symbol));
+      if (symbol.price_missing) card.append(el("p", "価格欠測: 価格が記録されていない注文は印を表示していません。", "note"));
+      return card;
+    }
+    function renderDiagnostics(box, diagnostics) {
+      box.className = "diag";
+      const cards = (diagnostics.symbols || []).map(symbolCard);
+      box.replaceChildren(...(cards.length ? cards : [el("p", "この日の監視銘柄はありません。")]));
+    }
+    function chartSection(data) {
+      const box = el("div", undefined, "diag");
+      box.textContent = "読み込み中です。";
+      fetch(`data/charts/${data.date}.json`, { cache: "no-store" })
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        })
+        .then((diagnostics) => renderDiagnostics(box, diagnostics))
+        .catch(() => pngFallback(data, box));
+      return [el("h3", "分足トレード診断"), box];
+    }
+    function render(data, history) {
+      report.className = "";
+      report.replaceChildren(
+        el("h3", "概要"),
+        rows([
+          ["対象日", data.date], ["取引モード", data.trading_mode], ["約定件数", `${data.order_count}件`],
+          ["市場データ状態", marketStatus[data.market_status] || data.market_status],
+          ["市場レジーム", regimes[data.market_regime] || data.market_regime],
+          ["売買なし理由", data.no_trade_reason || "売買あり"], ["公開生成日時", data.published_at],
+        ]),
+        el("h3", "当日の件数"),
+        bars([["候補数", data.candidate_count], ["評価数", data.evaluated_count], ["買いシグナル数", data.buy_signal_count], ["約定件数", data.order_count]]),
+        el("h3", "見送り件数"),
+        bars(Object.entries(data.skip_counts || {}).map(([key, value]) => [skipLabels[key] || key, value])),
+        el("h3", "推移（直近30日）"),
+        trend(history),
+        ...chartSection(data),
+      );
+    }
+    async function loadDay(day) {
+      if (!cache.has(day)) {
+        const response = await fetch(`data/${day}.json`, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        cache.set(day, await response.json());
+      }
+      return cache.get(day);
+    }
+    let allDates = [];
+    async function selectDay(day) {
+      report.className = "";
+      report.textContent = "読み込み中です。";
+      try {
+        const recent = allDates.slice(0, 30).reverse();
+        const history = await Promise.all(recent.map(loadDay));
+        render(await loadDay(day), history);
+      } catch (error) {
+        report.className = "error";
+        report.textContent = `データを表示できませんでした: ${error.message}`;
+      }
+    }
+    async function main() {
+      try {
+        const response = await fetch("data/index.json", { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const { dates } = await response.json();
+        allDates = dates;
+        const months = new Map();
+        for (const day of dates) {
+          const month = day.slice(0, 7);
+          if (!months.has(month)) months.set(month, []);
+          months.get(month).push(day);
+        }
+        for (const [month, monthDates] of months) {
+          const section = document.createElement("section");
+          section.className = "month";
+          const title = document.createElement("h2");
+          title.textContent = month;
+          const list = document.createElement("ul");
+          list.className = "dates";
+          for (const day of monthDates) {
+            const item = document.createElement("li");
+            const button = document.createElement("button");
+            button.type = "button"; button.textContent = day.slice(8);
+            button.setAttribute("aria-label", day);
+            button.addEventListener("click", () => selectDay(day));
+            item.append(button); list.append(item);
+          }
+          section.append(title, list); calendar.append(section);
+        }
+        if (dates.length) await selectDay(dates[0]);
+        else report.textContent = "公開済みデータはまだありません。";
+      } catch (error) {
+        report.className = "error";
+        report.textContent = `公開日一覧を読み込めませんでした: ${error.message}`;
+      }
+    }
+    main();
+  </script>
+</body>
+</html>
