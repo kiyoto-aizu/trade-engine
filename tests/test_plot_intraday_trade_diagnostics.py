@@ -1,8 +1,33 @@
+import json
 from pathlib import Path
 
 import pytest
 
 from scripts.analysis import plot_intraday_trade_diagnostics as analysis
+
+
+def test_saved_json_excludes_in_memory_daily_history(tmp_path: Path, monkeypatch):
+    from src.domain.volatility import DailyBar
+
+    monkeypatch.setattr(analysis, "render", lambda *args, **kwargs: None)
+    monkeypatch.setattr(analysis, "render_detail_pages", lambda *args, **kwargs: [])
+    item = {
+        "symbol": "1111", "bars": [], "after_buy": [], "trailing": [], "skip_reference": None,
+        "daily_closes": [1.0], "daily_bars": [DailyBar(high=2.0, low=1.0, close=1.5)],
+        "entry": None, "atr": None, "atr_source": None, "stop": None, "bar_count": 0,
+        "trailing_min_margin": None, "trailing_min_margin_atr": None,
+        "stop_min_margin": None, "stop_min_margin_atr": None, "buy": None, "skips": [],
+    }
+    report = {"date": "2026-10-16", "orders": [], "minute_inventory": {"date_range": ["a", "b"], "partition_count": 0},
+              "symbols": [item]}
+    base = tmp_path / "out"
+    try:
+        analysis.write_outputs(report, base)
+    except Exception:
+        pass  # 後続のレポート文生成は対象外。JSONは先に書かれる
+
+    saved = json.loads(base.with_suffix(".json").read_text(encoding="utf-8"))
+    assert "daily_bars" not in saved["symbols"][0] and "daily_closes" not in saved["symbols"][0]
 
 
 def test_trailing_line_starts_after_trigger_and_uses_rising_high():
@@ -102,3 +127,4 @@ def test_index_baseline_reproduces_recorded_event_percent():
     )
     assert baseline == pytest.approx(68994.45272432709)
     assert validation["matched"] is True
+

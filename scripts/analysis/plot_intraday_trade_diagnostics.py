@@ -838,7 +838,7 @@ def write_outputs(report: dict, output_base: Path) -> None:
         "symbols": [
             {
                 key: value for key, value in item.items()
-                if key not in {"bars", "after_buy", "trailing", "skip_reference"}
+                if key not in {"bars", "after_buy", "trailing", "skip_reference", "daily_closes", "daily_bars"}
             }
             for item in report["symbols"]
         ],
