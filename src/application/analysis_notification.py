@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 import re
 
 from src.application.error_summary import daily_error_notification_lines
@@ -20,6 +20,7 @@ from src.domain.no_trade_reason import describe_no_trade_reason
 from src.domain.trend_check import JUDGED_LABELS, LABEL_TREND
 from src.infrastructure.analysis.period_review import sanitize_period_review
 from src.infrastructure.persistence.trend_check_repository import TrendCheckRepository
+from src.infrastructure.calendar.japanese_calendar import is_trading_day
 
 WEEKDAYS_JA = ("月", "火", "水", "木", "金", "土", "日")
 REFERENCE_NOTE = "※参考値: 標本数10件未満、または対象総数30件未満の価格帯別集計は参考値です。"
@@ -235,7 +236,13 @@ def daily_paper_lines(report: dict | None) -> list[str]:
         return ["・日次実績: 日次レポートなし"]
     market = report.get("market_conditions") or {}
     positions = report.get("positions") or []
-    regime = market.get("regime") or market.get("assessment_status") or "不明"
+    assessment_status = market.get("assessment_status")
+    if assessment_status == "unavailable":
+        regime = "判定不可"
+    elif assessment_status == "not_evaluated":
+        regime = "未判定"
+    else:
+        regime = market.get("regime") or assessment_status or "不明"
     fallback_note = "、分足で補完" if market.get("nikkei_fallback_used") else ""
     return [
         f"・損益: 実現 {float(report.get('realized_profit_loss') or 0):+.0f}円 / "
@@ -251,6 +258,69 @@ def daily_error_lines(report: dict | None) -> list[str]:
     if report is None:
         return []
     return daily_error_notification_lines(report.get("log_errors"))
+
+
+def daily_input_line(report: dict | None, trend: dict | None) -> str:
+    if report is None:
+        return "入力: 日次レポートなし(入力なし)・エラー記録未記録。ログ本文は未参照"
+    sources = ["当日の日次レポート"]
+    if trend is None:
+        sources.append("答え合わせ結果は入力なし")
+    else:
+        sources.append("答え合わせ結果")
+    notes = []
+    errors = report.get("log_errors")
+    if not isinstance(errors, dict) or "count" not in errors:
+        notes.append("エラー記録未記録")
+    market = report.get("market_conditions")
+    if (
+        isinstance(market, dict)
+        and market.get("assessment_status") == "available"
+        and "nikkei_fallback_used" not in market
+    ):
+        notes.append("日経225補完情報未記録")
+    source_text = "・".join(sources)
+    if notes:
+        source_text += f"({'・'.join(notes)})"
+    return f"入力: {source_text}。ログ本文は未参照"
+
+
+def period_input_line(summary: dict) -> str:
+    period = summary.get("period") or {}
+    try:
+        start = date.fromisoformat(str(period["start"]))
+        end = date.fromisoformat(str(period["end"]))
+        as_of = min(date.fromisoformat(str(period.get("as_of") or end)), end)
+    except (KeyError, TypeError, ValueError):
+        return "入力: 日次レポート未記録(入力なし)。ログ本体は未参照"
+    last_day = max(start, as_of)
+    dates = [
+        start + timedelta(days=offset)
+        for offset in range((last_day - start).days + 1)
+    ]
+    business_dates = {day for day in dates if is_trading_day(day)}
+    closed_days = len(dates) - len(business_dates)
+    reports = summary.get("daily", {}).get("reports") or []
+    report_dates = set()
+    unrecorded_error_days = 0
+    for report in reports:
+        try:
+            report_date = date.fromisoformat(str(report["date"])[:10])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if report_date in business_dates:
+            report_dates.add(report_date)
+            if not report.get("log_error_recorded", False):
+                unrecorded_error_days += 1
+    missing_count = len(business_dates - report_dates)
+    detail = f"日次レポート{len(report_dates)}日分"
+    if closed_days:
+        detail += f"(休場{closed_days}日)"
+    if missing_count:
+        detail += f"・入力なし{missing_count}営業日"
+    if unrecorded_error_days:
+        detail += f"・エラー記録未記録{unrecorded_error_days}日"
+    return f"入力: {detail}。ログ本体は未参照"
 
 
 _MINUTE_BAR_PREFIX = "分足 "
@@ -345,6 +415,8 @@ def period_notification_lines(summary: dict, trend: dict | None, kind: str, anal
     )
     price_band_trend = summary.get("price_band_trend_check")
     lines = [
+        period_input_line(summary),
+        "",
         f"■ A. ペーパートレード実績({kind})",
         *period_paper_lines(summary, kind),
         "",
@@ -391,7 +463,12 @@ def period_notification_lines(summary: dict, trend: dict | None, kind: str, anal
     if analysis:
         sanitized_analysis = sanitize_period_review(analysis)
         if sanitized_analysis:
-            lines.extend(["", "■ LLM評価(参考)", sanitized_analysis])
+            lines.extend([
+                "",
+                "■ LLM評価(参考)",
+                "入力: 上記の集計値のみ。ログ本文は未参照",
+                sanitized_analysis,
+            ])
     if (
         trend_check_has_reference(trend, include_progression=kind == "週次")
         or price_band_has_reference(price_band_trend)
@@ -547,7 +624,12 @@ def daily_notification_lines(
     minute_bar_line: str | None = None,
     chart_line: str | None = None,
 ) -> list[str]:
-    lines = ["■ A. ペーパートレード実績", *daily_paper_lines(report)]
+    lines = [
+        daily_input_line(report, trend),
+        "",
+        "■ A. ペーパートレード実績",
+        *daily_paper_lines(report),
+    ]
     if report is None or not int(report.get("order_count") or 0):
         lines.append(f"・売買0件の理由: {describe_no_trade_reason(no_trade_reason)}")
     if error_lines := daily_error_lines(report):
@@ -566,7 +648,12 @@ def daily_notification_lines(
         )
     )
     if analysis:
-        lines.extend(["", "■ LLM日次評価(参考)", *format_daily_review(analysis)])
+        lines.extend([
+            "",
+            "■ LLM日次評価(参考)",
+            "入力: 上記の集計値のみ。ログ本文は未参照",
+            *format_daily_review(analysis),
+        ])
     if (
         (cache_update_ok and trend_check_has_reference(trend))
         or price_band_has_reference(price_band_trend)

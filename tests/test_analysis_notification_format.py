@@ -2,8 +2,10 @@ from datetime import date
 
 from src.application.analysis_notification import (
     daily_conclusion,
+    daily_input_line,
     daily_notification_lines,
     period_conclusion,
+    period_input_line,
     period_notification_lines,
 )
 from src.infrastructure.notification.slack_notify import format_result_notification
@@ -135,6 +137,8 @@ def test_daily_notification_sample_for_2026_10_07():
         "【概要】",
         "日足更新・答え合わせ・日次レビューが完了しました。今日は売買なし。450円・900円帯は欠測です。",
         "【詳細】",
+        "入力: 当日の日次レポート・答え合わせ結果。ログ本文は未参照",
+        "",
         "■ A. ペーパートレード実績",
         "・損益: 実現 +0円 / 評価 +0円",
         "・約定 0件 / 保有 0銘柄",
@@ -159,11 +163,40 @@ def test_daily_notification_sample_for_2026_10_07():
         "・900円帯の欠測: フィルタ時間切れ",
         "",
         "■ LLM日次評価(参考)",
+        "入力: 上記の集計値のみ。ログ本文は未参照",
         "【所見】売買なしの日。欠測帯の原因確認が優先。",
         "※ロジック変更・認証修正・投資判断・売買指示は行わない参考意見です。",
         "",
         "※参考値: 標本数10件未満、または対象総数30件未満の価格帯別集計は参考値です。",
     ])
+
+
+def test_daily_input_line_marks_missing_report_and_error_record():
+    assert daily_input_line(None, None) == (
+        "入力: 日次レポートなし(入力なし)・エラー記録未記録。ログ本文は未参照"
+    )
+
+
+def test_period_input_line_counts_reports_closed_days_and_unrecorded_days():
+    summary = {
+        "period": {
+            "start": "2026-10-12",
+            "end": "2026-10-16",
+            "as_of": "2026-10-16",
+        },
+        "daily": {
+            "reports": [
+                {"date": "2026-10-13", "log_error_recorded": True},
+                {"date": "2026-10-14", "log_error_recorded": False},
+                {"date": "2026-10-15", "log_error_recorded": True},
+                {"date": "2026-10-16", "log_error_recorded": True},
+            ]
+        },
+    }
+
+    assert period_input_line(summary) == (
+        "入力: 日次レポート4日分(休場1日)・エラー記録未記録1日。ログ本体は未参照"
+    )
 
 
 def _timeout_message(symbol):
@@ -221,6 +254,21 @@ def test_daily_market_line_marks_nikkei_fallback():
     )
 
     assert "・市場状態: DANGER(日経 -2.00%、分足で補完)" in lines
+
+
+def test_daily_market_line_does_not_present_unavailable_regime_as_assessed():
+    lines = daily_notification_lines(
+        _report_1007(
+            market_conditions={
+                "assessment_status": "unavailable",
+                "regime": "DANGER",
+                "nikkei_change_percent": None,
+            }
+        ),
+        None, cache_update_ok=True, analysis=None,
+    )
+
+    assert "・市場状態: 判定不可(日経 不明)" in lines
 
 
 def test_price_band_source_is_marked_once_with_footnote():
@@ -394,7 +442,11 @@ def test_period_notification_uses_same_rules_as_daily():
 
 def test_period_status_and_skip_summary_are_human_readable():
     summary = _period_summary()
-    summary["daily"]["operational_summary"]["market_assessment_status_counts"] = {"available": 5}
+    summary["daily"]["operational_summary"]["market_assessment_status_counts"] = {
+        "available": 2,
+        "available_fallback": 1,
+        "unavailable": 1,
+    }
     summary["daily"]["reports"] = [
         {
             "date": "2026-10-05",
@@ -414,7 +466,7 @@ def test_period_status_and_skip_summary_are_human_readable():
 
     lines = period_notification_lines(summary, _trend(), "週次", None)
 
-    assert "・市場状態: 判定あり5日" in lines
+    assert "・市場状態: 判定あり2日・判定あり(補完)1日・判定不可1日" in lines
     assert "・見送り 1件" in lines
     assert (
         "  注意レジームRSI 1件（当日基準: 見送って正解1件・"
