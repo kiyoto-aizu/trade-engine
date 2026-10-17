@@ -55,7 +55,17 @@ def test_load_daily_summaries_keeps_operational_context(tmp_path):
     summaries = load_daily_summaries(tmp_path, date(2026, 9, 16), date(2026, 9, 16))
 
     assert summaries[0]["market_assessment_status"] == "unavailable"
-    assert summaries[0]["log_error_summaries"] == ["認証エラー"]
+    assert summaries[0]["log_errors"] == {
+        "recorded": True,
+        "count": 2,
+        "board_timeout": {
+            "count": 0, "recovered": 0, "final_failure": 0, "unrecorded": 0,
+            "symbols": {"recovered": [], "final_failure": [], "unrecorded": []},
+        },
+        "other_errors": {
+            "count": 2, "groups": [{"title": "詳細未記録", "count": 2}],
+        },
+    }
     assert summaries[0]["position_count"] == 0
     assert summaries[0]["skip_counts"] == {"注意レジームRSI": 2}
     assert summaries[0]["skip_evaluations"]["注意レジームRSI"] == [
@@ -69,8 +79,59 @@ def test_load_daily_summaries_keeps_operational_context(tmp_path):
     assert summarize_daily_operations(summaries) == {
         "log_error_days": 1,
         "log_error_count": 2,
+        "log_error_unrecorded_days": 0,
         "emergency_stop_days": 0,
         "market_assessment_status_counts": {"unavailable": 1},
+        "market_status_counts": {"判定不可": 1},
+        "board_timeout": {
+            "count": 0, "recovered": 0, "final_failure": 0, "unrecorded": 0,
+            "symbols": {"recovered": [], "final_failure": [], "unrecorded": []},
+        },
+        "other_errors": {
+            "count": 2, "groups": [{"title": "詳細未記録", "count": 2}],
+        },
+    }
+
+
+def test_load_daily_summaries_uses_recorded_nikkei_fallback_without_raw_errors(tmp_path):
+    (tmp_path / "2026-10-16.json").write_text(
+        json.dumps({
+            "date": "2026-10-16",
+            "order_count": 0,
+            "total_profit_loss": 0,
+            "kill_switch_triggered": False,
+            "emergency_stop_triggered": False,
+            "positions": [],
+            "market_conditions": {
+                "assessment_status": "available",
+                "nikkei_fallback_used": True,
+            },
+            "log_errors": {
+                "count": 2,
+                "summaries": ["❌ [GET通信エラー] URL: http://localhost/board/AAA@1 | 理由: Read timed out"],
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    summaries = load_daily_summaries(tmp_path, date(2026, 10, 16), date(2026, 10, 16))
+
+    assert summaries[0]["market_assessment_status"] == "available_fallback"
+    assert summaries[0]["log_errors"]["board_timeout"]["unrecorded"] == 2
+    assert summaries[0]["log_errors"]["board_timeout"]["symbols"]["unrecorded"] == ["AAA"]
+    assert "log_error_summaries" not in summaries[0]
+    assert "localhost" not in json.dumps(summaries[0], ensure_ascii=False)
+
+
+def test_summarize_daily_operations_keeps_fallback_state_separate():
+    operations = summarize_daily_operations([
+        {"market_assessment_status": "available"},
+        {"market_assessment_status": "available_fallback"},
+        {"market_assessment_status": "unavailable"},
+    ])
+
+    assert operations["market_status_counts"] == {
+        "判定あり": 1, "判定あり(補完)": 1, "判定不可": 1,
     }
 
 

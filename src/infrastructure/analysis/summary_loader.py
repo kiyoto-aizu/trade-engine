@@ -3,6 +3,9 @@ import logging
 from datetime import date, datetime
 from pathlib import Path
 
+from src.application.error_summary import normalize_daily_errors
+from src.infrastructure.calendar.japanese_calendar import is_trading_day
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,21 +29,69 @@ def summarize_daily_operations(summaries: list[dict]) -> dict:
     status_counts: dict[str, int] = {}
     log_error_days = 0
     log_error_count = 0
+    log_error_unrecorded_days = 0
     emergency_stop_days = 0
+    timeout = {
+        "count": 0,
+        "recovered": 0,
+        "final_failure": 0,
+        "unrecorded": 0,
+        "symbols": {"recovered": set(), "final_failure": set(), "unrecorded": set()},
+    }
+    other_count = 0
+    other_groups: dict[str, int] = {}
     for item in summaries:
         status = str(item.get("market_assessment_status") or "not_recorded")
         status_counts[status] = status_counts.get(status, 0) + 1
         current_error_count = int(item.get("log_error_count") or 0)
+        errors = normalize_daily_errors(item.get("log_errors"))
+        if not errors["recorded"]:
+            log_error_unrecorded_days += 1
         if current_error_count > 0:
             log_error_days += 1
             log_error_count += current_error_count
+        daily_timeout = errors["board_timeout"]
+        for name in ("count", "recovered", "final_failure", "unrecorded"):
+            timeout[name] += daily_timeout[name]
+        for name, symbols in daily_timeout["symbols"].items():
+            timeout["symbols"][name].update(symbols)
+        daily_other = errors["other_errors"]
+        other_count += daily_other["count"]
+        for group in daily_other["groups"]:
+            title = group["title"]
+            other_groups[title] = other_groups.get(title, 0) + group["count"]
         if item.get("emergency_stop_triggered"):
             emergency_stop_days += 1
+    market_status_counts = {
+        {
+            "available": "判定あり",
+            "available_fallback": "判定あり(補完)",
+            "unavailable": "判定不可",
+            "not_evaluated": "未判定",
+            "not_recorded": "未記録",
+        }.get(status, "未記録"): count
+        for status, count in status_counts.items()
+    }
     return {
         "log_error_days": log_error_days,
         "log_error_count": log_error_count,
+        "log_error_unrecorded_days": log_error_unrecorded_days,
         "emergency_stop_days": emergency_stop_days,
         "market_assessment_status_counts": status_counts,
+        "market_status_counts": market_status_counts,
+        "board_timeout": {
+            **{key: value for key, value in timeout.items() if key != "symbols"},
+            "symbols": {
+                name: sorted(symbols) for name, symbols in timeout["symbols"].items()
+            },
+        },
+        "other_errors": {
+            "count": other_count,
+            "groups": [
+                {"title": title, "count": count}
+                for title, count in sorted(other_groups.items())
+            ],
+        },
     }
 
 
@@ -161,9 +212,12 @@ def load_daily_summaries(report_directory: Path, start: date, end: date) -> list
             "市場危険度": "market_regime_danger_skips",
             "注意レジームRSI": "market_regime_caution_rsi_filters",
         }
-        error_summaries = log_errors.get("summaries")
-        if not isinstance(error_summaries, list):
-            error_summaries = []
+        normalized_errors = normalize_daily_errors(log_errors)
+        normalized_errors["board_timeout"]["symbols"]["recovered"] = []
+        fallback_used = bool(market_conditions.get("nikkei_fallback_used", False))
+        assessment_status = market_conditions.get("assessment_status") or "not_recorded"
+        if assessment_status == "available" and fallback_used:
+            assessment_status = "available_fallback"
         skip_events = {
             label: [
                 {
@@ -186,11 +240,12 @@ def load_daily_summaries(report_directory: Path, start: date, end: date) -> list
             "total_profit_loss": data.get("total_profit_loss", 0),
             "kill_switch_triggered": data.get("kill_switch_triggered", False),
             "emergency_stop_triggered": data.get("emergency_stop_triggered", False),
-            "market_assessment_status": market_conditions.get("assessment_status") or "not_recorded",
+            "market_assessment_status": assessment_status,
             "market_regime": market_conditions.get("regime"),
             "market_failure_reason": market_conditions.get("failure_reason"),
-            "log_error_count": int(log_errors.get("count") or 0),
-            "log_error_summaries": [str(item) for item in error_summaries[:3]],
+            "log_error_count": normalized_errors["count"],
+            "log_error_recorded": normalized_errors["recorded"],
+            "log_errors": normalized_errors,
             "position_count": len(positions) if isinstance(positions, list) else None,
             "skip_counts": {
                 label: len(data.get(field) or [])

@@ -113,8 +113,14 @@ def normalize_daily_errors(errors: dict | None) -> dict:
     total_count = int(errors.get("count") or 0)
     timeout = errors.get("board_timeout")
     other = errors.get("other_errors")
-    if isinstance(timeout, dict) and isinstance(other, dict):
+    if (
+        isinstance(timeout, dict)
+        and "count" in timeout
+        and isinstance(other, dict)
+        and "count" in other
+    ):
         return {
+            "recorded": "count" in errors,
             "count": total_count,
             "board_timeout": {
                 "count": int(timeout.get("count") or 0),
@@ -180,6 +186,7 @@ def normalize_daily_errors(errors: dict | None) -> dict:
     if other_count and not groups:
         groups.append({"title": "詳細未記録", "count": other_count})
     return {
+        "recorded": "count" in errors,
         "count": total_count,
         "board_timeout": {
             "count": timeout_count,
@@ -194,6 +201,8 @@ def normalize_daily_errors(errors: dict | None) -> dict:
 
 def daily_error_notification_lines(errors: dict | None) -> list[str]:
     normalized = normalize_daily_errors(errors)
+    if not normalized["recorded"]:
+        return ["■ エラー 未記録"]
     timeout = normalized["board_timeout"]
     other = normalized["other_errors"]
     if not normalized["count"]:

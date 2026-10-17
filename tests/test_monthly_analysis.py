@@ -32,6 +32,8 @@ def test_build_monthly_summary_marks_in_progress_and_keeps_operational_context(t
     assert summary["daily"]["operational_summary"]["market_assessment_status_counts"] == {
         "not_evaluated": 1
     }
+    assert summary["daily"]["operational_summary"]["market_status_counts"] == {"未判定": 1}
+    assert summary["daily"]["operational_summary"]["log_error_unrecorded_days"] == 0
     assert summary["backtest"]["summary_status"] == "no_runs"
     assert summary["backtest"]["total_pnl"] is None
     assert summary["comparison"]["available"] is False

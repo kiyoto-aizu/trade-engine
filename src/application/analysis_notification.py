@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import date
 import re
 
-from src.application.error_summary import daily_error_notification_lines, error_section_lines
+from src.application.error_summary import daily_error_notification_lines
 from src.application.trend_check_report import aggregate
 from src.application.price_band_trend_check import (
     price_band_has_reference,
@@ -30,6 +30,7 @@ SKIP_FIELDS = {
 }
 STATUS_LABELS = {
     "available": "判定あり",
+    "available_fallback": "判定あり(補完)",
     "unavailable": "判定不可",
     "not_evaluated": "未判定",
     "not_recorded": "未記録",
@@ -209,20 +210,18 @@ def _skip_lines(report: dict) -> list[str]:
     return lines
 
 
-def _market_status_text(status_counts: dict, report_count: int) -> str:
+def _market_status_text(status_counts: dict) -> str:
     if not status_counts:
         return "市場状態: 記録なし"
+    order = ("available", "available_fallback", "unavailable", "not_evaluated", "not_recorded")
     parts = [
-        f"{STATUS_LABELS.get(status, status)} {count}日"
-        for status, count in sorted(status_counts.items())
+        f"{STATUS_LABELS.get(status, status)}{status_counts[status]}日"
+        for status in order if status_counts.get(status)
     ]
-    if (
-        len(status_counts) == 1
-        and "available" in status_counts
-        and status_counts["available"] == report_count
-        and report_count > 0
-    ):
-        return f"市場状態: {report_count}日とも判定あり"
+    parts.extend(
+        f"{STATUS_LABELS.get(status, status)}{count}日"
+        for status, count in sorted(status_counts.items()) if status not in order
+    )
     return "市場状態: " + "・".join(parts)
 
 
@@ -282,9 +281,7 @@ def period_paper_lines(summary: dict, kind: str) -> list[str]:
     lines = [
         f"・損益: {daily['total_profit_loss']:+.0f}円",
         f"・約定 {daily['order_count']}件 / 日次レポート {daily['report_count']}日",
-        "・" + _market_status_text(
-            ops["market_assessment_status_counts"], daily["report_count"]
-        ),
+        "・" + _market_status_text(ops["market_assessment_status_counts"]),
         f"・緊急停止: {ops['emergency_stop_days']}日",
     ]
     skip_totals: dict[str, int] = {}
@@ -323,15 +320,20 @@ def period_paper_lines(summary: dict, kind: str) -> list[str]:
 
 
 def period_error_lines(summary: dict) -> list[str]:
-    """期間内の日次エラーを重複なく集め、日次と同じ「■ エラー N件」へ集約する。"""
-    daily = summary["daily"]
-    messages: list[str] = []
-    for report in daily["reports"]:
-        for message in report.get("log_error_summaries") or []:
-            if str(message) not in messages:
-                messages.append(str(message))
-    total = int(daily["operational_summary"].get("log_error_count") or 0)
-    return error_section_lines(messages, total)
+    """日次レポートで記録されたタイムアウト区分とその他エラーを集約する。"""
+    operations = summary["daily"]["operational_summary"]
+    errors = {
+        "count": int(operations.get("log_error_count") or 0),
+        "board_timeout": operations.get("board_timeout") or {},
+        "other_errors": operations.get("other_errors") or {},
+    }
+    lines = daily_error_notification_lines(errors)
+    unrecorded_days = int(operations.get("log_error_unrecorded_days") or 0)
+    if unrecorded_days:
+        if lines == ["■ エラー なし"]:
+            lines = []
+        lines.append(f"・エラー記録 未記録{unrecorded_days}日")
+    return lines or ["■ エラー なし"]
 
 
 def period_notification_lines(summary: dict, trend: dict | None, kind: str, analysis: str | None) -> list[str]:

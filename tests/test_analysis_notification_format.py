@@ -414,7 +414,7 @@ def test_period_status_and_skip_summary_are_human_readable():
 
     lines = period_notification_lines(summary, _trend(), "週次", None)
 
-    assert "・市場状態: 5日とも判定あり" in lines
+    assert "・市場状態: 判定あり5日" in lines
     assert "・見送り 1件" in lines
     assert (
         "  注意レジームRSI 1件（当日基準: 見送って正解1件・"
@@ -490,7 +490,7 @@ def test_period_notification_sanitizes_llm_output_and_localizes_status():
         message = "\n".join(lines)
         llm_section = message.split("■ LLM評価(参考)\n", 1)[1]
 
-        assert "・市場状態: 5日とも判定あり" in lines
+        assert "・市場状態: 判定あり5日" in lines
         assert "市場評価は 判定あり でした。" in llm_section
         assert "{'available': 5}" not in message
         assert "複数営業日" not in message
@@ -513,6 +513,11 @@ def test_period_errors_are_aggregated_with_total_and_no_raw_dict():
     summary = _period_summary()
     summary["daily"]["operational_summary"]["log_error_count"] = 8
     summary["daily"]["operational_summary"]["market_assessment_status_counts"] = {"available": 5}
+    summary["daily"]["operational_summary"]["board_timeout"] = {
+        "count": 8, "recovered": 0, "final_failure": 0, "unrecorded": 8,
+        "symbols": {"recovered": [], "final_failure": [], "unrecorded": ["4265", "2764"]},
+    }
+    summary["daily"]["operational_summary"]["other_errors"] = {"count": 0, "groups": []}
     summary["daily"]["reports"] = [
         {"date": "2026-10-05", "total_profit_loss": 0,
          "log_error_summaries": [_timeout_message("4265"), _timeout_message("2764")]},
@@ -524,9 +529,9 @@ def test_period_errors_are_aggregated_with_total_and_no_raw_dict():
         lines = period_notification_lines(summary, _trend(), kind, None)
         message = "\n".join(lines)
 
-        assert lines[lines.index("■ エラー 8件") + 1:][:2] == [
-            "・板情報GETタイムアウト(read timeout=10秒)",
-            "  対象: 4265, 2764",
+        assert lines[lines.index("■ エラー 発生8件(回復0・最終失敗0・記録なし8)"):][:2] == [
+            "■ エラー 発生8件(回復0・最終失敗0・記録なし8)",
+            "  記録なし対象: 4265, 2764",
         ]
         assert "localhost" not in message and "{" not in message
         assert "■ A. ペーパートレード実績" in message and "■ B. 戦略の答え合わせ" in message
