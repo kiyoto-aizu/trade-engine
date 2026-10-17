@@ -1256,6 +1256,39 @@ def test_end_of_day_report_correlates_timeout_outcomes_and_separates_other_error
     }
 
 
+def test_end_of_day_notification_shows_timeout_outcomes_without_recovered_symbols(tmp_path):
+    messages = []
+    use_case = TradingUseCase(
+        token='dummy',
+        order_history_path=tmp_path / 'order_history.json',
+        notifier=messages.append,
+        daily_report_directory=tmp_path / 'reports',
+    )
+    use_case._daily_log_error_summary = lambda _today: {
+        'has_errors': True,
+        'count': 4,
+        'board_timeout': {
+            'count': 3, 'recovered': 1, 'final_failure': 1, 'unrecorded': 1,
+            'symbols': {
+                'recovered': ['AAA'],
+                'final_failure': ['BBB'],
+                'unrecorded': ['CCC'],
+            },
+        },
+        'other_errors': {
+            'count': 1, 'groups': [{'title': '日次レポート公開失敗', 'count': 1}],
+        },
+    }
+
+    use_case._send_end_of_day_report()
+
+    assert '■ エラー 発生3件(回復1・最終失敗1・記録なし1)' in messages[0]
+    assert '  最終失敗対象: BBB' in messages[0]
+    assert '  記録なし対象: CCC' in messages[0]
+    assert 'AAA' not in messages[0]
+    assert '・その他エラー 1件' in messages[0]
+
+
 def test_end_of_day_report_includes_atr_danger_skip_outcome(tmp_path):
     messages = []
     use_case = TradingUseCase(

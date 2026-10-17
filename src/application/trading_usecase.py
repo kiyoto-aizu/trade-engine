@@ -56,7 +56,7 @@ from src.domain.no_trade_reason import classify_no_trade_reason
 from src.infrastructure.persistence.decision_journal_repository import STAGE_TRADING
 from src.infrastructure.analysis.daily_analyzer import create_daily_analyzer
 from src.application.shadow_position_tracker import ShadowPosition, resolve_reference
-from src.application.error_summary import daily_error_notification_lines, error_section_lines, group_errors
+from src.application.error_summary import daily_error_notification_lines, group_errors
 
 MAX_UNIQUE_ERROR_MESSAGES = 50
 _BOARD_TIMEOUT_LOG = re.compile(r"/board/(?P<symbol>[^@/\s]+)@\d+.*Read timed out")
@@ -2005,9 +2005,7 @@ class TradingUseCase:
             f"{item.get('Symbol', '')}({float(item.get('ProfitLoss', 0) or 0):+.0f}円)"
             for item in self.last_positions
         ]
-        error_lines = error_section_lines(
-            log_error_summary.get("unique_messages") or [], log_error_summary.get("count")
-        )
+        error_lines = daily_error_notification_lines(log_error_summary)
         liquidation_results = self._liquidation_results
         liquidation_detail = "、".join(
             f"{item['symbol']}:{item['status']}" for item in liquidation_results
