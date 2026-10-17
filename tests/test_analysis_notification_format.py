@@ -173,7 +173,7 @@ def _timeout_message(symbol):
     )
 
 
-def test_daily_errors_are_aggregated_without_url_and_keep_total_count():
+def test_daily_legacy_timeout_errors_are_marked_unrecorded_without_url():
     report = _report_1007(
         log_errors={
             "count": 8,
@@ -182,14 +182,45 @@ def test_daily_errors_are_aggregated_without_url_and_keep_total_count():
     )
 
     lines = daily_notification_lines(report, None, cache_update_ok=True, analysis=None)
-    section = lines[lines.index("■ エラー 8件"):][:3]
+    section = lines[lines.index("■ エラー 発生8件(回復0・最終失敗0・記録なし8)"):][:2]
 
     assert section == [
-        "■ エラー 8件",
-        "・板情報GETタイムアウト(read timeout=10秒)",
-        "  対象: 4265, 2764",
+        "■ エラー 発生8件(回復0・最終失敗0・記録なし8)",
+        "  記録なし対象: 4265, 2764",
     ]
     assert not any("localhost" in line or "http" in line for line in lines)
+
+
+def test_daily_timeout_errors_show_only_unresolved_symbols():
+    report = _report_1007(
+        log_errors={
+            "count": 4,
+            "board_timeout": {
+                "count": 3, "recovered": 2, "final_failure": 1, "unrecorded": 0,
+                "symbols": {"recovered": ["AAA", "BBB"], "final_failure": ["CCC"], "unrecorded": []},
+            },
+            "other_errors": {"count": 1, "groups": [{"title": "日次レポート公開失敗", "count": 1}]},
+        }
+    )
+
+    lines = daily_notification_lines(report, None, cache_update_ok=True, analysis=None)
+
+    assert "■ エラー 発生3件(回復2・最終失敗1・記録なし0)" in lines
+    assert "  最終失敗対象: CCC" in lines
+    assert not any("AAA" in line or "BBB" in line for line in lines)
+    assert "・その他エラー 1件" in lines
+    assert "  日次レポート公開失敗: 1件" in lines
+
+
+def test_daily_market_line_marks_nikkei_fallback():
+    lines = daily_notification_lines(
+        _report_1007(market_conditions={
+            "regime": "DANGER", "nikkei_change_percent": -2.0, "nikkei_fallback_used": True,
+        }),
+        None, cache_update_ok=True, analysis=None,
+    )
+
+    assert "・市場状態: DANGER(日経 -2.00%、分足で補完)" in lines
 
 
 def test_price_band_source_is_marked_once_with_footnote():

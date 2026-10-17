@@ -26,6 +26,8 @@ _PATH_PATTERN = re.compile(r"^(?:https?://[^/]+)?/kabusapi/(?P<path>[^?#]*)")
 _SYMBOL_PATTERN = re.compile(r"^(?P<symbol>[^@/]+)@\d+$")
 _TIMEOUT_SECONDS_PATTERN = re.compile(r"read timeout=(\d+(?:\.\d+)?)")
 _STATUS_PATTERN = re.compile(r"\b([1-5]\d\d)\s+(?:Client|Server)\s+Error")
+_BOARD_TIMEOUT_PATTERN = re.compile(r"/board/(?P<symbol>[^@/]+)@\d+.*Read timed out")
+_GROUPED_COUNT_PATTERN = re.compile(r"(?P<count>\d+)件")
 
 _ENDPOINT_LABELS = {"board": "板情報"}
 
@@ -103,6 +105,117 @@ def group_errors(messages: list[str]) -> list[ErrorGroup]:
 
     ordered = sorted(groups.values(), key=lambda group: -group["count"])
     return [ErrorGroup(g["title"], g["count"], tuple(g["symbols"])) for g in ordered]
+
+
+def normalize_daily_errors(errors: dict | None) -> dict:
+    """新旧日次レポートのエラー情報を通知・期間集計用の形に揃える。"""
+    errors = errors if isinstance(errors, dict) else {}
+    total_count = int(errors.get("count") or 0)
+    timeout = errors.get("board_timeout")
+    other = errors.get("other_errors")
+    if isinstance(timeout, dict) and isinstance(other, dict):
+        return {
+            "count": total_count,
+            "board_timeout": {
+                "count": int(timeout.get("count") or 0),
+                "recovered": int(timeout.get("recovered") or 0),
+                "final_failure": int(timeout.get("final_failure") or 0),
+                "unrecorded": int(timeout.get("unrecorded") or 0),
+                "symbols": {
+                    name: list((timeout.get("symbols") or {}).get(name) or [])
+                    for name in ("recovered", "final_failure", "unrecorded")
+                },
+            },
+            "other_errors": {
+                "count": int(other.get("count") or 0),
+                "groups": [
+                    {
+                        "title": str(item.get("title") or "その他エラー"),
+                        "count": int(item.get("count") or 0),
+                    }
+                    for item in other.get("groups") or []
+                    if isinstance(item, dict)
+                ],
+            },
+        }
+
+    messages = errors.get("unique_messages") or errors.get("summaries") or []
+    messages = [str(item) for item in messages]
+    grouped_summaries = [str(item) for item in errors.get("grouped_summaries") or []]
+    timeout_messages = [message for message in messages if _BOARD_TIMEOUT_PATTERN.search(message)]
+    symbols = list(dict.fromkeys(
+        match.group("symbol")
+        for message in timeout_messages
+        if (match := _BOARD_TIMEOUT_PATTERN.search(message))
+    ))
+    timeout_count = 0
+    other_count = 0
+    groups = []
+    if grouped_summaries:
+        for summary in grouped_summaries:
+            match = _GROUPED_COUNT_PATTERN.search(summary)
+            count = int(match.group("count")) if match else 1
+            if "タイムアウト" in summary and ("板情報" in summary or "板取得" in summary):
+                timeout_count += count
+            else:
+                other_count += count
+                groups.append({
+                    "title": "日次レポート公開失敗" if "日次レポートの公開に失敗" in summary else "その他エラー",
+                    "count": count,
+                })
+    elif timeout_messages and len(timeout_messages) == len(messages):
+        timeout_count = total_count
+    elif timeout_messages:
+        timeout_count = len(timeout_messages)
+        other_count = max(0, total_count - timeout_count)
+        if other_count:
+            groups.append({"title": "詳細未記録", "count": other_count})
+    else:
+        other_count = total_count
+        if other_count:
+            groups.append({"title": "詳細未記録", "count": other_count})
+
+    timeout_count = min(timeout_count, total_count)
+    other_count = max(0, total_count - timeout_count)
+    if other_count and not groups:
+        groups.append({"title": "詳細未記録", "count": other_count})
+    return {
+        "count": total_count,
+        "board_timeout": {
+            "count": timeout_count,
+            "recovered": 0,
+            "final_failure": 0,
+            "unrecorded": timeout_count,
+            "symbols": {"recovered": [], "final_failure": [], "unrecorded": symbols},
+        },
+        "other_errors": {"count": other_count, "groups": groups},
+    }
+
+
+def daily_error_notification_lines(errors: dict | None) -> list[str]:
+    normalized = normalize_daily_errors(errors)
+    timeout = normalized["board_timeout"]
+    other = normalized["other_errors"]
+    if not normalized["count"]:
+        return ["■ エラー なし"]
+    if timeout["count"]:
+        lines = [
+            f"■ エラー 発生{timeout['count']}件"
+            f"(回復{timeout['recovered']}・最終失敗{timeout['final_failure']}・記録なし{timeout['unrecorded']})"
+        ]
+        for outcome, label in (("final_failure", "最終失敗"), ("unrecorded", "記録なし")):
+            outcome_symbols = timeout["symbols"][outcome]
+            if outcome_symbols:
+                lines.append(f"  {label}対象: {', '.join(outcome_symbols)}")
+    else:
+        lines = [f"■ エラー {other['count']}件"]
+    if other["count"]:
+        lines.append(f"・その他エラー {other['count']}件")
+        lines.extend(
+            f"  {group['title']}: {group['count']}件"
+            for group in other["groups"]
+        )
+    return lines
 
 
 def error_section_lines(messages: list[str], total: int | None = None) -> list[str]:

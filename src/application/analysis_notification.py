@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import date
 import re
 
-from src.application.error_summary import error_section_lines
+from src.application.error_summary import daily_error_notification_lines, error_section_lines
 from src.application.trend_check_report import aggregate
 from src.application.price_band_trend_check import (
     price_band_has_reference,
@@ -237,22 +237,21 @@ def daily_paper_lines(report: dict | None) -> list[str]:
     market = report.get("market_conditions") or {}
     positions = report.get("positions") or []
     regime = market.get("regime") or market.get("assessment_status") or "不明"
+    fallback_note = "、分足で補完" if market.get("nikkei_fallback_used") else ""
     return [
         f"・損益: 実現 {float(report.get('realized_profit_loss') or 0):+.0f}円 / "
         f"評価 {float(report.get('unrealized_profit_loss') or 0):+.0f}円",
         f"・約定 {int(report.get('order_count') or 0)}件 / 保有 {len(positions)}銘柄",
-        f"・市場状態: {regime}({_nikkei_text(market)})",
+        f"・市場状態: {regime}({_nikkei_text(market)}{fallback_note})",
         *_skip_lines(report),
     ]
 
 
 def daily_error_lines(report: dict | None) -> list[str]:
-    """日次レポートのエラーを「■ エラー N件」へ集約する。レポートなしなら何も出さない。"""
+    """日次レポートの板タイムアウト結果とその他エラーを分けて表示する。"""
     if report is None:
         return []
-    errors = report.get("log_errors") or {}
-    messages = errors.get("unique_messages") or errors.get("summaries") or []
-    return error_section_lines([str(item) for item in messages], int(errors.get("count") or 0))
+    return daily_error_notification_lines(report.get("log_errors"))
 
 
 _MINUTE_BAR_PREFIX = "分足 "

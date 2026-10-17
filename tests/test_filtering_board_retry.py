@@ -7,6 +7,7 @@ import pytest
 from src.application import filtering_usecase as filtering_usecase_module
 from src.application.filtering_usecase import BoardRetryPolicy, FilteringDeadlineExceeded, FilteringUseCase
 from src.config import config
+from src.domain.board_request_context import current_board_request_id
 from src.infrastructure.kabu.registration_aware_board_cache import RegistrationAwareBoardCache
 
 
@@ -45,12 +46,14 @@ class _FakeApi:
     def __init__(self, scripts, clock=None):
         self.scripts = {symbol: list(items) for symbol, items in scripts.items()}
         self.calls = []
+        self.request_ids = {}
         self.clock = clock
         self.lock = threading.Lock()
 
     def get_current_board_for_diagnostics(self, symbol):
         with self.lock:
             self.calls.append(symbol)
+            self.request_ids.setdefault(symbol, []).append(current_board_request_id())
             if self.clock is not None:
                 self.clock.now += 1
             items = self.scripts[symbol]
@@ -119,6 +122,8 @@ def test_retry_recovers_missing_board_and_scores_it():
     assert out.summary["board_api_metrics"]["max_concurrency_configured"] == config.FILTER_BOARD_MAX_CONCURRENCY
     assert out.summary["board_run_api_metrics"]["fetch_count"] == 3
     assert out.sleeps == [10.0]
+    assert len(set(out.api.request_ids["A"])) == 1
+    assert out.api.request_ids["A"][0] is not None
 
 
 def test_retry_uses_price_times_volume_when_value_missing():
@@ -328,6 +333,5 @@ def test_timeout_warning_reports_evaluated_partial_and_unprocessed_counts(monkey
         if record.getMessage().startswith("価格帯別フィルタを時間切れで打ち切りました:")
     )
     assert "evaluated=0 skipped=0 partial=1 unprocessed=1 time_limit=2" in warning
-
 
 

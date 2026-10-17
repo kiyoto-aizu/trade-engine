@@ -2,6 +2,9 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from threading import Condition
 from time import perf_counter
+from uuid import uuid4
+
+from src.domain.board_request_context import board_request_context
 
 
 class _FetchNotStarted(Exception):
@@ -35,6 +38,7 @@ class RegistrationAwareBoardCache:
         self._fetch_meta: dict[str, dict] = {}
         self._retry_meta: dict[str, dict] = {}
         self._first_fetch_at: dict[str, float] = {}
+        self._request_ids: dict[str, str] = {}
         self._last_fetch_at: float | None = None
         # 遅さの原因調査用。板取得1件ごとの時刻・所要時間・登録数を、取得中の価格帯ラベル付きで残す
         self.current_band: str | None = None
@@ -75,6 +79,10 @@ class RegistrationAwareBoardCache:
     def get_retry_meta(self, symbol) -> dict | None:
         with self._condition:
             return self._retry_meta.get(str(symbol))
+
+    def get_request_id(self, symbol) -> str | None:
+        with self._condition:
+            return self._request_ids.get(str(symbol))
 
     def get_metrics_snapshot(self) -> dict:
         with self._condition:
@@ -159,6 +167,7 @@ class RegistrationAwareBoardCache:
 
                 future = Future()
                 self._inflight[key] = future
+                request_id = self._request_ids.setdefault(key, uuid4().hex)
                 request_count_before = self._requests_since_clear
                 self._requests_since_clear += 1
                 self.fetch_count += 1
@@ -175,6 +184,7 @@ class RegistrationAwareBoardCache:
                 if force:
                     first = self._first_fetch_at.get(key)
                     self._retry_meta[key] = {
+                        "request_id": request_id,
                         "retry_fetch_seq": fetch_sequence,
                         "retry_requests_since_clear": request_count_before,
                         "retry_preceded_by_registration_clear": cleared_for_request,
@@ -185,6 +195,7 @@ class RegistrationAwareBoardCache:
                     }
                 else:
                     self._fetch_meta[key] = {
+                        "request_id": request_id,
                         "board_fetch_seq": fetch_sequence,
                         "requests_since_clear": request_count_before,
                         "seconds_since_last_clear": round(self.seconds_since_last_clear, 3),
@@ -201,7 +212,8 @@ class RegistrationAwareBoardCache:
         diagnostic_getter = getattr(self.board_client, "get_current_board_for_diagnostics", None)
         fetch = diagnostic_getter or self.board_client.get_current_board
         try:
-            board = fetch(symbol)
+            with board_request_context(request_id):
+                board = fetch(symbol)
         except Exception as exc:
             with self._condition:
                 elapsed_ms = (perf_counter() - started) * 1000

@@ -268,6 +268,18 @@ class FilteringUseCase:
             for record, _symbol in retry_pending:
                 if id(record) not in handled:
                     finalize_missing(record)
+            request_id_getter = getattr(self.board_client, "get_request_id", None)
+            if callable(request_id_getter):
+                for record, symbol in retry_pending:
+                    request_id = request_id_getter(symbol)
+                    if request_id:
+                        outcome = "recovered" if record.get("retry_succeeded") else "final_failure"
+                        logger.info(
+                            "板取得リトライ結果: request_id=%s outcome=%s symbol=%s",
+                            request_id,
+                            outcome,
+                            symbol,
+                        )
 
         if screening:
             for index, symbol in enumerate(screening.symbols):

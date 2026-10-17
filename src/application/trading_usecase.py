@@ -10,6 +10,7 @@ import json
 import hashlib
 import inspect
 import math
+import re
 import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -55,9 +56,15 @@ from src.domain.no_trade_reason import classify_no_trade_reason
 from src.infrastructure.persistence.decision_journal_repository import STAGE_TRADING
 from src.infrastructure.analysis.daily_analyzer import create_daily_analyzer
 from src.application.shadow_position_tracker import ShadowPosition, resolve_reference
-from src.application.error_summary import error_section_lines
+from src.application.error_summary import daily_error_notification_lines, error_section_lines, group_errors
 
 MAX_UNIQUE_ERROR_MESSAGES = 50
+_BOARD_TIMEOUT_LOG = re.compile(r"/board/(?P<symbol>[^@/\s]+)@\d+.*Read timed out")
+_REQUEST_ID_LOG = re.compile(r"\brequest_id=(?P<request_id>[a-f0-9]+)\b")
+_RETRY_OUTCOME_LOG = re.compile(
+    r"板取得リトライ結果: request_id=(?P<request_id>[a-f0-9]+) "
+    r"outcome=(?P<outcome>recovered|final_failure) symbol=(?P<symbol>\S+)"
+)
 
 logger = logging.getLogger(__name__)
 JST = timezone(timedelta(hours=9))
@@ -1648,13 +1655,23 @@ class TradingUseCase:
     # ================================================================================
 
     def _daily_log_error_summary(self, today: str) -> dict:
-        """当日のログからエラーの有無と代表的な概要だけを集計します。"""
+        """当日のエラーと、板タイムアウトの追跡可能な再取得結果を集計します。"""
         patterns = (" ERROR ", "異常終了", "予期しないエラー")
         messages = []
+        timeout_events = []
+        retry_outcomes = {}
         for path in Path(config.LOG_DIRECTORY).glob("trade_project.log*"):
             try:
                 for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-                    if not line.startswith(today) or not any(pattern in line for pattern in patterns):
+                    if not line.startswith(today):
+                        continue
+                    retry_match = _RETRY_OUTCOME_LOG.search(line)
+                    if retry_match:
+                        retry_outcomes[retry_match["request_id"]] = (
+                            retry_match["outcome"],
+                            retry_match["symbol"],
+                        )
+                    if not any(pattern in line for pattern in patterns):
                         continue
                     try:
                         logged_at = datetime.strptime(line[:19], "%Y-%m-%d %H:%M:%S")
@@ -1667,15 +1684,58 @@ class TradingUseCase:
                         config.MARKET_CLOSE_HOUR,
                         config.MARKET_CLOSE_MINUTE,
                     ):
-                        messages.append(line.split(": ", 1)[-1].strip())
+                        message = line.split(": ", 1)[-1].strip()
+                        messages.append(message)
+                        if timeout_match := _BOARD_TIMEOUT_LOG.search(message):
+                            request_match = _REQUEST_ID_LOG.search(message)
+                            timeout_events.append({
+                                "symbol": timeout_match["symbol"],
+                                "request_id": request_match["request_id"] if request_match else None,
+                            })
             except OSError:
                 logger.warning("日次ログを読み込めません: %s", path)
         counts = Counter(messages)
+        timeout_counts = Counter()
+        timeout_symbols = {name: set() for name in ("recovered", "final_failure", "unrecorded")}
+        for event in timeout_events:
+            outcome = retry_outcomes.get(event["request_id"], (None, None))[0]
+            category = outcome if outcome in {"recovered", "final_failure"} else "unrecorded"
+            timeout_counts[category] += 1
+            timeout_symbols[category].add(event["symbol"])
+        non_timeout_messages = [
+            message for message in messages if not _BOARD_TIMEOUT_LOG.search(message)
+        ]
+        other_groups = group_errors(non_timeout_messages)
+        other_group_data = [
+            {
+                "title": (
+                    "日次レポート公開失敗"
+                    if "日次レポートの公開に失敗" in group.title
+                    else group.title
+                ),
+                "count": group.count,
+            }
+            for group in other_groups
+        ]
         return {
             "has_errors": bool(messages),
             "count": len(messages),
             "summaries": [message for message, _ in counts.most_common(5)],
             "unique_messages": list(counts)[:MAX_UNIQUE_ERROR_MESSAGES],
+            "board_timeout": {
+                "count": len(timeout_events),
+                "recovered": timeout_counts["recovered"],
+                "final_failure": timeout_counts["final_failure"],
+                "unrecorded": timeout_counts["unrecorded"],
+                "symbols": {
+                    name: sorted(symbols)
+                    for name, symbols in timeout_symbols.items()
+                },
+            },
+            "other_errors": {
+                "count": len(non_timeout_messages),
+                "groups": other_group_data,
+            },
         }
 
     def _record_atr_danger_skip(self, symbol: str, observed_at: datetime, price: float, assessment, quantity: int) -> None:
@@ -1837,9 +1897,10 @@ class TradingUseCase:
         lines.append(f"評価損益: {total_unrealized_pnl}円")
         lines.append(f"合計損益: {daily_realized_pnl + total_unrealized_pnl}円")
         lines.append("--- エラー概要 ---")
+        error_lines = daily_error_notification_lines(log_error_summary)
         if log_error_summary["has_errors"]:
-            lines.append(f"エラーあり: {log_error_summary['count']}件")
-            lines.extend(f"- {summary}" for summary in log_error_summary["summaries"])
+            lines.append("エラーあり: " + error_lines[0].removeprefix("■ エラー "))
+            lines.extend(f"- {line.lstrip('・')}" for line in error_lines[1:])
         else:
             lines.append("エラーなし")
         if atr_danger_skips:
@@ -1876,6 +1937,9 @@ class TradingUseCase:
                 else None
             ),
             "failure_reason": getattr(market_assessment, "failure_reason", None),
+            "nikkei_fallback_used": bool(
+                getattr(market_assessment, "nikkei_fallback_dates", ())
+            ),
         }
         no_trade_reason = self._classify_no_trade_reason(
             today, len(daily_orders), atr_danger_skips,

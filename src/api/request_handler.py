@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import requests
 
 from src.config import config
+from src.domain.board_request_context import current_board_request_id
 
 logger = logging.getLogger(__name__)
 _request_lock = threading.Lock()
@@ -62,12 +63,17 @@ def _record_rate_limit_metric(url: str, metric: str) -> None:
 
 def _log_request_error(url, error, error_label) -> None:
     response_text = None
+    request_id = current_board_request_id()
+    request_context = f" | request_id={request_id}" if request_id else ""
     if hasattr(error, 'response') and getattr(error, 'response') is not None:
         response_text = getattr(error.response, 'text', None)
     if response_text:
-        logger.error("❌ [%s] URL: %s | 理由: %s | レスポンス: %s", error_label, url, error, response_text)
+        logger.error(
+            "❌ [%s] URL: %s | 理由: %s | レスポンス: %s%s",
+            error_label, url, error, response_text, request_context,
+        )
     else:
-        logger.error("❌ [%s] URL: %s | 理由: %s", error_label, url, error)
+        logger.error("❌ [%s] URL: %s | 理由: %s%s", error_label, url, error, request_context)
 
 
 def _request_once(requests_func, url, timeout, **kwargs):

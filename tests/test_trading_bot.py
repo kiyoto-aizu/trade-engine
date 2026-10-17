@@ -1140,6 +1140,7 @@ def test_end_of_day_report_keeps_market_conditions_in_data_but_not_notification(
         'adx': 24.0,
         'data_available': True,
         'failure_reason': None,
+        'nikkei_fallback_used': False,
     }
     assert report['orders'][0]['atr'] == 3.2
     assert report['orders'][0]['atr_level'] == 'CAUTION'
@@ -1170,6 +1171,7 @@ def test_end_of_day_report_marks_market_conditions_not_evaluated(tmp_path):
         'adx': None,
         'data_available': None,
         'failure_reason': None,
+        'nikkei_fallback_used': False,
     }
 
 
@@ -1216,6 +1218,42 @@ def test_end_of_day_report_counts_only_errors_during_trading_session(monkeypatch
 
     assert summary['count'] == 2
     assert summary['summaries'] == ['opening error', 'closing error']
+
+
+def test_end_of_day_report_correlates_timeout_outcomes_and_separates_other_errors(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(config, 'LOG_DIRECTORY', tmp_path)
+    today = '2026-09-25'
+    (tmp_path / 'trade_project.log').write_text(
+        f'{today} 09:10:00,000 ERROR src.api: GET /board/AAA@1 Read timed out request_id=aaa111\n'
+        f'{today} 09:10:01,000 INFO src.filter: 板取得リトライ結果: request_id=aaa111 outcome=recovered symbol=AAA\n'
+        f'{today} 09:11:00,000 ERROR src.api: GET /board/BBB@1 Read timed out request_id=bbb222\n'
+        f'{today} 09:11:01,000 INFO src.filter: 板取得リトライ結果: request_id=bbb222 outcome=final_failure symbol=BBB\n'
+        f'{today} 09:12:00,000 ERROR src.api: GET /board/CCC@1 Read timed out\n'
+        f'{today} 09:13:00,000 ERROR src.report: 日次レポートの公開に失敗しました\n',
+        encoding='utf-8',
+    )
+    use_case = TradingUseCase(token='dummy', order_history_path=tmp_path / 'order_history.json')
+
+    summary = use_case._daily_log_error_summary(today)
+
+    assert summary['count'] == 4
+    assert summary['board_timeout'] == {
+        'count': 3,
+        'recovered': 1,
+        'final_failure': 1,
+        'unrecorded': 1,
+        'symbols': {
+            'recovered': ['AAA'],
+            'final_failure': ['BBB'],
+            'unrecorded': ['CCC'],
+        },
+    }
+    assert summary['other_errors'] == {
+        'count': 1,
+        'groups': [{'title': '日次レポート公開失敗', 'count': 1}],
+    }
 
 
 def test_end_of_day_report_includes_atr_danger_skip_outcome(tmp_path):

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import requests
 
 from src.api import request_handler
+from src.domain.board_request_context import board_request_context
 from src.infrastructure.notification import slack_notify
 
 
@@ -88,3 +89,17 @@ def test_board_429_exhaustion_returns_none_and_non_board_429_is_not_retried(monk
     calls.clear()
     assert request_handler.send_get("http://localhost/kabusapi/wallet/cash") is None
     assert len(calls) == 1
+
+
+def test_read_timeout_log_keeps_board_request_correlation_id(monkeypatch, caplog):
+    def timed_out(_url, **_kwargs):
+        raise requests.ReadTimeout("read timeout=10")
+
+    monkeypatch.setattr(request_handler, "_wait_for_request_slot", lambda: None)
+    monkeypatch.setattr(request_handler.requests, "get", timed_out)
+
+    with board_request_context("abc123"):
+        assert request_handler.send_get("http://localhost/kabusapi/board/7203@1") is None
+
+    assert "read timeout=10" in caplog.text
+    assert "request_id=abc123" in caplog.text
