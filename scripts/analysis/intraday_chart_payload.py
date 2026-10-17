@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from datetime import datetime
 from pathlib import Path
@@ -166,7 +167,49 @@ def _skipped_signal_check(item: dict, skip: dict) -> dict:
     }
 
 
+MIN_AXIS_SPAN_RATIO = 0.04
+
+
+def _axis(payload: dict) -> dict | None:
+    """Integer-yen y axis covering everything the chart plots, with a minimum span."""
+    values = [row[1] for row in payload["bars"]]
+    if not values:
+        return None
+    for key in ("entry", "stop"):
+        if payload.get(key):
+            values.append(payload[key])
+    values.extend(row[1] for row in payload["trailing"])
+    values.extend(row["price"] for row in payload["skips"] if row.get("price"))
+    for key in ("sells",):
+        values.extend(row["price"] for row in payload[key] if row.get("price"))
+    if payload["buy"] and payload["buy"].get("price"):
+        values.append(payload["buy"]["price"])
+    check = payload["entry_check"] or {}
+    for key in ("upper_band", "stop"):
+        if check.get(key):
+            values.append(check[key])
+    if check.get("skip") and check["skip"].get("price"):
+        values.append(check["skip"]["price"])
+    values.extend(row[1] for row in check.get("line", []))
+    low, high = min(values), max(values)
+    middle = (low + high) / 2
+    span = max(high - low, middle * MIN_AXIS_SPAN_RATIO, 4.0)
+    pad = span * 0.06
+    low = middle - span / 2 - pad
+    high = middle + span / 2 + pad
+    raw = max((high - low) / 5, 1)
+    power = 10 ** math.floor(math.log10(raw))
+    step = int(next(unit * power for unit in (1, 2, 5, 10) if unit * power >= raw))
+    return {"low": math.floor(low), "high": math.ceil(high), "step": step}
+
+
 def _symbol_payload(report: dict, item: dict) -> dict:
+    payload = _build_symbol_payload(report, item)
+    payload["axis"] = _axis(payload)
+    return payload
+
+
+def _build_symbol_payload(report: dict, item: dict) -> dict:
     symbol = str(item["symbol"])
     bars = item["bars"]
     bought = item["buy"] is not None and item["entry"] is not None

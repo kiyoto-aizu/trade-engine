@@ -199,6 +199,11 @@
       const digits = step % 1 === 0 ? 0 : (Math.round(step * 10) / 10 === step ? 1 : 2);
       return { ticks, digits };
     }
+    function axisTicks(axis) {
+      const ticks = [];
+      for (let value = Math.ceil(axis.low / axis.step) * axis.step; value <= axis.high; value += axis.step) ticks.push(value);
+      return { ticks, digits: 0 };
+    }
     function holdEnd(symbol) {
       const sold = (symbol.sells || [])[0];
       if (sold) return position(sold.time);
@@ -240,11 +245,13 @@
       if (!(high > low)) { low -= 1; high += 1; }
       const pad = (high - low) * 0.06;
       low -= pad; high += pad;
+      const axis = symbol.axis || null;
+      if (axis) { low = axis.low; high = axis.high; }
       const Y = (value) => T + (1 - (value - low) / (high - low)) * plotH;
       const wrap = el("div", undefined, "chart-wrap");
       const svg = svgEl(wrap, "svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${symbol.symbol} の株価推移` });
       svg.classList.add("chart");
-      const { ticks, digits } = niceTicks(low, high);
+      const { ticks, digits } = axis ? axisTicks(axis) : niceTicks(low, high);
       for (const tick of ticks) {
         svgEl(svg, "line", { x1: L, x2: W - R, y1: Y(tick), y2: Y(tick), class: "grid" });
         const label = svgEl(svg, "text", { x: L - 4, y: Y(tick) + 4, class: "axis", "text-anchor": "end" });
@@ -434,7 +441,6 @@
         );
         card.append(metrics);
       } else {
-        card.append(el("p", "買いなし", "no-buy"));
         if (symbol.entry_check && symbol.entry_check.pattern !== 3) card.append(entryCheckMetrics(symbol.entry_check));
         if (symbol.entry_check && symbol.entry_check.pattern === 3) card.append(hypotheticalBlock(symbol.entry_check));
       }

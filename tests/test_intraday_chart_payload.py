@@ -201,6 +201,27 @@ def test_pattern1_rsi_ok_reports_closest_approach_to_upper_band():
     assert check["details"]["source"] == {"upper_band": "recomputed", "rsi": "recomputed", "rsi_threshold": "recomputed"}
 
 
+def test_axis_is_integer_yen_with_minimum_span_for_low_range_symbol():
+    # 4883相当: 値幅が小さい銘柄でも整数の円で、株価の数%以上の幅を持つ
+    item = _checked_item("4883", [29.0, 29.25, 29.5, 29.25], RISING)
+    axis = payload_module.build_chart_payload(_report([item], condition_regime="CAUTION"), details=True)["symbols"][0]["axis"]
+
+    assert all(isinstance(axis[key], int) for key in ("low", "high", "step"))
+    assert axis["step"] >= 1
+    assert axis["high"] - axis["low"] >= 29.25 * payload_module.MIN_AXIS_SPAN_RATIO
+    assert axis["low"] <= 29.0 and axis["high"] >= 29.5
+
+
+def test_axis_covers_condition_lines_and_is_none_without_bars():
+    band = payload_module.entry_condition.calculate_price_limit(RISING).upper_band
+    item = _checked_item("1111", [band - 5, band - 3], RISING)
+    data = payload_module.build_chart_payload(_report([item, _item("0000")], condition_regime="CAUTION"), details=True)
+    by_symbol = {row["symbol"]: row for row in data["symbols"]}
+
+    assert by_symbol["1111"]["axis"]["high"] >= band
+    assert by_symbol["0000"]["axis"] is None
+
+
 def test_pattern2_rsi_short_has_no_gap():
     check = _check(_checked_item("2222", [100, 101], FALLING))
 
@@ -309,4 +330,5 @@ def test_payload_with_entry_checks_stays_within_publication_validation(tmp_path)
     payload_module.write_chart_payload(report, tmp_path / publication.CHART_DATA_NAME)
 
     assert publication.public_chart_data(tmp_path, datetime(2026, 10, 6).date()) is not None
+
 
