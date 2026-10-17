@@ -66,3 +66,6 @@ def test_monthly_analyzer_uses_period_aware_review_prompt(monkeypatch):
     assert "comparison.availableがtrue" in prompt
     assert "same_dayの当日基準だけ" in prompt
     assert "複数営業日基準は使わない" in prompt
+    assert "board_timeout.recoveredは問題なし" in prompt
+    assert "final_failureとunrecordedだけ" in prompt
+    assert "ログ本文は入力に含まれていません" in prompt

@@ -440,6 +440,17 @@ def test_period_review_prompt_uses_only_same_day_results_and_avoids_repeated_num
             "reports": [
                 {
                     "market_assessment_status": "available",
+                    "log_errors": {
+                        "board_timeout": {
+                            "count": 2, "recovered": 1, "final_failure": 1, "unrecorded": 0,
+                            "symbols": {
+                                "recovered": ["RECOVERED"],
+                                "final_failure": ["FAILED"],
+                                "unrecorded": [],
+                            },
+                        }
+                    },
+                    "log_error_summaries": ["raw log text must not reach the reviewer"],
                     "skip_evaluations": {
                         "注意レジームRSI": [{
                             "evaluations": {
@@ -464,6 +475,10 @@ def test_period_review_prompt_uses_only_same_day_results_and_avoids_repeated_num
     assert '"multi_day"' not in prompt
     assert "複数営業日結果" not in prompt
     assert '"outcome": "当日結果"' in prompt
+    assert '"recovered": []' in prompt
+    assert "raw log text" not in prompt
+    assert "RECOVERED" not in prompt
+    assert "FAILED" in prompt
     assert "比較対象なし" in prompt
     assert "通知本文のA・Bに表示済みの数値は再掲せず" in prompt
     assert "割合は%表記" in prompt

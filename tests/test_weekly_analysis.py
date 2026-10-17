@@ -126,6 +126,9 @@ def test_weekly_analyzer_uses_required_review_prompt(monkeypatch):
     assert "comparison.availableがtrue" in prompt
     assert "same_dayの当日基準だけ" in prompt
     assert "複数営業日基準は使わない" in prompt
+    assert "board_timeout.recoveredは問題なし" in prompt
+    assert "final_failureとunrecordedだけ" in prompt
+    assert "ログ本文は入力に含まれていません" in prompt
     assert "投資判断、売買指示は行わず" in prompt
     assert "参考意見" in prompt
 
@@ -180,6 +183,9 @@ def test_daily_analyzer_prompt_uses_event_agnostic_review_contract(monkeypatch):
     assert "運用・データ状態" in prompt
     assert "skip_countsが空でない場合" in prompt
     assert "assessment_statusがnot_evaluated" in prompt
+    assert "log_errors.board_timeout.recoveredは問題なし" in prompt
+    assert "nikkei_daily_data.statusが補完で取得" in prompt
+    assert "日経225日足の遅延と板タイムアウトは別の事象" in prompt
     assert "複数営業日基準の結果は扱わない" in prompt
     assert "trend_check.availableがfalse" in prompt
     assert "future_control_skips" not in prompt

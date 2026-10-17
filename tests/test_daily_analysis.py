@@ -181,8 +181,49 @@ def test_body_and_llm_input_use_the_same_no_trade_reason_label(monkeypatch, tmp_
 
     label = "買い条件に届かず(売りシグナルだが未保有あり)"
     assert inputs[0]["no_trade_reason"] == {"reason": label}
+    assert inputs[0]["nikkei_daily_data"]["status"] == "判定不可"
+    assert inputs[0]["log_errors"]["recorded"] is False
     assert f"・売買0件の理由: {label}" in notifications[0]
     assert "SELL_SIGNAL_WITHOUT_HOLDINGS" not in notifications[0]
+
+
+def test_llm_log_errors_excludes_recovered_symbols_and_limits_unresolved_targets():
+    data = run_daily_analysis._llm_log_errors({
+        "count": 4,
+        "board_timeout": {
+            "count": 3, "recovered": 1, "final_failure": 1, "unrecorded": 1,
+            "symbols": {
+                "recovered": ["RECOVERED"],
+                "final_failure": ["FAILED"],
+                "unrecorded": ["UNKNOWN"],
+            },
+        },
+        "other_errors": {
+            "count": 1, "groups": [{"title": "日次レポート公開失敗", "count": 1}],
+        },
+    })
+
+    assert data["has_errors"] is True
+    assert data["board_timeout"] == {
+        "count": 3,
+        "recovered": {"count": 1, "status": "問題なし"},
+        "final_failure": {"count": 1, "symbols": ["FAILED"]},
+        "unrecorded": {"count": 1, "symbols": ["UNKNOWN"]},
+    }
+    assert "RECOVERED" not in str(data)
+    assert "http" not in str(data)
+
+
+def test_llm_nikkei_status_distinguishes_fallback_from_unavailable_and_unrecorded():
+    assert run_daily_analysis._llm_nikkei_daily_data({
+        "assessment_status": "available", "nikkei_fallback_used": True,
+    }) == {"status": "補完で取得", "failure_reason": None}
+    assert run_daily_analysis._llm_nikkei_daily_data({
+        "assessment_status": "unavailable", "failure_reason": "日経225日足の遅延",
+    }) == {"status": "判定不可", "failure_reason": "日経225日足の遅延"}
+    assert run_daily_analysis._llm_nikkei_daily_data({
+        "assessment_status": "available",
+    }) == {"status": "未記録", "failure_reason": None}
 
 
 def test_intraday_chart_generation_failure_is_logged_and_returns_notification_line(

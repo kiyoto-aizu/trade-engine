@@ -14,7 +14,7 @@ from src.application.analysis_notification import (
     daily_notification_lines,
     load_trend_check,
 )
-from src.application.error_summary import group_errors
+from src.application.error_summary import normalize_daily_errors
 from src.application.price_band_trend_check import (
     price_band_symbols_for_update,
     run_price_band_checks,
@@ -165,15 +165,48 @@ def generate_intraday_charts(
 
 
 def _llm_log_errors(errors: dict) -> dict:
-    """LLMへ渡すエラーは集約済みの概要だけにする(URLや接続先を含む生文言は渡さない)。"""
-    messages = errors.get("unique_messages") or errors.get("summaries") or []
+    """LLMへ未解決の板タイムアウトと、その他エラーの概要だけを渡す。"""
+    normalized = normalize_daily_errors(errors)
+    timeout = normalized["board_timeout"]
+    other = normalized["other_errors"]
+    unresolved_count = timeout["final_failure"] + timeout["unrecorded"]
     return {
-        "has_errors": bool(errors.get("has_errors") or errors.get("count")),
-        "count": errors.get("count", 0),
-        "groups": [
-            f"{group.title}(対象: {', '.join(group.symbols)})" if group.symbols else group.title
-            for group in group_errors([str(item) for item in messages])
-        ],
+        "recorded": normalized["recorded"],
+        "has_errors": bool(unresolved_count or other["count"]),
+        "count": normalized["count"],
+        "board_timeout": {
+            "count": timeout["count"],
+            "recovered": {"count": timeout["recovered"], "status": "問題なし"},
+            "final_failure": {
+                "count": timeout["final_failure"],
+                "symbols": timeout["symbols"]["final_failure"],
+            },
+            "unrecorded": {
+                "count": timeout["unrecorded"],
+                "symbols": timeout["symbols"]["unrecorded"],
+            },
+        },
+        "other_errors": other,
+    }
+
+
+def _llm_nikkei_daily_data(market_conditions: dict) -> dict:
+    status = market_conditions.get("assessment_status")
+    if status == "unavailable":
+        label = "判定不可"
+    elif status == "not_evaluated":
+        label = "未判定"
+    elif "nikkei_fallback_used" not in market_conditions:
+        label = "未記録"
+    elif market_conditions["nikkei_fallback_used"]:
+        label = "補完で取得"
+    elif status == "available":
+        label = "補完なしで取得"
+    else:
+        label = "未記録"
+    return {
+        "status": label,
+        "failure_reason": market_conditions.get("failure_reason") if status == "unavailable" else None,
     }
 
 
@@ -236,6 +269,7 @@ def run_daily_analysis(
         )
         no_trade_reason = resolve_no_trade_reason(report, paths, trade_date)
         analyzer = create_daily_analyzer()
+        market_conditions = dict((report or {}).get("market_conditions") or {})
         analysis_input = {
             "date": (report or {}).get("date", trade_date.isoformat()),
             "trading_mode": (report or {}).get("trading_mode"),
@@ -243,7 +277,8 @@ def run_daily_analysis(
             "realized_profit_loss": (report or {}).get("realized_profit_loss", 0),
             "unrealized_profit_loss": (report or {}).get("unrealized_profit_loss", 0),
             "positions": (report or {}).get("positions", []),
-            "market_conditions": (report or {}).get("market_conditions", {}),
+            "market_conditions": market_conditions,
+            "nikkei_daily_data": _llm_nikkei_daily_data(market_conditions),
             "log_errors": _llm_log_errors((report or {}).get("log_errors") or {}),
             "no_trade_reason": (
                 None

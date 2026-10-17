@@ -35,6 +35,7 @@ def _without_internal_period_data(value: Any) -> Any:
             if normalized_key in {
                 "market_assessment_status",
                 "market_assessment_status_counts",
+                "log_error_summaries",
             }:
                 continue
             if any(token in normalized_key for token in ("multi_day", "multi-day", "multiday")):
@@ -46,6 +47,13 @@ def _without_internal_period_data(value: Any) -> Any:
                 } if isinstance(same_day, dict) else {}
                 continue
             if key_text == "basis" and isinstance(item, str) and "複数営業日" in item:
+                continue
+            if key_text == "board_timeout" and isinstance(item, dict):
+                timeout = _without_internal_period_data(item)
+                symbols = timeout.get("symbols")
+                if isinstance(symbols, dict):
+                    symbols["recovered"] = []
+                result[key_text] = timeout
                 continue
             if isinstance(item, str) and "複数営業日" in item:
                 continue
