@@ -98,7 +98,7 @@ def _entry_check(report: dict, item: dict) -> dict | None:
         key=lambda row: str(row.get("occurred_at") or ""),
     )
     if skips:
-        return _skipped_signal_check(item, skips[0])
+        return _skipped_signal_check(report, item, skips[0])
     return _condition_check(report, item)
 
 
@@ -133,7 +133,7 @@ def _condition_check(report: dict, item: dict) -> dict:
     return check
 
 
-def _skipped_signal_check(item: dict, skip: dict) -> dict:
+def _skipped_signal_check(report: dict, item: dict, skip: dict) -> dict:
     moment = analysis._parse_time(skip.get("occurred_at"))
     price = skip.get("reference_price")
     if moment is None or not isinstance(price, (int, float)) or price <= 0:
@@ -149,8 +149,14 @@ def _skipped_signal_check(item: dict, skip: dict) -> dict:
     if hypo["status"] != "ok":
         return {"pattern": None, "unavailable": hypo["reason"]}
     exit_bar = hypo["exit"]
+    condition = entry_condition.evaluate_entry_condition(
+        item.get("daily_closes") or [],
+        report.get("condition_regime") or report.get("market_regime"),
+        entry_condition.recorded_rsi(item["skips"]),
+    )
     return {
         "pattern": entry_condition.PATTERN_SKIPPED_SIGNAL,
+        "upper_band": _round(condition["upper_band"]) if condition["status"] == "ok" else None,
         "reason": _label(analysis._skip_reason(skip)),
         "skip": {"time": _hhmmss(moment), "price": _round(price)},
         "stop": _round(hypo["stop"]),
@@ -186,6 +192,8 @@ def _axis(payload: dict) -> dict | None:
         values.append(payload["buy"]["price"])
     check = payload["entry_check"] or {}
     for key in ("upper_band", "stop"):
+        if key == "upper_band" and check.get("pattern") == 3:
+            continue
         if check.get(key):
             values.append(check[key])
     if check.get("skip") and check["skip"].get("price"):

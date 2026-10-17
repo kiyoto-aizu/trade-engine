@@ -65,7 +65,8 @@
     .chart .line-stop { stroke: var(--stop); stroke-width: 1.8; stroke-dasharray: 1.5 3; stroke-linecap: round; }
     .chart .line-entry { stroke: var(--entry); stroke-width: 1.2; }
     .chart .line-band { stroke: var(--buy); stroke-width: 1.6; }
-    .chart .line-band-off { stroke: var(--entry); stroke-width: 1.4; stroke-dasharray: 2 3; stroke-linecap: round; }
+    .chart .line-band-off { stroke: var(--entry); stroke-width: 1.6; stroke-dasharray: 5 3; }
+    .chart .near-link { stroke: var(--buy); stroke-width: 1.4; stroke-dasharray: 1 2.5; stroke-linecap: round; }
     .chart .mark-near { fill: none; stroke: var(--buy); stroke-width: 2; }
     .chart .near-label { fill: var(--buy); font-size: 10px; font-weight: 700; }
     .sw-band { background: var(--buy); } .sw-band-off { background: var(--entry); opacity: .7; }
@@ -232,8 +233,8 @@
       const values = barPoints.map((point) => point.price);
       for (const value of [symbol.entry, symbol.stop]) if (value) values.push(value);
       const check = symbol.entry_check || null;
-      const bandValue = check && (check.pattern === 1 || check.pattern === 2) ? check.upper_band : null;
-      if (bandValue) values.push(bandValue);
+      const bandValue = check && (check.pattern === 1 || check.pattern === 2 || check.pattern === 3) ? check.upper_band : null;
+      if (bandValue && check.pattern !== 3) values.push(bandValue);
       const hyp = check && check.pattern === 3 ? check : null;
       if (hyp) {
         values.push(hyp.skip.price, hyp.stop);
@@ -289,15 +290,17 @@
         svgEl(svg, "path", { d: path, class: "hyp hyp-line" });
       }
       svgEl(svg, "polyline", { points: barPoints.map((point) => `${X(point.at)},${Y(point.price)}`).join(" "), class: "line-price" });
-      if (bandValue) {
-        svgEl(svg, "line", { x1: L, x2: W - R, y1: Y(bandValue), y2: Y(bandValue), class: check.pattern === 1 ? "line-band" : "line-band-off" });
+      if (bandValue && bandValue >= low && bandValue <= high) {
+        svgEl(svg, "line", { x1: L, x2: W - R, y1: Y(bandValue), y2: Y(bandValue), class: check.pattern === 2 ? "line-band-off" : "line-band" });
       }
       if (check && check.pattern === 1 && check.gap) {
         const near = barPoints.find((point) => point.time === check.gap.time);
         if (near) {
           const nx = X(near.at), ny = Y(near.price);
-          svgEl(svg, "circle", { cx: nx, cy: ny, r: 6, class: "mark-near" });
-          const text = svgEl(svg, "text", { x: Math.min(W - R - 22, Math.max(L + 22, nx)), y: Math.max(T + 10, ny + 18), class: "near-label", "text-anchor": "middle" });
+          svgEl(svg, "line", { x1: nx, x2: nx, y1: Y(bandValue), y2: ny, class: "near-link" });
+          svgEl(svg, "circle", { cx: nx, cy: ny, r: 4.5, class: "mark-near" });
+          const right = nx < W - R - 70;
+          const text = svgEl(svg, "text", { x: right ? nx + 8 : nx - 8, y: (Y(bandValue) + ny) / 2 + 4, class: "near-label", "text-anchor": right ? "start" : "end" });
           text.textContent = check.gap.reached ? "到達" : `あと${fmtGap(check.gap.value)}円`;
         }
       }
@@ -356,6 +359,9 @@
       svg.addEventListener("pointerleave", (event) => { if (event.pointerType === "mouse") hide(); });
       return wrap;
     }
+    function axisContains(symbol, value) {
+      return !symbol.axis || (value >= symbol.axis.low && value <= symbol.axis.high);
+    }
     function legendFor(symbol) {
       const items = [["price", "株価"]];
       if (symbol.result === "buy") {
@@ -368,8 +374,11 @@
       if ((symbol.skips || []).length) items.push(["skip", "見送り"]);
       const check = symbol.entry_check || null;
       if (check && check.pattern === 1) items.push(["band", "買い条件ライン(上側バンド)"], ["near", "最接近"]);
-      if (check && check.pattern === 2) items.push(["band-off", "買い条件ライン(上側バンド)：RSI未達のため無効"]);
-      if (check && check.pattern === 3) items.push(["hyp-entry", "仮の買値"], ["hyp-line", "仮の売りライン"], ["hyp-stop", "仮の最初の損切り位置"]);
+      if (check && check.pattern === 2) items.push(["band-off", "上側バンド(RSI未達のため無効)"]);
+      if (check && check.pattern === 3) {
+        if (check.upper_band && axisContains(symbol, check.upper_band)) items.push(["band", "買い条件ライン"]);
+        items.push(["hyp-entry", "仮の買値"], ["hyp-line", "仮の売りライン(ATR)"], ["hyp-stop", "最初の損切り位置(仮)"]);
+      }
       const legend = el("div", undefined, "legend");
       for (const [kind, text] of items) {
         const item = el("span");
@@ -388,11 +397,17 @@
       }
       return card;
     }
-    function textMetric(label, value, note) {
+    function textMetric(label, value, note, sub) {
       const card = el("div", undefined, "metric");
       card.append(el("span", label, "metric-label"), el("strong", value, note ? "metric-none" : undefined));
+      if (sub) card.append(el("span", sub, "metric-time"));
       return card;
     }
+    const patternCaptions = {
+      1: "RSIはOKだが、株価が上側バンドに届かなかった日",
+      2: "RSIが基準に届かず、株価に関係なく買えない日",
+      3: "シグナルは出たが見送った日(以下の売りラインは仮の試算)",
+    };
     function entryCheckMetrics(check) {
       const metrics = el("div", undefined, "metrics");
       if (check.pattern === null || check.pattern === undefined) {
@@ -405,20 +420,26 @@
         metrics.append(gap
           ? metric("買い条件まであと最小", { value: gap.value, time: gap.time }, "算出不可")
           : textMetric("買い条件まであと最小", "算出不可", true));
-        metrics.append(textMetric("RSI", details ? `${details.rsi.toFixed(1)} / ${details.rsi_threshold}(達成)` : "達成"));
+        metrics.append(details
+          ? textMetric("RSI", details.rsi.toFixed(1), false, `基準${details.rsi_threshold}・達成`)
+          : textMetric("RSI", "達成"));
       } else {
-        const short = details ? details.rsi_threshold - details.rsi : null;
-        metrics.append(textMetric("RSI", details ? `${details.rsi.toFixed(1)} / ${details.rsi_threshold}・あと${short.toFixed(1)}` : "未達"));
-        metrics.append(textMetric("上側バンドまで最小", "—(RSI未達のため無効)", true));
+        metrics.append(details
+          ? textMetric("RSI", details.rsi.toFixed(1), false, `基準${details.rsi_threshold}・あと${details.rsi_short.toFixed(1)}`)
+          : textMetric("RSI", "未達"));
+        metrics.append(textMetric("上側バンドまで最小", "—", true, "RSI未達のため無効"));
       }
       return metrics;
     }
     function hypotheticalBlock(check) {
       const box = el("div");
-      box.append(el("p", "仮の売りライン(見送らず買っていた場合の試算)", "check-title"));
       const metrics = el("div", undefined, "metrics");
+      const margin = check.min_margin;
+      const reached = margin && margin.value <= 0;
       metrics.append(
-        metric("仮 売りラインまでの最小余裕", check.min_margin, "算出不可"),
+        reached
+          ? textMetric("仮 売りラインまでの最小余裕", "到達", false, margin.time)
+          : metric("仮 売りラインまでの最小余裕", margin, "算出不可"),
         textMetric("見送りの理由", check.reason || "不明"),
       );
       box.append(metrics);
@@ -441,6 +462,7 @@
         );
         card.append(metrics);
       } else {
+        if (symbol.entry_check && patternCaptions[symbol.entry_check.pattern]) card.append(el("p", patternCaptions[symbol.entry_check.pattern], "note"));
         if (symbol.entry_check && symbol.entry_check.pattern !== 3) card.append(entryCheckMetrics(symbol.entry_check));
         if (symbol.entry_check && symbol.entry_check.pattern === 3) card.append(hypotheticalBlock(symbol.entry_check));
       }
