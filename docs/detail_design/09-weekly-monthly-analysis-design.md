@@ -29,7 +29,7 @@
 | 項目 | 方向 | 場所・形式 | 備考 |
 |---|---|---|---|
 | 日次取引レポート | 入力 | `data/reports/daily/*.json` | 対象期間・比較用の前期間から読込 |
-| バックテスト結果 | 入力 | `data/backtest/runs/latest_timeseries_*.json` | 生成日が期間内または対象期間と重なるもの |
+| バックテスト結果 | 入力 | `data/backtest/runs/latest_timeseries_*.json`、`latest_weekly_*.json` | 生成日が期間内または対象期間と重なるもの。週次の完全一致は、結果の`requested_period_start/end`（`--start-date/--end-date`の依頼期間。なければ`period_start/end`）と対象週で判定。同じ期間の結果が複数ある場合は生成時刻が最新の1件を使う（合算しない） |
 | 判定イベント | 入力 | `FILTER_DECISION_DATABASE_FILE` | 対象期間の確定イベントを集計 |
 | 日次トレンド結果 | 入力 | `data/analysis/trend_check.sqlite3` | DBが存在するときに読込。対象期間内の版を集計 |
 | 価格帯別トレンド | 入力 | 価格帯別保存領域・DB・状態ファイル | 個別仕様・保存場所は[03b](./03b-price-band-trend-check.md)を参照 |

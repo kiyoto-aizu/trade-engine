@@ -472,6 +472,12 @@ def execute_backtest(
     )
     if input_snapshot is not None or snapshot_directory is not None:
         result["snapshot_path"] = inputs.snapshot_path
+    start_date = getattr(args, "start_date", None)
+    end_date = getattr(args, "end_date", None)
+    if start_date is not None and end_date is not None:
+        # 休場日などで実評価期間が縮んでも、依頼期間で週次分析と突き合わせられるように残す
+        result["requested_period_start"] = start_date.isoformat()
+        result["requested_period_end"] = end_date.isoformat()
     return result, atr_comparison, market_regime_comparison
 
 

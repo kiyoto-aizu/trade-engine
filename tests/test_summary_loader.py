@@ -4,6 +4,7 @@ from datetime import date
 from src.infrastructure.analysis.summary_loader import (
     build_daily_period_comparison,
     build_period_metadata,
+    load_backtest_summaries,
     load_daily_summaries,
     summarize_backtest_runs,
     summarize_daily_operations,
@@ -135,28 +136,77 @@ def test_summarize_daily_operations_keeps_fallback_state_separate():
     }
 
 
-def test_summarize_backtest_runs_does_not_sum_multiple_exact_period_runs():
+def test_summarize_backtest_runs_uses_latest_of_multiple_exact_period_runs():
     backtests = [
         {
-            "period_start": "2026-09-14",
-            "period_end": "2026-09-18",
-            "total_pnl": 100,
-            "total_trades": 2,
-        },
-        {
+            "generated_timestamp": "2026-09-19T17:09:39",
             "period_start": "2026-09-14",
             "period_end": "2026-09-18",
             "total_pnl": 200,
             "total_trades": 3,
         },
+        {
+            "generated_timestamp": "2026-09-19T08:06:50",
+            "period_start": "2026-09-14",
+            "period_end": "2026-09-18",
+            "total_pnl": 100,
+            "total_trades": 2,
+        },
     ]
 
     summary = summarize_backtest_runs(backtests, date(2026, 9, 14), date(2026, 9, 18))
 
-    assert summary["summary_status"] == "multiple_exact_period_runs"
-    assert summary["exact_period_run_available"] is False
-    assert summary["total_pnl"] is None
-    assert summary["total_trades"] is None
+    assert summary["summary_status"] == "latest_of_multiple_exact_period_runs"
+    assert summary["matching_period_run_count"] == 2
+    assert summary["exact_period_run_available"] is True
+    assert summary["total_pnl"] == 200
+    assert summary["total_trades"] == 3
+
+
+def test_summarize_backtest_runs_matches_requested_period_when_evaluated_period_is_shorter():
+    backtests = [
+        {
+            "period_start": "2026-10-13",
+            "period_end": "2026-10-16",
+            "requested_period_start": "2026-10-12",
+            "requested_period_end": "2026-10-16",
+            "total_pnl": 100,
+            "total_trades": 2,
+        },
+        {
+            "period_start": "2026-09-01",
+            "period_end": "2026-10-16",
+            "total_pnl": -5,
+            "total_trades": 26,
+        },
+    ]
+
+    summary = summarize_backtest_runs(backtests, date(2026, 10, 12), date(2026, 10, 16))
+
+    assert summary["summary_status"] == "single_exact_period_run"
+    assert summary["exact_period_run_available"] is True
+    assert summary["total_pnl"] == 100
+
+
+def test_load_backtest_summaries_reads_weekly_runs_with_requested_period(tmp_path):
+    (tmp_path / "latest_weekly_20261017_080650_731604.json").write_text(
+        json.dumps({
+            "generated_at": "2026-10-17T08:06:50",
+            "period_start": "2026-10-13",
+            "period_end": "2026-10-16",
+            "requested_period_start": "2026-10-12",
+            "requested_period_end": "2026-10-16",
+            "total_pnl": 0.0,
+            "total_trades": 0,
+        }),
+        encoding="utf-8",
+    )
+
+    backtests = load_backtest_summaries(tmp_path, date(2026, 10, 12), date(2026, 10, 16))
+    summary = summarize_backtest_runs(backtests, date(2026, 10, 12), date(2026, 10, 16))
+
+    assert summary["exact_period_run_available"] is True
+    assert summary["total_trades"] == 0
 
 
 def test_build_daily_period_comparison_requires_complete_matching_modes():

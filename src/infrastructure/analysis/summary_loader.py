@@ -160,18 +160,21 @@ def summarize_backtest_runs(backtests: list[dict], start: date, end: date) -> di
     matching_runs = [
         item
         for item in backtests
-        if _parse_date(item.get("period_start")) == start and _parse_date(item.get("period_end")) == end
+        if _comparison_period(item) == (start, end)
     ]
     if not backtests:
         status = "no_runs"
     elif len(matching_runs) == 1:
         status = "single_exact_period_run"
     elif matching_runs:
-        status = "multiple_exact_period_runs"
+        status = "latest_of_multiple_exact_period_runs"
     else:
         status = "no_exact_period_run"
 
-    matching_run = matching_runs[0] if len(matching_runs) == 1 else None
+    matching_run = (
+        max(matching_runs, key=lambda item: item.get("generated_timestamp") or "")
+        if matching_runs else None
+    )
     return {
         "run_count": len(backtests),
         "matching_period_run_count": len(matching_runs),
@@ -257,17 +260,33 @@ def load_daily_summaries(report_directory: Path, start: date, end: date) -> list
     return summaries
 
 
+def _comparison_period(item: dict) -> tuple[date | None, date | None]:
+    """依頼期間があればそれを、なければ実評価期間を比較に使う。"""
+    requested = (
+        _parse_date(item.get("requested_period_start")),
+        _parse_date(item.get("requested_period_end")),
+    )
+    if None not in requested:
+        return requested
+    return _parse_date(item.get("period_start")), _parse_date(item.get("period_end"))
+
+
 def load_backtest_summaries(backtest_directory: Path, start: date, end: date) -> list[dict]:
     summaries = []
-    for path in sorted(backtest_directory.glob("latest_timeseries_*.json")):
+    paths = sorted([
+        *backtest_directory.glob("latest_timeseries_*.json"),
+        *backtest_directory.glob("latest_weekly_*.json"),
+    ])
+    for path in paths:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             generated_at = data.get("generated_at")
-            generated_date = (
-                datetime.fromisoformat(generated_at).date()
+            generated_timestamp = (
+                datetime.fromisoformat(generated_at)
                 if generated_at
-                else date.fromtimestamp(path.stat().st_mtime)
+                else datetime.fromtimestamp(path.stat().st_mtime)
             )
+            generated_date = generated_timestamp.date()
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             logger.warning("バックテスト結果を読み込めません: %s (%s)", path, exc)
             continue
@@ -282,8 +301,11 @@ def load_backtest_summaries(backtest_directory: Path, start: date, end: date) ->
         if (start <= generated_date <= end or has_overlapping_period) and isinstance(data, dict):
             summaries.append({
                 "generated_at": generated_date.isoformat(),
+                "generated_timestamp": generated_timestamp.isoformat(timespec="seconds"),
                 "period_start": data.get("period_start"),
                 "period_end": data.get("period_end"),
+                "requested_period_start": data.get("requested_period_start"),
+                "requested_period_end": data.get("requested_period_end"),
                 "total_pnl": data.get("total_pnl", data.get("総損益", 0)),
                 "total_trades": data.get("total_trades", data.get("総取引数", 0)),
                 "win_rate": data.get("win_rate", data.get("勝率", 0)),

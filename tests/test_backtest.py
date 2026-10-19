@@ -287,9 +287,11 @@ def test_cumulative_and_weekly_backtests_write_independent_event_databases(monke
     monkeypatch.setattr(config, "BACKTEST_FILTER_DECISION_DIRECTORY", tmp_path / "filter_events")
 
     _execute_filtering_run(tmp_path / "latest_timeseries.json")
-    _execute_filtering_run(
+    weekly_result, _, _ = _execute_filtering_run(
         tmp_path / "latest_weekly.json", date(2026, 9, 6), date(2026, 9, 7)
     )
+    assert weekly_result["requested_period_start"] == "2026-09-06"
+    assert weekly_result["requested_period_end"] == "2026-09-07"
 
     databases = sorted((tmp_path / "filter_events").glob("*.sqlite3"))
     assert len(databases) == 2
