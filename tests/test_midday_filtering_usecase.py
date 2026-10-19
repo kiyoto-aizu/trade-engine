@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -280,3 +280,74 @@ def test_holiday_and_skip_date_do_not_fetch(tmp_path):
 
     assert skipped.skipped_reason and holiday.skipped_reason
     assert calls == []
+
+
+def _atr_observer(latest_ranges):
+    from src.application.selection_atr_observer import SelectionAtrObserver
+    from src.domain.atr_ratio_analysis import DatedDailyBar
+    from src.domain.volatility import DailyBar
+
+    def fetch(symbol, until):
+        if symbol not in latest_ranges:
+            raise RuntimeError("fetch failed")
+        ranges = [10.0, 10.0, latest_ranges[symbol]]
+        return [
+            DatedDailyBar(until - timedelta(days=2 - i), DailyBar(100 + w / 2, 100 - w / 2, 100.0))
+            for i, w in enumerate(ranges)
+        ]
+
+    return SelectionAtrObserver(fetch, period=3)
+
+
+def test_diagnostics_record_selection_atr_and_atr_below_comparison_without_changing_adoption(tmp_path):
+    data = {s: bars(price, 1000.0) for s, price in (("A", 300.0), ("B", 200.0), ("C", 100.0))}
+    averages = {s: 1_000_000.0 for s in data}
+    use_case, _, _ = make_use_case(
+        lambda s: IntradayFetchResult(data[s], True), averages, tmp_path,
+        # A=DANGER(ATR比2.0)、B=NORMAL、Cは日足取得失敗
+        selection_atr_observer=_atr_observer({"A": 40.0, "B": 10.0}),
+    )
+
+    use_case.run(make_bands(tmp_path, {"450": ["A", "B", "C"]}), DAY, 1000.0)
+
+    diag = load_diag(tmp_path, "450")
+    records = {r["symbol"]: r for r in diag["candidates"]}
+    assert records["A"]["selection_atr_level"] == "DANGER"
+    assert records["A"]["selection_atr_as_of"] == "2026-10-07"
+    assert records["B"]["selection_atr_level"] == "NORMAL"
+    assert records["C"]["selection_atr_ratio"] is None
+    assert records["C"]["selection_atr_unavailable_reason"] == "DAILY_FETCH_FAILED"
+    assert diag["summary"]["adopted_symbols"] == ["A", "B", "C"]
+    comparison = diag["summary"]["selection_atr_below_comparison"]
+    assert comparison["symbols"] == ["B"]
+    assert comparison["replaced_out"] == ["A", "C"]
+    assert comparison["unknown_atr_count"] == 1
+    assert records["B"]["comparison_selected_atr_below_danger"] is True
+    assert records["A"]["comparison_selected_atr_below_danger"] is False
+    assert records["A"]["selected"] is True
+
+
+def test_diagnostics_without_observer_have_no_atr_fields(tmp_path):
+    use_case, _, _ = make_use_case(
+        lambda s: IntradayFetchResult(bars(), True), {"A": 1_000_000.0}, tmp_path
+    )
+
+    use_case.run(make_bands(tmp_path, {"450": ["A"]}), DAY, 1000.0)
+
+    diag = load_diag(tmp_path, "450")
+    assert "selection_atr_ratio" not in diag["candidates"][0]
+    assert "selection_atr_below_comparison" not in diag["summary"]
+
+
+def test_selection_atr_observation_stops_after_deadline(tmp_path):
+    use_case, clock, _ = make_use_case(
+        lambda s: IntradayFetchResult(bars(), True), {"A": 1_000_000.0}, tmp_path,
+        selection_atr_observer=_atr_observer({"A": 10.0}),
+    )
+    clock.now = 0.0
+
+    use_case.run(make_bands(tmp_path, {"450": ["A"]}), DAY, 0.0)
+
+    record = load_diag(tmp_path, "450")["candidates"][0]
+    assert record["status"] == "not_evaluated"
+    assert record["selection_atr_unavailable_reason"] == "OBSERVATION_TIME_LIMIT"

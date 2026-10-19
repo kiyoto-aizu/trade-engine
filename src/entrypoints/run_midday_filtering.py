@@ -12,6 +12,7 @@ from functools import partial
 from time import monotonic
 
 from src.application.midday_filtering_usecase import MiddayBandSpec, MiddayFilteringUseCase
+from src.application.selection_atr_observer import SelectionAtrObserver
 from src.config import config
 from src.infrastructure.calendar.japanese_calendar import is_trading_day
 from src.application.midday_verification_summary import format_verification_summary, summarize_verification
@@ -125,6 +126,10 @@ def _build_use_case(*, verify: bool, save_bars: bool, target_date: date) -> Midd
         comparison_repository=FilteringDiagnosticsRepository(comparison_root),
         notifier=None if verify else notify_daily,
         skip_dates=() if verify else None,
+        # 選定時点のATR比の観測記録のみ(採用銘柄・売買判断には使わない)
+        selection_atr_observer=SelectionAtrObserver(
+            lambda symbol, until: YahooFinanceClient().get_daily_ohlc_history(symbol, "3mo", until=until)
+        ),
     )
 
 

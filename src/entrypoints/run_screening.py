@@ -26,6 +26,7 @@ from src.infrastructure.persistence.screening_api_check_repository import Screen
 from src.infrastructure.market_data.historical_ranking_repository import HistoricalRankingRepository
 from src.infrastructure.market_data.yahoo_finance_client import YahooFinanceClient
 from src.application.screening_usecase import ScreeningUseCase
+from src.application.selection_atr_observer import SelectionAtrObserver
 from src.infrastructure.calendar.japanese_calendar import is_trading_day
 
 def notify_result(message: str) -> None:
@@ -93,6 +94,10 @@ def _run_screening() -> None:
             # 全銘柄のランキングを自前計算するHistoricalRankingRepositoryを、
             # 通常運用(過去日付指定なし)でも常用する。
             market_data_client = YahooFinanceClient()
+            # 選定時点のATR比の観測記録のみ(売買判断・選定には使わない)。3帯で日足の取得を共有する
+            selection_atr_observer = SelectionAtrObserver(
+                lambda symbol, until: market_data_client.get_daily_ohlc_history(symbol, "3mo", until=until)
+            )
             ranking_repository = HistoricalRankingRepository(
                 ListedSecurityRepository(root / 'data' / 'universe' / 'listed_securities.csv'),
                 market_data_client,
@@ -121,6 +126,7 @@ def _run_screening() -> None:
                 ScreeningResultRepository(config.SCREENING_RESULT_DIRECTORY),
                 notify_result,
                 turnover_client=market_data_client,
+                selection_atr_observer=selection_atr_observer,
             )
             usecase.batch_started = lambda batch, _: register_symbols(token, batch) is not None
             usecase.batch_finished = lambda _, __: unregister_all(token) is not None
@@ -135,6 +141,7 @@ def _run_screening() -> None:
                         ScreeningResultRepository(
                             config.SCREENING_PRICE_BAND_RESULT_ROOT / cap_name
                         ),
+                        selection_atr_observer=selection_atr_observer,
                     )
                     alternate_usecase.batch_started = (
                         lambda batch, _: register_symbols(token, batch) is not None

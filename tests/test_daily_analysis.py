@@ -58,10 +58,33 @@ def test_daily_cache_refresh_retries_only_unupdated_symbols(monkeypatch, tmp_pat
     assert success is True
     assert missing == []
     assert [call[0] for call in calls] == [
-        ["AAA", "BBB", "CCC"],
-        ["BBB", "CCC"],
+        ["AAA", "BBB", "CCC", "^N225", "^VIX"],
+        ["BBB", "CCC", "^N225", "^VIX"],
     ]
     assert sleeps == [60]
+
+
+def test_daily_cache_refresh_always_includes_market_indices(monkeypatch, tmp_path):
+    paths = _paths(tmp_path)
+    monkeypatch.setattr(run_daily_analysis, "symbols_for_date", lambda *_: ["AAA"])
+    monkeypatch.setattr(run_daily_analysis, "price_band_symbols_for_update", lambda *_: [])
+    calls = []
+
+    def update(cache_dir, symbols, days, now):
+        calls.append(list(symbols))
+        return {symbol: "2026-10-06" for symbol in symbols}
+
+    success, missing = run_daily_analysis.refresh_cache_with_retries(
+        date(2026, 10, 6),
+        paths,
+        now=datetime(2026, 10, 6, 16, 0),
+        update=update,
+        sleeper=lambda _: None,
+    )
+
+    assert success is True
+    assert missing == []
+    assert calls == [["AAA", "^N225", "^VIX"]]
 
 
 def test_daily_notification_marks_failed_daily_refresh_as_undecidable():

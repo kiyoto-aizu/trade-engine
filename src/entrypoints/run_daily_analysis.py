@@ -61,6 +61,7 @@ def refresh_cache_with_retries(
     symbols = sorted(
         set(symbols_for_date(paths, trade_date.isoformat()))
         | set(price_band_symbols_for_update(paths, trade_date))
+        | {"^N225", "^VIX"}
     )
     if not symbols:
         logger.info("日足更新対象なし: %s", trade_date)

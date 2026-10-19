@@ -23,6 +23,11 @@ from src.domain.minute_turnover_estimation import (
 )
 from src.domain.models import FilteringResult, MinuteBar, ScoredCandidate
 from src.domain.rules import calculate_volume_surge_ratio, select_top_n_by_surge_ratio
+from src.domain.selection_atr_observation import (
+    REASON_TIME_LIMIT as REASON_ATR_TIME_LIMIT,
+    build_atr_below_comparison,
+    unavailable,
+)
 from src.infrastructure.calendar.japanese_calendar import is_trading_day
 from src.infrastructure.market_data.get_intraday_bars import IntradayFetchResult
 from src.infrastructure.notification.slack_notify import format_result_notification
@@ -97,6 +102,7 @@ class MiddayFilteringUseCase:
         monotonic_clock=None,
         sleep_func=None,
         now=None,
+        selection_atr_observer=None,
     ):
         """
         Args:
@@ -120,6 +126,9 @@ class MiddayFilteringUseCase:
         self._monotonic = monotonic_clock or monotonic
         self._sleep = sleep_func or sleep
         self._now = now or datetime.now
+        self.selection_atr_observer = selection_atr_observer
+        self._observation_as_of: date | None = None
+        self._observation_deadline = float("inf")
 
     def run(self, bands: list[MiddayBandSpec], target_date: date, deadline_monotonic: float) -> MiddayRunReport:
         started = self._monotonic()
@@ -132,6 +141,8 @@ class MiddayFilteringUseCase:
         previous_business_day = target_date - timedelta(days=1)
         while not is_trading_day(previous_business_day):
             previous_business_day -= timedelta(days=1)
+        self._observation_as_of = previous_business_day
+        self._observation_deadline = deadline_monotonic
         screenings = {
             band.name: band.screening_repository.load_for_date(previous_business_day) for band in bands
         }
@@ -285,6 +296,7 @@ class MiddayFilteringUseCase:
                 record["rank"] = rank_by_symbol.get(record["symbol"])
                 record["selected"] = record["symbol"] in set(selected)
         unprocessed = sum(record["status"] == "not_evaluated" for record in records)
+        atr_comparison = self._observe_selection_atr(records, scored, selected)
         timed_out = unprocessed > 0
         generated_at = self._now().isoformat()
         result_saved = False
@@ -312,6 +324,8 @@ class MiddayFilteringUseCase:
         }
         if band.comparison_only:
             summary["board_comparison"] = self._compare_with_board(today, scored, outcomes)
+        if atr_comparison is not None:
+            summary["selection_atr_below_comparison"] = atr_comparison
         self._save_safely(band.diagnostics_repository, {
             "date": today,
             "generated_at": generated_at,
@@ -330,6 +344,30 @@ class MiddayFilteringUseCase:
             band.name, len(records), len(scored), len(selected), reason_counts,
         )
         return summary
+
+    def _observe_selection_atr(self, records, scored, selected) -> dict | None:
+        """各候補に選定時点(前営業日の確定日足)のATR比を記録し、ATR比2.0未満のみで選んだ場合の比較用銘柄を返す。
+
+        観測のみで、採用銘柄・保存する結果には使わない。失敗・締切超過は理由を記録して続行する。
+        """
+        if self.selection_atr_observer is None or self._observation_as_of is None:
+            return None
+        as_of = self._observation_as_of
+        ratio_by_symbol: dict[str, float | None] = {}
+        for record in records:
+            if self._monotonic() >= self._observation_deadline:
+                observation = unavailable(as_of, REASON_ATR_TIME_LIMIT)
+            else:
+                observation = self.selection_atr_observer.observe_safely(record["symbol"], as_of)
+            record.update(observation.as_record())
+            ratio_by_symbol[record["symbol"]] = observation.ratio
+        comparison = build_atr_below_comparison(
+            scored, ratio_by_symbol, selected, limit_ratio=config.ATR_DANGER_RATIO
+        )
+        in_comparison = set(comparison["symbols"])
+        for record in records:
+            record["comparison_selected_atr_below_danger"] = record["symbol"] in in_comparison
+        return comparison
 
     def _compare_with_board(self, today, scored, outcomes) -> dict:
         board_ratios = self._load_board_ratios(today)

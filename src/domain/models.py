@@ -355,6 +355,11 @@ class ScreeningAuditEntry:
     selected: bool
     price: float | None = None
     check_status: str | None = None
+    # 選定時点のATR比の観測記録(売買判断には使わない)。旧ファイルには存在しない
+    selection_atr_as_of: str | None = None
+    selection_atr_ratio: float | None = None
+    selection_atr_level: str | None = None
+    selection_atr_unavailable_reason: str | None = None
 
 
 @dataclass

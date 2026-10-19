@@ -13,6 +13,7 @@ from src.config import config
 from src.domain.enums import RankingType
 from src.domain.models import Regulation, ScreeningAuditEntry, ScreeningResult
 from src.domain.market_tendency import TendencyPeriod
+from src.domain.selection_atr_observation import REASON_NOT_OBSERVED_PRICE_FILTERED, unavailable
 from src.domain.rules import (
     exclude_by_regulation,
     filter_candidates_by_price,
@@ -43,6 +44,7 @@ class ScreeningUseCase:
         *,
         market_regime_usecase=None,
         turnover_client=None,
+        selection_atr_observer=None,
     ):
         """
         ScreeningUseCaseを初期化します。
@@ -61,6 +63,7 @@ class ScreeningUseCase:
         self.notifier = notifier
         self.market_regime_usecase = market_regime_usecase
         self.turnover_client = turnover_client
+        self.selection_atr_observer = selection_atr_observer
         self.batch_started = None
         self.batch_finished = None
 
@@ -206,6 +209,8 @@ class ScreeningUseCase:
         default_turnover_rank = len(turnover) + 1
         default_price_gain_rank = len(price_gain) + 1
         audit_entries = []
+        result_date = target_date.isoformat() if target_date else datetime.now().date().isoformat()
+        observation_date = date.fromisoformat(result_date)
         price_filtered_symbols = set(candidates) - set(remaining)
         for symbol in candidates:
             turnover_entry = turnover_by_symbol.get(symbol)
@@ -226,6 +231,12 @@ class ScreeningUseCase:
                 restriction_reason = regulation.reason
                 primary_exchange = regulation.primary_exchange
                 is_restricted = regulation.is_restricted
+            if self.selection_atr_observer is None:
+                observation = {}
+            elif symbol in price_filtered_symbols:
+                observation = unavailable(observation_date, REASON_NOT_OBSERVED_PRICE_FILTERED).as_record()
+            else:
+                observation = self.selection_atr_observer.observe_safely(symbol, observation_date).as_record()
             audit_entries.append(ScreeningAuditEntry(
                 symbol=symbol,
                 turnover_rank=turnover_rank,
@@ -243,8 +254,8 @@ class ScreeningUseCase:
                     if symbol in price_filtered_symbols
                     else check_status_by_symbol.get(symbol, "unconfirmed")
                 ),
+                **observation,
             ))
-        result_date = target_date.isoformat() if target_date else datetime.now().date().isoformat()
         result = ScreeningResult(result_date, symbols, datetime.now().isoformat(), audit_entries)
         self.result_repository.save(result)
         if self.notifier:
