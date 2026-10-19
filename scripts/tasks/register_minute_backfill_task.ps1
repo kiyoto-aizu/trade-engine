@@ -21,7 +21,7 @@ if (-not (Test-Path $runner)) {
     throw "Minute backfill runner was not found: $runner"
 }
 
-# 毎週土曜の朝、過去7日分の分足データを取得・上書きしてバックフィルする
+# 毎週土曜の朝、過去7日分の分足データを取得し不足時刻の足を追加する
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Saturday -At $At
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runner`""
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -WakeToRun

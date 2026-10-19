@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from src.api import request_handler
 from src.domain.atr_ratio_analysis import DatedDailyBar
@@ -9,8 +9,13 @@ logger = logging.getLogger(__name__)
 
 
 class YahooFinanceClient:
-    def get_daily_ohlc_history(self, symbol: str, range_: str = "max") -> list[DatedDailyBar]:
-        """指定銘柄の確定日足OHLC履歴を返します。"""
+    def get_daily_ohlc_history(
+        self, symbol: str, range_: str = "max", until: date | None = None
+    ) -> list[DatedDailyBar]:
+        """指定銘柄の確定日足OHLC履歴を返します。
+
+        untilを指定すると、その日(含む)までの日足を返します。省略時は当日より前の日足です。
+        """
         try:
             response = request_handler.send_get(
                 f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}.T",
@@ -26,7 +31,7 @@ class YahooFinanceClient:
                 return []
             result = response["chart"]["result"][0]
             quote = result["indicators"]["quote"][0]
-            today = datetime.now(timezone.utc).date()
+            today = datetime.now(timezone.utc).date() if until is None else until + timedelta(days=1)
             return [
                 DatedDailyBar(
                     date=datetime.fromtimestamp(timestamp, tz=timezone.utc).date(),

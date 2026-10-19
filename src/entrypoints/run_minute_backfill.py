@@ -2,7 +2,7 @@
 ================================================================================
 分足バックフィル・エントリーポイント
 過去N日分のフィルタリング結果に登場した銘柄について、Yahoo Financeの
-1分足を取得し、自前ポーリングで貯めた分足データを上書き補強します。
+1分足を取得し、既存の分足を保持したまま不足する時刻の足を追加します。
 
 想定運用：毎週月曜のバックテスト実行前に1回だけ実行する
 （Yahooの1分足は直近7日程度しか遡れないため、週次で回収しておく）。
@@ -11,6 +11,7 @@
 ================================================================================
 """
 import argparse
+import json
 import logging
 from datetime import date, datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
@@ -32,8 +33,9 @@ def collect_recent_symbols(
     days: int,
     today: date,
     additional_filtering_dirs: tuple[Path, ...] = (),
+    midday_diagnostic_dirs: tuple[Path, ...] = (),
 ) -> list[str]:
-    """通常・追加価格帯の直近days日分のフィルタ結果から銘柄を重複なく集めます。"""
+    """朝のフィルタ結果と昼推定診断から直近days日分の銘柄を重複なく集めます。"""
     daily_symbols: dict[str, set[str]] = {}
     for directory in (filtering_dir, *additional_filtering_dirs):
         if not directory.exists():
@@ -41,6 +43,44 @@ def collect_recent_symbols(
         for date_text, symbols in load_daily_filtering_symbols(directory).items():
             daily_symbols.setdefault(date_text, set()).update(symbols)
     cutoff = today - timedelta(days=days)
+    for directory in midday_diagnostic_dirs:
+        if not directory.exists():
+            continue
+        diagnostics_by_date: dict[date, Path] = {}
+        for path in sorted(directory.glob("*.json")):
+            try:
+                diagnostic_date = date.fromisoformat(path.name[:10])
+            except ValueError:
+                logger.warning(
+                    "昼推定フィルタ診断の日付を判定できません。朝の結果だけで続行します: %s",
+                    path,
+                )
+                continue
+            if diagnostic_date >= cutoff:
+                diagnostics_by_date[diagnostic_date] = path
+
+        for diagnostic_date, path in diagnostics_by_date.items():
+            try:
+                diagnostic = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(diagnostic, dict) or diagnostic.get("date") != diagnostic_date.isoformat():
+                    raise ValueError("診断JSONのdateがファイル名と一致しません")
+                summary = diagnostic.get("summary")
+                if not isinstance(summary, dict):
+                    raise ValueError("診断JSONのsummaryがありません")
+                adopted_symbols = summary.get("adopted_symbols")
+                if not isinstance(adopted_symbols, list) or any(
+                    not isinstance(symbol, str) or not symbol for symbol in adopted_symbols
+                ):
+                    raise ValueError("診断JSONのsummary.adopted_symbolsが不正です")
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                logger.warning(
+                    "昼推定フィルタ診断を読み込めません。朝の結果だけで続行します: %s (%s)",
+                    path,
+                    exc,
+                )
+                continue
+            daily_symbols.setdefault(diagnostic_date.isoformat(), set()).update(adopted_symbols)
+
     recent_symbols = {
         symbol
         for date_text, symbols_on_day in daily_symbols.items()
@@ -90,6 +130,10 @@ def main(now_provider=None, filtering_dir: Path | None = None, output_dir: Path 
         config.FILTERING_PRICE_BAND_RESULT_ROOT / f"{price_cap:g}"
         for price_cap in config.SCREENING_ALTERNATE_PRICE_CAPS
     )
+    midday_diagnostic_dirs = () if custom_filtering_dir else tuple(
+        config.MIDDAY_FILTERING_RESULT_ROOT / f"{price_cap:g}" / "diagnostics"
+        for price_cap in (config.get_screening_price_cap(), *config.SCREENING_ALTERNATE_PRICE_CAPS)
+    )
 
     primary_symbols = set(collect_recent_symbols(target_filtering_dir, args.days, now.date()))
     symbols = collect_recent_symbols(
@@ -97,13 +141,14 @@ def main(now_provider=None, filtering_dir: Path | None = None, output_dir: Path 
         args.days,
         now.date(),
         additional_filtering_dirs=additional_filtering_dirs,
+        midday_diagnostic_dirs=midday_diagnostic_dirs,
     )
     additional_symbols = set(symbols) - primary_symbols
     if not symbols:
         logger.info("直近%d日分のフィルタリング結果がないため、バックフィルを行いません。", args.days)
         return
     logger.info(
-        "分足バックフィル対象: 通常=%d件 | 追加価格帯固有=%d件 | 合計=%d件",
+        "分足バックフィル対象: 通常結果=%d件 | 通常結果にない追加銘柄=%d件 | 合計=%d件",
         len(primary_symbols), len(additional_symbols), len(symbols),
     )
 
@@ -118,7 +163,7 @@ def main(now_provider=None, filtering_dir: Path | None = None, output_dir: Path 
 
         total = sum(imported_counts.values())
         logger.info(
-            "分足バックフィル実績: 対象=%d件 | 追加価格帯固有=%d件 | 取得本数=%d本 | 所要時間=%.3f秒",
+            "分足バックフィル実績: 対象=%d件 | 通常結果にない追加銘柄=%d件 | 新規追加=%d本 | 所要時間=%.3f秒",
             len(symbols), len(additional_symbols), total, elapsed_seconds,
         )
         message = format_result_notification(
@@ -127,8 +172,8 @@ def main(now_provider=None, filtering_dir: Path | None = None, output_dir: Path 
             "分足データの取込が完了しました。",
             [
                 f"対象銘柄数: {len(symbols)}件",
-                f"追加価格帯固有銘柄: {len(additional_symbols)}件",
-                f"取込本数: {total}本",
+                f"通常結果にない追加銘柄: {len(additional_symbols)}件",
+                f"新規追加本数: {total}本",
                 f"所要時間: {elapsed_seconds:.3f}秒",
             ],
         )
