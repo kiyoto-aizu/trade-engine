@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.config import config
+from src.config.budget_summary import log_budget_summary
 from src.config.startup_validation import ConfigValidationError, validate_startup_config
 from src.application.market_regime_usecase import MarketRegimeUseCase
 from src.application.market_tendency_notification import build_market_tendency_lines
@@ -215,6 +216,7 @@ def main(now_provider=None) -> None:
             token = get_api_token()
             if not token:
                 raise SystemExit('トークン取得に失敗しました。')
+            log_budget_summary(logging.getLogger(__name__), token=token)
 
             use_case = create_trading_use_case(token)
             use_case.warn_on_overnight_positions()

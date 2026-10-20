@@ -11,6 +11,7 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from src.config import config
+from src.config.budget_summary import log_budget_summary
 from src.infrastructure.kabu.get_token import get_api_token
 from src.infrastructure.kabu.regulation_repository import RegulationRepository
 from src.infrastructure.kabu.primaryexchange_repository import PrimaryExchangeRepository
@@ -71,6 +72,7 @@ def _run_screening() -> None:
     effective_target_date = args.target_date or date.today()
 
     configure_logging()
+    log_budget_summary(logging.getLogger(__name__))
     if not is_trading_day(effective_target_date):
         logging.getLogger(__name__).info('休場日のため、スクリーニングを開始しません。')
         return

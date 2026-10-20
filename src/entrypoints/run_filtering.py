@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 from time import monotonic, perf_counter
 
 from src.config import config
+from src.config.budget_summary import log_budget_summary
 from src.application.filtering_usecase import BoardRetryPolicy, FilteringUseCase
 from src.application.price_band_filtering_usecase import PriceBandFilteringUseCase
 from src.infrastructure.persistence.decision_journal_repository import DecisionJournalRepository
@@ -60,6 +61,7 @@ def main() -> None:
     args = parser.parse_args()
 
     configure_logging()
+    log_budget_summary(logging.getLogger(__name__))
     if not is_trading_day(args.target_date or date.today()):
         logging.getLogger(__name__).info('休場日のため、フィルタリングを開始しません。')
         return

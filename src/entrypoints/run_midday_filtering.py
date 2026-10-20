@@ -14,6 +14,7 @@ from time import monotonic
 from src.application.midday_filtering_usecase import MiddayBandSpec, MiddayFilteringUseCase
 from src.application.selection_atr_observer import SelectionAtrObserver
 from src.config import config
+from src.config.budget_summary import log_budget_summary
 from src.infrastructure.calendar.japanese_calendar import is_trading_day
 from src.application.midday_verification_summary import format_verification_summary, summarize_verification
 from src.infrastructure.execution_lock import midday_filtering_lock, midday_filtering_verify_lock
@@ -161,6 +162,7 @@ def run_verification(target_date: date, budget_seconds: float, save_bars: bool) 
 def main(argv=None) -> None:
     args = parse_args(argv)
     configure_logging()
+    log_budget_summary(logger)
     if args.verify:
         run_verification(
             args.target_date,

@@ -21,6 +21,7 @@ from time import perf_counter
 from src.infrastructure.persistence.backtest_input_repository import load_daily_filtering_symbols
 from src.application.minute_bar_backfill_usecase import MinuteBarBackfillUseCase
 from src.config import config
+from src.config.budget_summary import log_budget_summary
 from src.infrastructure.market_data.get_intraday_bars import get_yahoo_intraday_bars
 from src.infrastructure.notification.slack_notify import format_result_notification, notify_analysis, process_notification
 from src.infrastructure.persistence.parquet_minute_bar_repository import ParquetMinuteBarRepository
@@ -115,6 +116,7 @@ def configure_logging() -> None:
 
 def main(now_provider=None, filtering_dir: Path | None = None, output_dir: Path | None = None) -> None:
     configure_logging()
+    log_budget_summary(logger)
     now = (now_provider or datetime.now)()
 
     parser = argparse.ArgumentParser(description="Yahoo分足で自前収集データをバックフィルします")
