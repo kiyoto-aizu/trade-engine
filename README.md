@@ -159,6 +159,7 @@ pip install -r requirements.txt
 
 `.env` またはシステム環境変数に設定してください。パスワードなどの秘密情報はコミットしないでください。
 全設定項目は[docs/reference/config-reference.md](docs/reference/config-reference.md)を参照してください。
+J-Quants接続確認スクリプトでは、リポジトリ直下の`.env`に`JQUANTS_API_KEY`を設定すると自動で読み込みます（未設定の場合は実行時に入力できます）。
 
 #### 運用モード
 
