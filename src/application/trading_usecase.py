@@ -67,6 +67,7 @@ _RETRY_OUTCOME_LOG = re.compile(
 )
 
 logger = logging.getLogger(__name__)
+_UNSET = object()
 JST = timezone(timedelta(hours=9))
 # 見送りイベントへ日経225の日中値を追記する対象(検証用の記録のみ)
 NIKKEI_INTRADAY_EVENT_TYPES = frozenset({
@@ -175,6 +176,7 @@ class TradingUseCase:
         self._holding_high_prices: dict[str, float] = {}
         # ADR-0002: 銘柄ごとの直前の判定。変化時だけINFOにする
         self._last_logged_judgments: dict[str, str] = {}
+        self._last_logged_states: dict[tuple[str, str], object] = {}
         # kabu API認証の復旧失敗・板取得連続失敗の通知は1runにつき1回に抑える
         self._auth_recovery_notified = False
         self._board_fetch_all_failed_streak = 0
@@ -541,6 +543,21 @@ class TradingUseCase:
             return
         self._logged_trade_reasons.add(key)
         logger.log(level, "%s: 銘柄=%s | %s", reason_code, symbol, detail)
+
+    def _log_on_change(
+        self,
+        topic: str,
+        symbol: str,
+        state: object,
+        message: str,
+        *args: object,
+    ) -> None:
+        """同一銘柄・同一状態の繰り返しログはDEBUGに落とし、状態が変わったときだけINFOで出す。"""
+        key = (topic, symbol)
+        previous = self._last_logged_states.get(key, _UNSET)
+        self._last_logged_states[key] = state
+        level = logging.DEBUG if previous == state else logging.INFO
+        logger.log(level, message, *args)
 
     def _trade_judgment_log_level(self, symbol: str, judgment: str) -> int:
         previous_judgment = self._last_logged_judgments.get(symbol)
@@ -2476,6 +2493,7 @@ class TradingUseCase:
         self._holding_high_prices.clear()
         self._last_valid_board_prices.clear()
         self._last_logged_judgments.clear()
+        self._last_logged_states.clear()
         self._shadow_positions.clear()
         self._shadow_pending_symbols.clear()
         reset_empty_daily_warning_dedupe()
@@ -2987,7 +3005,10 @@ class TradingUseCase:
                                         symbol,
                                         f"数量={original_qty}->0 | ATRレベル={assessment.level.value}",
                                     )
-                                logger.info(
+                                self._log_on_change(
+                                    "atr_quantity_adjustment",
+                                    symbol,
+                                    (assessment.level, original_qty, signal.qty),
                                     "ATR数量調整: 銘柄=%s | ATR=%.3f | TR=%.3f | 倍率=%.2f | レベル=%s | 数量=%s->%s",
                                     symbol,
                                     assessment.atr,
@@ -3030,7 +3051,10 @@ class TradingUseCase:
                             )
                             continue
                         elif self.market_regime == MarketRegime.CAUTION:
-                            logger.info(
+                            self._log_on_change(
+                                "market_regime_rsi_raised",
+                                symbol,
+                                (self.market_regime, entry_threshold),
                                 "MarketRegimeによりエントリーRSI基準を引き上げました: 銘柄=%s | レジーム=%s | RSI基準=%.1f",
                                 symbol,
                                 self.market_regime.value,
@@ -3055,7 +3079,13 @@ class TradingUseCase:
                             allocated_budget=budget_per_position if signal.side == config.OrderSide.BUY else None,
                             side=signal.side.name, **self._volatility_inputs(assessment),
                         )
-                        logger.info("注文数量が0のため見送ります: 銘柄=%s", symbol)
+                        self._log_on_change(
+                            "order_quantity_zero",
+                            symbol,
+                            (signal.side, original_qty),
+                            "注文数量が0のため見送ります: 銘柄=%s",
+                            symbol,
+                        )
                         continue
                     if signal.side == config.OrderSide.BUY:
                         daily_pnl = self._calculate_daily_pnl(positions)
