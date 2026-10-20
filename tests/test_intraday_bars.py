@@ -1,4 +1,11 @@
-from src.infrastructure.market_data.get_intraday_bars import get_yahoo_intraday_bars
+from datetime import date
+
+import pytest
+
+from src.infrastructure.market_data.get_intraday_bars import (
+    fetch_yahoo_intraday_bars_for_dates,
+    get_yahoo_intraday_bars,
+)
 
 
 def test_get_yahoo_intraday_bars_parses_response_into_minute_bars(monkeypatch):
@@ -64,3 +71,23 @@ def test_get_yahoo_intraday_bars_returns_empty_list_when_request_fails(monkeypat
     )
 
     assert get_yahoo_intraday_bars("7203", days=7) == []
+
+
+def test_fetch_yahoo_intraday_bars_for_dates_uses_inclusive_dates(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "src.infrastructure.market_data.get_intraday_bars.request_handler.send_get",
+        lambda url, **kwargs: captured.update(url=url, **kwargs) or {"chart": {"result": []}},
+    )
+
+    result = fetch_yahoo_intraday_bars_for_dates("7203", date(2026, 10, 13), date(2026, 10, 13))
+
+    assert result.ok
+    assert captured["url"].endswith("/7203.T")
+    assert captured["params"]["interval"] == "1m"
+    assert captured["params"]["period2"] - captured["params"]["period1"] == 24 * 60 * 60
+
+
+def test_fetch_yahoo_intraday_bars_for_dates_rejects_ranges_over_eight_days():
+    with pytest.raises(ValueError, match="8日以内"):
+        fetch_yahoo_intraday_bars_for_dates("7203", date(2026, 10, 1), date(2026, 10, 9))

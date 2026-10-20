@@ -142,6 +142,7 @@
 | `MARKET_LIQUIDATION_MINUTE` | "20" | 任意 |  |
 | `MAX_ORDER_AMOUNT_PER_TRADE` | "30000" | 任意 | 1回の取引あたりの最大注文金額（運用資金10万円の30%） |
 | `MAX_ORDER_COUNT_PER_DAY` | "10" | 任意 | 1日あたりの最大注文数 |
+| `MINUTE_BACKFILL_UNSELECTED_TIMEOUT_SECONDS` | "1800" | 任意 | 定期分足バックフィルで昼推定の選定外銘柄を取得する時間上限(秒)。 |
 | `MINUTE_BAR_PARQUET_DIR` | str(_repo_root / 'data' / 'minute_bars_parquet') | 任意 | 分足Parquetの保存先。 |
 | `MINUTE_BAR_PARQUET_VERIFY_DIR` | str(_repo_root / 'data' / 'minute_bars_parquet_verify') | 任意 |  |
 | `OPENAI_API_KEY` | (非表示) | 任意 |  |

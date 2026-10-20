@@ -384,6 +384,9 @@ MIDDAY_FILTERING_VERIFY_RESULT_ROOT = Path(
 MINUTE_BAR_PARQUET_VERIFY_DIR = Path(
     os.getenv("MINUTE_BAR_PARQUET_VERIFY_DIR", str(_repo_root / "data" / "minute_bars_parquet_verify"))
 )
+MINUTE_BACKFILL_UNSELECTED_TIMEOUT_SECONDS = _non_negative_env(
+    "MINUTE_BACKFILL_UNSELECTED_TIMEOUT_SECONDS", "1800", float
+)
 
 # ================================================================================
 # 注文履歴・市場設定

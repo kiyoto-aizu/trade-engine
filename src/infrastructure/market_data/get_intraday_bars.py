@@ -49,6 +49,28 @@ def fetch_yahoo_intraday_bars(
     return _parse_intraday_response(symbol, response)
 
 
+def fetch_yahoo_intraday_bars_for_dates(
+    symbol: str, start: date, end: date, interval: str = "1m", timeout: float = 30
+) -> IntradayFetchResult:
+    """指定日(両端含む)の分足を取得します。Yahooの1分足は8日以内で指定してください。"""
+    if end < start:
+        raise ValueError("endはstart以降の日付を指定してください。")
+    if (end - start).days >= 8:
+        raise ValueError("Yahooの1分足は1回につき8日以内の範囲で指定してください。")
+
+    period1 = int(datetime.combine(start, time.min, tzinfo=JST).timestamp())
+    period2 = int(datetime.combine(end + timedelta(days=1), time.min, tzinfo=JST).timestamp())
+    response = request_handler.send_get(
+        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}.T",
+        params={"interval": interval, "period1": period1, "period2": period2},
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=timeout,
+    )
+    if not response:
+        return IntradayFetchResult(ok=False, error="NO_RESPONSE")
+    return _parse_intraday_response(symbol, response)
+
+
 def fetch_yahoo_index_intraday_bars(
     index_symbol: str, start: date, end: date, interval: str = "1m", timeout: float = 30
 ) -> IntradayFetchResult:

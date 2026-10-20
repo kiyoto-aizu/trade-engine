@@ -65,6 +65,43 @@ def test_backfill_usecase_records_zero_when_fetch_returns_nothing(tmp_path):
     assert imported_counts == {"9999": 0}
 
 
+def test_backfill_continues_after_fetch_exception(tmp_path):
+    repository = ParquetMinuteBarRepository(tmp_path)
+
+    def fetch(symbol, _days):
+        if symbol == "BAD":
+            raise OSError("temporary Yahoo failure")
+        return [MinuteBar(
+            time="2026-09-10T09:31:00",
+            price=100.0,
+            cumulative_volume=None,
+            volume=500,
+            source="yahoo",
+        )]
+
+    usecase = MinuteBarBackfillUseCase(fetch_intraday_bars=fetch, repository=repository)
+
+    assert usecase.run(["BAD", "GOOD"]) == {"BAD": 0, "GOOD": 1}
+    assert usecase.last_failures == {"BAD": "FETCH_ERROR:OSError"}
+    assert len(repository.load_bars(date(2026, 9, 10), "GOOD")) == 1
+
+
+def test_backfill_time_limit_stops_remaining_symbols(monkeypatch, tmp_path):
+    from src.application import minute_bar_backfill_usecase
+
+    times = iter([0.0, 0.0, 2.0])
+    monkeypatch.setattr(minute_bar_backfill_usecase, "perf_counter", lambda: next(times))
+    fetched = []
+    usecase = MinuteBarBackfillUseCase(
+        fetch_intraday_bars=lambda symbol, _days: fetched.append(symbol) or [],
+        repository=ParquetMinuteBarRepository(tmp_path),
+    )
+
+    assert usecase.run(["A", "B", "C"], max_elapsed_seconds=1) == {"A": 0}
+    assert fetched == ["A"]
+    assert usecase.last_unprocessed_symbols == ["B", "C"]
+
+
 def test_backfill_usecase_preserves_existing_minute_values_and_only_adds_new_times(tmp_path):
     repository = ParquetMinuteBarRepository(tmp_path)
     target_date = date(2026, 9, 10)

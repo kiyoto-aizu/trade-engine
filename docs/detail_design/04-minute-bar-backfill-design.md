@@ -1,6 +1,6 @@
 # 詳細設計書 04 分足バックフィル
 
-> 状態: 一部未反映    最終更新: 2026-10-08
+> 状態: 一部未反映    最終更新: 2026-10-20
 > 起動: `run_minute_backfill.py`    関連: [05 バックテスト](./05-backtest-design.md)、[分足データの用途](../../data/minute_bars_parquet/用途_Parquet形式の分足データ.md)
 
 ## 1. 概要
@@ -9,7 +9,7 @@
 
 ## 2. 実行方式
 
-`run_minute_backfill.py`が直近`--days`日分の通常・価格帯別フィルタリング結果から重複のない銘柄一覧を作り、`MinuteBarBackfillUseCase`を実行します。`--days`の既定値は7日です。現在の`task_schedule.py`は土曜07:30を予定しています。
+`run_minute_backfill.py`が直近`--days`日分の対象を「朝の結果」「昼推定の選定銘柄」「昼推定の選定外」の順で重複排除し、`MinuteBarBackfillUseCase`を実行します。`--days`の既定値は7日です。選定外だけに`MINUTE_BACKFILL_UNSELECTED_TIMEOUT_SECONDS`（既定1800秒）の上限を適用します。現在の`task_schedule.py`は土曜07:30を予定しています。
 
 | 時刻 | 起動主体 | 前後の機能 |
 |---|---|---|
@@ -20,16 +20,18 @@
 
 ## 3. 入出力
 
-入力する通常および価格帯別のフィルタ結果から銘柄を集め、Yahoo Financeの1分足を銘柄・日付別のParquetパーティションへ保存します。完了した取込結果をSlack `analysis`へ通知します。
+朝の通常・価格帯別フィルタ結果と、昼推定診断の選定・入力銘柄から対象を集め、Yahoo Financeの1分足を銘柄・日付別のParquetパーティションへ保存します。完了した取込結果をSlack `analysis`へ通知します。
 
 | 項目 | 方向 | 場所・形式 | 備考 |
 |---|---|---|---|
 | 通常フィルタ結果 | 入力 | `FILTERING_RESULT_DIRECTORY` | 日付別JSON |
-| 価格帯別フィルタ結果 | 入力 | `FILTERING_PRICE_BAND_RESULT_ROOT/<価格上限>/` | 通常ディレクトリを明示指定した場合は対象外 |
+| 価格帯別フィルタ結果 | 入力 | `FILTERING_PRICE_BAND_RESULT_ROOT/<価格上限>/` | 朝の結果。通常ディレクトリを明示指定した場合は対象外 |
+| 昼推定診断 | 入力 | `MIDDAY_FILTERING_RESULT_ROOT/<価格上限>/diagnostics/` | `candidates`の全入力と`summary.adopted_symbols` |
 | Yahoo 1分足 | 入力 | Yahoo Finance chart API | `--days`で取得期間を指定 |
 | 分足データ | 出力 | `data/minute_bars_parquet/symbol=<銘柄>/date=<日付>/data.parquet` | `MINUTE_BAR_PARQUET_DIR`で変更可能 |
 | 日経225の1分足 | 出力 | `data/index_minute_bars_parquet/symbol=^N225/date=<日付>/data.parquet` | `INDEX_MINUTE_BAR_PARQUET_DIR`。本タスクではなく日次分析(引け後)と`run_index_minute_backfill.py`が保存。CAUTION検証用 |
 | 取込結果通知 | 出力 | Slack `analysis` | 対象数、取込本数、所要時間 |
+| 取得品質CSV | 出力 | `analysis/minute_bar_backfill_quality/` | 銘柄・日ごとのYahoo取得本数と状態。`data/`外 |
 | 当日分足(日次取得) | 出力 | 上記と同じ`data/minute_bars_parquet/` | 日次分析(引け後16:30)が当日のフィルタ結果の銘柄を保存。[§11](#11-日次分析での当日分足の保存)参照 |
 
 ## 4. 処理フロー
@@ -39,22 +41,22 @@
 ```mermaid
 flowchart TD
     Start["run_minute_backfill.py起動"] --> Args["--days・入力先・出力先を決定"]
-    Args --> Collect["通常と価格帯別の直近フィルタ結果から銘柄を重複排除"]
+    Args --> Collect["朝・昼選定・昼選定外を優先順に重複排除"]
     Collect --> HasSymbols{"対象銘柄あり?"}
     HasSymbols -->|No| NoWork["ログ出力して終了"]
-    HasSymbols -->|Yes| Fetch["銘柄ごとにYahoo chart APIで1分足取得"]
+    HasSymbols -->|Yes| Fetch["朝→昼選定→昼選定外の順にYahoo 1分足取得"]
     Fetch --> HasBars{"分足あり?"}
     HasBars -->|No| Empty["警告を記録し0本として次へ"]
     HasBars -->|Yes| EachBar["各バーの日付でParquetパーティションを決定"]
-    EachBar --> Append["ParquetMinuteBarRepository.append_bar"]
-    Append --> Priority{"既存yahooかつ新規poll?"}
+    EachBar --> Append["既存時刻を除外し日付ごとに一括保存"]
+    Append --> Priority{"同一時刻が既存?"}
     Priority -->|Yes| Keep["既存バーを保持"]
-    Priority -->|No| Write["同時刻バーを置換し時刻順にParquet保存"]
+    Priority -->|No| Write["新しい時刻のバーを追加してParquet保存"]
     Empty --> More{"未処理銘柄あり?"}
     Keep --> More
     Write --> More
     More -->|Yes| Fetch
-    More -->|No| Summary["取得本数・対象数・所要時間を集計"]
+    More -->|No| Summary["対象別件数・取得本数・未取得銘柄日・所要時間を集計"]
     Summary --> Notify["Slack analysisへ完了通知"]
     Notify --> End["終了"]
     NoWork --> End
@@ -64,14 +66,17 @@ flowchart TD
 
 ## 5. 判断ルール・仕様
 
-同じ銘柄・時刻にデータが重なった場合は、Yahoo由来のデータを優先して保持します。
+バックフィルでは、同じ銘柄・時刻の既存Parquet値を保持し、新しい時刻のバーだけを追加します。
 
 | 条件 | 結果 |
 |---|---|
 | 対象銘柄のYahooデータが空 | 警告ログを出し、その銘柄は0本として次へ進む |
-| 既存データがYahoo由来で、新しいデータが`poll` | 既存のYahooデータを上書きしない |
-| 同一時刻に優先されるYahooデータがある | 既存時刻の足を置換し、時刻順に並べて保存 |
+| Yahoo取得が例外 | 警告ログを出し、その銘柄は0本として次へ進む |
+| 同じ銘柄・時刻のバーが既存Parquetにある | 既存値を保持し、新しい時刻だけを追加 |
 | 新しいバーの保存 | `time[:10]`の日付でパーティションを選ぶ |
+| 選定外の取得時間が上限に達した | 残りを打ち切り、未取得銘柄数を警告。朝・昼選定の取得結果は保持 |
+| 昼診断JSONが壊れている・一部形式不正 | 警告を記録し、読み取れた候補で続行 |
+| 各実行の品質記録 | 期待対象の日ごとにYahoo取得本数・状態をCSVへ記録 |
 | Parquetファイルの置換で`PermissionError` | 最大5回試行し、回数に応じた待ち時間で再試行 |
 
 ## 6. レイヤー別の構成
@@ -81,8 +86,9 @@ flowchart TD
 | `src/domain/models.py` | domain | `MinuteBar`データモデル |
 | `src/application/minute_bar_backfill_usecase.py` | application | 銘柄ごとの取得、日付別振分け、保存呼び出し |
 | `src/infrastructure/market_data/get_intraday_bars.py` | infrastructure | Yahoo Financeの分足取得 |
-| `src/infrastructure/persistence/parquet_minute_bar_repository.py` | infrastructure | Parquetパーティションの読込・保存・Yahoo優先処理 |
+| `src/infrastructure/persistence/parquet_minute_bar_repository.py` | infrastructure | Parquetパーティションの読込・保存 |
 | `src/entrypoints/run_minute_backfill.py` | entrypoints | 対象銘柄収集、依存構築、処理計測、通知 |
+| `src/entrypoints/run_midday_minute_backfill_once.py` | entrypoints | 昼推定診断の全入力を指定日・銘柄単位で一回限り補完 |
 
 ## 7. 異常系・失敗時の動き
 
@@ -90,12 +96,25 @@ flowchart TD
 |---|---|---|---|---|
 | 対象銘柄がない | 収集した銘柄数 | ログを出して終了 | なし | なし |
 | Yahoo分足が空 | 取得結果が空 | 当該銘柄を0本で記録し、次の銘柄へ進む | 警告ログ | なし |
+| Yahoo取得が例外 | 取得呼出しの例外 | 当該銘柄を0本で記録し、次の銘柄へ進む | 警告ログ | 例外型 |
+| 選定外の時間上限に到達 | 経過時間 | 残りをスキップ。朝・昼選定の処理結果は維持 | 警告ログ | `TIME_LIMIT` |
+| 昼診断JSONが破損・一部不正 | JSON解析・形式検証 | 読み取れる診断と候補で続行 | 警告ログ | なし |
 | Parquet保存に`pyarrow`がない | 遅延import | `RuntimeError`を送出する | `process_notification()`が例外を記録し再送出 | `RuntimeError` |
 | Parquet置換が再試行上限後も失敗 | `PermissionError`が継続 | 例外を送出し、以降の処理を中断 | `process_notification()`が例外を記録し再送出 | `PermissionError` |
 
 ## 8. 設定項目
 
-共通設定は[config-reference.md](../reference/config-reference.md)を参照してください。起動引数は`--days`（既定7）、`--filtering-dir`、`--output-dir`です。出力先の設定値は`MINUTE_BAR_PARQUET_DIR`です。
+共通設定は[config-reference.md](../reference/config-reference.md)を参照してください。起動引数は`--days`（既定7）、`--filtering-dir`、`--output-dir`です。選定外の時間上限は`MINUTE_BACKFILL_UNSELECTED_TIMEOUT_SECONDS`、分足の出力先は`MINUTE_BAR_PARQUET_DIR`です。
+
+### 一回限りの指定日補完
+
+`src.entrypoints.run_midday_minute_backfill_once`は、昼推定診断の全入力候補（選定外を含む）を銘柄・日単位で取得します。Yahooへの各要求は指定した1日分（8日以内）に限定し、既存時刻は上書きしません。実行例:
+
+```powershell
+.venv\Scripts\python.exe -m src.entrypoints.run_midday_minute_backfill_once --start-date 2026-10-13 --end-date 2026-10-19
+```
+
+取得本数・新規追加本数・未取得銘柄日・実取得最古日・所要時間をログに出し、銘柄日ごとの結果を品質CSVフォルダに保存します。
 
 ## 9. 決定事項と変更履歴
 
