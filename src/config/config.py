@@ -344,6 +344,31 @@ def _non_negative_env(name: str, default: str, cast):
     return value
 
 
+# J-Quants API V2。接続先はAPIキーの誤送信を避けるため固定する。
+JQUANTS_API_KEY = os.getenv("JQUANTS_API_KEY", "").strip()
+JQUANTS_API_BASE_URL = "https://api.jquants.com/v2"
+JQUANTS_TIMEOUT_SECONDS = _non_negative_env("JQUANTS_TIMEOUT_SECONDS", "30", float)
+JQUANTS_MAX_ATTEMPTS = _non_negative_env("JQUANTS_MAX_ATTEMPTS", "4", int)
+JQUANTS_REQUEST_INTERVAL_SECONDS = _non_negative_env(
+    "JQUANTS_REQUEST_INTERVAL_SECONDS", "1.2", float
+)
+JQUANTS_429_WAIT_SECONDS = _non_negative_env("JQUANTS_429_WAIT_SECONDS", "120", float)
+JQUANTS_RETRY_BASE_SECONDS = _non_negative_env("JQUANTS_RETRY_BASE_SECONDS", "1", float)
+JQUANTS_RETRY_MAX_SECONDS = _non_negative_env("JQUANTS_RETRY_MAX_SECONDS", "30", float)
+JQUANTS_RAW_DIRECTORY = Path(
+    os.getenv("JQUANTS_RAW_DIRECTORY", str(_repo_root / "data" / "jquants" / "raw"))
+)
+JQUANTS_LEDGER_DATABASE_FILE = Path(
+    os.getenv(
+        "JQUANTS_LEDGER_DATABASE_FILE",
+        str(_repo_root / "data" / "jquants" / "ledger.sqlite3"),
+    )
+)
+if JQUANTS_TIMEOUT_SECONDS <= 0:
+    raise ValueError("JQUANTS_TIMEOUT_SECONDSは正数を指定してください。")
+if JQUANTS_MAX_ATTEMPTS <= 0:
+    raise ValueError("JQUANTS_MAX_ATTEMPTSは正数を指定してください。")
+
 # 全価格帯で板の売買代金・売買高が取れなかった銘柄を、結果保存前に再取得する
 FILTER_BOARD_RETRY_ENABLED = os.getenv("FILTER_BOARD_RETRY_ENABLED", "true").strip().lower() in ("1", "true", "yes")
 FILTER_BOARD_RETRY_MAX_ROUNDS = _non_negative_env("FILTER_BOARD_RETRY_MAX_ROUNDS", "2", int)
