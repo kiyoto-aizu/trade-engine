@@ -37,6 +37,8 @@
 | バックテスト | `run_backtest.py` | [05 バックテスト](./detail_design/05-backtest-design.md) | 4章 | 現行 |
 | 日次分析 | `run_daily_analysis.py` | [08 日次分析](./detail_design/08-daily-analysis-design.md)、[03b 価格帯別トレンド答え合わせ](./detail_design/03b-price-band-trend-check.md) | 4章 | 現行 |
 | 日次日記 | `run_daily_diary.py` | [11 日次日記](./detail_design/11-daily-diary-design.md) | 4章 | 現行 |
+| J-Quants V2取得クライアント | 後続取得処理から利用 | [15 J-Quants V2取得クライアント](./detail_design/15-jquants-v2-client.md) | 4章 | 一部未反映 |
+| J-Quants raw・取得台帳 | 後続取得処理から利用 | [16 J-Quants raw・取得台帳・確定](./detail_design/16-jquants-raw-ledger.md) | 4章 | 一部未反映 |
 | 日次タスク確認 | `run_daily_task_check.py` | [14 診断・保守](./detail_design/14-diagnostics-and-maintenance-design.md) | 4章 | 現行 |
 | 日次タスク計画 | `run_daily_task_plan.py` | [14 診断・保守](./detail_design/14-diagnostics-and-maintenance-design.md) | 4章 | 現行 |
 | フィルタリング | `run_filtering.py` | [02 フィルタリング](./detail_design/02-filtering-design.md) | 4章 | 現行 |
