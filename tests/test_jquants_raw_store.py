@@ -1,7 +1,13 @@
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import threading
-from datetime import datetime, timezone
+import time
+import builtins
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import pytest
 
 from src.infrastructure.market_data.jquants_raw_store import (
@@ -54,6 +60,8 @@ class FakeClient:
 
 
 def _store(tmp_path, *, clock=None):
+    if sys.platform != "win32":
+        pytest.skip("raw-store integration tests require Windows msvcrt locking")
     return JQuantsRawStore(
         tmp_path / "raw",
         tmp_path / "ledger.sqlite3",
@@ -189,6 +197,7 @@ def test_partial_run_can_be_retried_and_completed(tmp_path):
 
 def test_simultaneous_capture_is_rejected_and_running_data_is_not_visible(tmp_path):
     store = _store(tmp_path)
+    published = _capture(store, FakeClient([_page(1, [{"Code": "70070"}])]))
     page_saved = threading.Event()
     continue_capture = threading.Event()
     results = []
@@ -215,7 +224,7 @@ def test_simultaneous_capture_is_rejected_and_running_data_is_not_visible(tmp_pa
         assert store.list_incomplete_datasets()[0].page_count == 1
         assert store.get_current_manifest(
             kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
-        ) is None
+        )["generation_id"] == published.content_sha256
         with pytest.raises(JQuantsDatasetAlreadyRunningError):
             _capture(store, FakeClient([_page(1, [{"Code": "72030"}])]))
     finally:
@@ -233,13 +242,43 @@ def test_repeating_identical_capture_reuses_generation_without_duplicate_data(tm
     store = _store(tmp_path, clock=lambda: now)
     rows = [{"Code": "72030", "Close": 100}]
     first = _capture(store, FakeClient([_page(1, rows)]))
-    second = _capture(store, FakeClient([_page(1, rows)]))
+    second_store = _store(tmp_path, clock=lambda: now + timedelta(days=1))
+    second = _capture(second_store, FakeClient([_page(1, rows)]))
 
     assert first.dataset_id == second.dataset_id
     assert first.content_sha256 == second.content_sha256
     assert first.committed_path == second.committed_path
     assert len(list((tmp_path / "raw" / "committed" / first.dataset_id / "generations").iterdir())) == 1
     assert len(_read_pages(second)[0]["response"]["data"]) == 1
+
+
+def test_content_hash_tracks_page_order_and_page_boundaries(tmp_path):
+    store = _store(tmp_path)
+    first = _capture(
+        store,
+        FakeClient(
+            [
+                _page(1, [{"Code": "72030"}], next_key=PAGE_KEY),
+                _page(2, [{"Code": "83060"}]),
+            ]
+        ),
+    )
+    reordered = _capture(
+        store,
+        FakeClient(
+            [
+                _page(1, [{"Code": "83060"}], next_key=PAGE_KEY),
+                _page(2, [{"Code": "72030"}]),
+            ]
+        ),
+    )
+    repartitioned = _capture(
+        store,
+        FakeClient([_page(1, [{"Code": "72030"}, {"Code": "83060"}])]),
+    )
+
+    assert first.content_sha256 != reordered.content_sha256
+    assert first.content_sha256 != repartitioned.content_sha256
 
 
 def test_invalid_page_data_fails_validation_without_complete_state(tmp_path):
@@ -324,7 +363,7 @@ def test_pointer_failure_keeps_staging_and_is_recoverable(tmp_path, monkeypatch)
     real_replace = raw_store_module.os.replace
 
     def fail_pointer_replace(source, destination):
-        if str(destination).endswith("\\CURRENT"):
+        if Path(destination).name == "CURRENT":
             raise OSError(f"{API_KEY} cannot publish pointer")
         return real_replace(source, destination)
 
@@ -334,15 +373,416 @@ def test_pointer_failure_keeps_staging_and_is_recoverable(tmp_path, monkeypatch)
 
     assert API_KEY not in str(error.value)
     dataset_id = store._dataset_id("daily", ENDPOINT, CONDITIONS)
-    assert store.get_state(dataset_id) is JQuantsDatasetState.PARTIAL
+    assert store.get_state(dataset_id) is JQuantsDatasetState.RUNNING
     assert store.get_current_manifest(
         kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
     ) is None
     assert list((tmp_path / "raw" / "staging" / dataset_id).rglob("pages.jsonl"))
 
     monkeypatch.setattr(raw_store_module.os, "replace", real_replace)
-    result = _capture(store, FakeClient([_page(1, [{"Code": "72030"}])]))
-    assert result.state is JQuantsDatasetState.COMPLETE
+    store.recover_dataset(dataset_id)
+    assert store.get_state(dataset_id) is JQuantsDatasetState.COMPLETE
     assert store.get_current_manifest(
         kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
     ) is not None
+
+
+@pytest.mark.parametrize("saved_page_count", [0, 1, 2])
+def test_reacquisition_preserves_published_generation_during_and_after_failure(
+    tmp_path, saved_page_count
+):
+    store = _store(tmp_path)
+    original = _capture(store, FakeClient([_page(1, [{"Code": "72030"}])]))
+    page_saved = threading.Event()
+    continue_capture = threading.Event()
+    errors = []
+
+    def failed_pages():
+        for page_number in range(1, saved_page_count + 1):
+            yield _page(
+                page_number,
+                [{"Code": str(83060 + page_number)}],
+                next_key=PAGE_KEY,
+            )
+        page_saved.set()
+        assert continue_capture.wait(timeout=10)
+        raise JQuantsResponseError("safe client error")
+
+    def run_capture():
+        try:
+            _capture(store, FakeClient(failed_pages()))
+        except BaseException as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=run_capture)
+    thread.start()
+    try:
+        assert page_saved.wait(timeout=10)
+        manifest = store.get_current_manifest(
+            kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
+        )
+        assert manifest is not None
+        assert manifest["generation_id"] == original.content_sha256
+    finally:
+        continue_capture.set()
+        thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    assert len(errors) == 1
+    manifest = store.get_current_manifest(
+        kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
+    )
+    assert manifest is not None
+    assert manifest["generation_id"] == original.content_sha256
+
+
+def test_empty_reacquisition_holds_nonempty_publication_and_records_observation(tmp_path):
+    store = _store(tmp_path)
+    original = _capture(store, FakeClient([_page(1, [{"Code": "72030"}])]))
+    pointer_path = original.committed_path.parent.parent / "CURRENT"
+    original_pointer = pointer_path.read_bytes()
+
+    result = _capture(store, FakeClient([_page(1, [])]))
+
+    assert result.row_count == 0
+    assert result.state.value == "EMPTY_HELD"
+    assert pointer_path.read_bytes() == original_pointer
+    manifest = store.get_current_manifest(
+        kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
+    )
+    assert manifest is not None
+    assert manifest["generation_id"] == original.content_sha256
+    with sqlite3.connect(tmp_path / "ledger.sqlite3") as connection:
+        state, page_count, row_count = connection.execute(
+            "SELECT state, page_count, row_count FROM datasets WHERE dataset_id = ?",
+            (original.dataset_id,),
+        ).fetchone()
+        attempts = connection.execute(
+            "SELECT state, row_count FROM dataset_attempts WHERE dataset_id = ? "
+            "ORDER BY started_at_utc",
+            (original.dataset_id,),
+        ).fetchall()
+    assert (state, page_count, row_count) == ("EMPTY_HELD", 1, 0)
+    assert attempts[-1] == ("EMPTY_HELD", 0)
+
+
+def test_staging_cleanup_failure_does_not_undo_publication(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    real_rmtree = raw_store_module.shutil.rmtree
+
+    def fail_staging_cleanup(path, *args, **kwargs):
+        if Path(path).parent.name == store._dataset_id("daily", ENDPOINT, CONDITIONS):
+            raise OSError("synthetic cleanup failure")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(raw_store_module.shutil, "rmtree", fail_staging_cleanup)
+
+    result = _capture(store, FakeClient([_page(1, [{"Code": "72030"}])]))
+
+    assert result.state is JQuantsDatasetState.COMPLETE
+    assert result.warning_category == "STAGING_CLEANUP_FAILED"
+    assert store.get_state(result.dataset_id) is JQuantsDatasetState.COMPLETE
+    assert store.get_current_manifest(
+        kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
+    ) is not None
+
+
+@pytest.mark.parametrize("stop_point, expected_exit", [("before_pointer", 71), ("after_pointer", 72)])
+def test_process_stop_during_publication_is_recovered_idempotently(
+    tmp_path, stop_point, expected_exit
+):
+    store = _store(tmp_path)
+    original = _capture(store, FakeClient([_page(1, [{"Code": "72030"}])]))
+    dataset_id = original.dataset_id
+    script = r"""
+import os
+import sys
+from pathlib import Path
+from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStore
+from src.infrastructure.market_data.jquants_v2_client import JQuantsPage, JQuantsPageMetadata
+
+class Client:
+    def iter_pages(self, endpoint, params=None):
+        rows = [{"Code": "83060", "Close": 200}]
+        body = b'{"data":[{"Code":"83060","Close":200}]}'
+        yield JQuantsPage(
+            data=tuple(rows),
+            raw_body=body,
+            metadata=JQuantsPageMetadata(endpoint, 1, 1, 200, False),
+        )
+
+store = JQuantsRawStore(Path(sys.argv[1]), Path(sys.argv[2]))
+if sys.argv[3] == "before_pointer":
+    store._publish_pointer = lambda *args: os._exit(71)
+else:
+    store._finish_dataset = lambda *args: os._exit(72)
+store.capture(Client(), kind="daily", endpoint="equities/bars/daily",
+              conditions={"date": "2026-10-20"})
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(tmp_path / "raw"),
+            str(tmp_path / "ledger.sqlite3"),
+            stop_point,
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        check=False,
+        timeout=20,
+    )
+
+    assert completed.returncode == expected_exit
+    old_manifest = store.get_current_manifest(
+        kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
+    )
+    if stop_point == "after_pointer":
+        assert old_manifest is not None
+        assert old_manifest["generation_id"] == original.content_sha256
+
+    store.recover_dataset(dataset_id)
+    recovered = store.get_current_manifest(
+        kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
+    )
+    assert recovered is not None
+    assert recovered["row_count"] == 1
+    assert store.get_state(dataset_id) is JQuantsDatasetState.COMPLETE
+    store.recover_dataset(dataset_id)
+    assert store.get_current_manifest(
+        kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
+    ) == recovered
+
+
+def test_corrupt_current_generation_is_not_returned(tmp_path):
+    store = _store(tmp_path)
+    result = _capture(store, FakeClient([_page(1, [{"Code": "72030"}])]))
+    pages_path = result.committed_path / "pages.jsonl"
+    pages_path.write_text("corrupted\n", encoding="utf-8")
+
+    with pytest.raises(JQuantsRawStoreError, match="generation|page|hash"):
+        store.get_current_manifest(
+            kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
+        )
+
+
+def test_corrupt_current_pointer_fails_read_and_recovery_restores_verified_generation(
+    tmp_path,
+):
+    store = _store(tmp_path)
+    result = _capture(store, FakeClient([_page(1, [{"Code": "72030"}])]))
+    pointer_path = result.committed_path.parent.parent / "CURRENT"
+    pointer_path.write_text("not-a-generation\n", encoding="ascii")
+
+    with pytest.raises(JQuantsRawStoreError, match="pointer is invalid"):
+        store.get_current_manifest(
+            kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
+        )
+
+    store.recover_dataset(result.dataset_id)
+
+    manifest = store.get_current_manifest(
+        kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
+    )
+    assert manifest is not None
+    assert manifest["generation_id"] == result.content_sha256
+
+
+def test_missing_confirmed_generation_stops_without_selecting_another(tmp_path):
+    store = _store(tmp_path)
+    first = _capture(store, FakeClient([_page(1, [{"Code": "72030"}])]))
+    second = _capture(store, FakeClient([_page(1, [{"Code": "83060"}])]))
+    shutil = raw_store_module.shutil
+    shutil.rmtree(first.committed_path)
+    shutil.rmtree(second.committed_path)
+
+    with pytest.raises(JQuantsRawStoreError, match="generation is unreadable"):
+        store.get_current_manifest(
+            kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
+        )
+    with pytest.raises(JQuantsRawStoreError, match="generation is unreadable"):
+        store.recover_dataset(second.dataset_id)
+
+
+def test_unsupported_os_fails_before_creating_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(raw_store_module.sys, "platform", "linux")
+    raw_directory = tmp_path / "raw"
+    ledger_file = tmp_path / "ledger.sqlite3"
+
+    with pytest.raises(JQuantsRawStoreError, match="requires Windows"):
+        JQuantsRawStore(raw_directory, ledger_file)
+
+    assert not raw_directory.exists()
+    assert not ledger_file.exists()
+
+
+def test_one_ledger_cannot_be_reused_for_a_different_raw_root(tmp_path):
+    first_store = _store(tmp_path)
+
+    with pytest.raises(JQuantsRawStoreError, match="different raw directory"):
+        JQuantsRawStore(tmp_path / "raw-b", first_store.ledger_database_file)
+
+
+def test_existing_ledger_migrates_verified_current_generation(tmp_path):
+    source_store = _store(tmp_path)
+    result = _capture(source_store, FakeClient([_page(1, [{"Code": "72030"}])]))
+    legacy_ledger = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(tmp_path / "ledger.sqlite3") as source:
+        row = source.execute(
+            """
+            SELECT dataset_id, kind, endpoint, conditions_json, run_id, started_at_utc,
+                   updated_at_utc, completed_at_utc, page_count, row_count,
+                   content_sha256, error_category
+            FROM datasets WHERE dataset_id = ?
+            """,
+            (result.dataset_id,),
+        ).fetchone()
+        pages = source.execute(
+            """
+            SELECT dataset_id, run_id, page_number, row_count, status_code,
+                   content_sha256, captured_at_utc
+            FROM dataset_pages WHERE dataset_id = ?
+            """,
+            (result.dataset_id,),
+        ).fetchall()
+    with sqlite3.connect(legacy_ledger) as legacy:
+        legacy.executescript(
+            """
+            CREATE TABLE datasets (
+                dataset_id TEXT PRIMARY KEY, kind TEXT NOT NULL, endpoint TEXT NOT NULL,
+                conditions_json TEXT NOT NULL, state TEXT NOT NULL, run_id TEXT,
+                started_at_utc TEXT, updated_at_utc TEXT NOT NULL,
+                completed_at_utc TEXT, page_count INTEGER NOT NULL DEFAULT 0,
+                row_count INTEGER NOT NULL DEFAULT 0, content_sha256 TEXT,
+                error_category TEXT
+            );
+            CREATE TABLE dataset_pages (
+                dataset_id TEXT NOT NULL, run_id TEXT NOT NULL, page_number INTEGER NOT NULL,
+                row_count INTEGER NOT NULL, status_code INTEGER NOT NULL,
+                content_sha256 TEXT NOT NULL, captured_at_utc TEXT NOT NULL,
+                PRIMARY KEY (dataset_id, run_id, page_number)
+            );
+            """
+        )
+        legacy.execute(
+            """
+            INSERT INTO datasets VALUES (
+                ?, ?, ?, ?, 'RUNNING', ?, ?, ?, NULL, ?, ?, NULL, NULL
+            )
+            """,
+            row[:4] + row[4:7] + row[8:10],
+        )
+        legacy.executemany("INSERT INTO dataset_pages VALUES (?, ?, ?, ?, ?, ?, ?)", pages)
+
+    migrated = JQuantsRawStore(tmp_path / "raw", legacy_ledger)
+
+    manifest = migrated.get_current_manifest(
+        kind="daily", endpoint=ENDPOINT, conditions=CONDITIONS
+    )
+    assert manifest is not None
+    assert manifest["generation_id"] == result.content_sha256
+    assert migrated.get_state(result.dataset_id) is JQuantsDatasetState.RUNNING
+
+
+def test_lock_failure_closes_handle_and_releases_same_process_guard(
+    tmp_path, monkeypatch
+):
+    import msvcrt
+
+    store = _store(tmp_path)
+    dataset_id = store._dataset_id("daily", ENDPOINT, CONDITIONS)
+    opened_handles = []
+    real_open = Path.open
+    real_locking = msvcrt.locking
+
+    def tracking_open(path, *args, **kwargs):
+        handle = real_open(path, *args, **kwargs)
+        if Path(path).name == f"{dataset_id}.lock":
+            opened_handles.append(handle)
+        return handle
+
+    def fail_locking(*args):
+        raise OSError("synthetic lock failure")
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+    monkeypatch.setattr(msvcrt, "locking", fail_locking)
+    with pytest.raises(JQuantsDatasetAlreadyRunningError):
+        store._acquire_dataset_lock(dataset_id)
+    assert len(opened_handles) == 1
+    assert opened_handles[0].closed
+
+    monkeypatch.setattr(msvcrt, "locking", real_locking)
+    handle = store._acquire_dataset_lock(dataset_id)
+    store._release_dataset_lock(handle)
+
+
+def test_lock_module_import_failure_has_no_file_side_effects(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    dataset_id = store._dataset_id("daily", ENDPOINT, CONDITIONS)
+    real_import = builtins.__import__
+
+    def fail_msvcrt_import(name, *args, **kwargs):
+        if name == "msvcrt":
+            raise ImportError("synthetic import failure")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fail_msvcrt_import)
+    with pytest.raises(JQuantsRawStoreError, match="locking support is unavailable"):
+        store._acquire_dataset_lock(dataset_id)
+
+    assert not (store.raw_directory / "locks").exists()
+    monkeypatch.setattr(builtins, "__import__", real_import)
+    handle = store._acquire_dataset_lock(dataset_id)
+    monkeypatch.setattr(builtins, "__import__", fail_msvcrt_import)
+    with pytest.raises(JQuantsRawStoreError, match="became unavailable"):
+        store._release_dataset_lock(handle)
+    assert handle.file.closed
+    monkeypatch.setattr(builtins, "__import__", real_import)
+    handle = store._acquire_dataset_lock(dataset_id)
+    store._release_dataset_lock(handle)
+
+
+def test_another_process_holding_dataset_lock_prevents_capture(tmp_path):
+    store = _store(tmp_path)
+    dataset_id = store._dataset_id("daily", ENDPOINT, CONDITIONS)
+    ready_file = tmp_path / "lock-ready"
+    script = r"""
+import sys
+import time
+from pathlib import Path
+from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStore
+
+store = JQuantsRawStore(Path(sys.argv[1]), Path(sys.argv[2]))
+handle = store._acquire_dataset_lock(sys.argv[3])
+Path(sys.argv[4]).write_text("ready", encoding="ascii")
+time.sleep(2)
+store._release_dataset_lock(handle)
+"""
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(store.raw_directory),
+            str(store.ledger_database_file),
+            dataset_id,
+            str(ready_file),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not ready_file.exists() and time.monotonic() < deadline:
+            if process.poll() is not None:
+                pytest.fail("lock-holder process exited before acquiring its lock")
+            time.sleep(0.05)
+        assert ready_file.exists()
+        with pytest.raises(JQuantsDatasetAlreadyRunningError):
+            _capture(store, FakeClient([_page(1, [{"Code": "72030"}])]))
+        with pytest.raises(JQuantsDatasetAlreadyRunningError):
+            store.recover_dataset(dataset_id)
+    finally:
+        process.wait(timeout=10)
+
+    result = _capture(store, FakeClient([_page(1, [{"Code": "72030"}])]))
+    assert result.state is JQuantsDatasetState.COMPLETE
