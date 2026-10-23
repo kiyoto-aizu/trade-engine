@@ -31,7 +31,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         usecase = JQuantsSingleDayIngestion(
-            JQuantsRawStore(), JQuantsCanonicalStore(config.JQUANTS_CANONICAL_DIRECTORY)
+            JQuantsRawStore(), JQuantsCanonicalStore(config.JQUANTS_CANONICAL_DIRECTORY),
+            metrics_directory=config.JQUANTS_EXECUTION_METRICS_DIRECTORY,
         )
         summary = usecase.run(
             dataset=args.dataset, date=args.date,
