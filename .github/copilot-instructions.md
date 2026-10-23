@@ -10,3 +10,11 @@
 - レビュー依頼・返却に関する遷移（`wf:review-needed` 等）は、依頼を受けた場合のみルールどおり実施する。
 - 状態ラベルは同時に1つだけ。付け替え時は旧ラベルを外す。
 - 実施したラベル遷移（例: `wf:impl-running` → `wf:impl-done`）は完了報告に記載する。
+
+## Issue と PR の紐付けルール
+
+1 つの Issue に複数の PR が紐づき得るため、自動クローズは使わない。
+
+- Issue に関わる PR の本文には `Refs #番号` を入れる。
+- `Closes` / `Fixes` / `Resolves` は使わない（複数 PR のうち最初のマージで Issue が閉じてしまうため）。
+- Issue の Close と `wf:done` への遷移は人間が決定する。エージェントは自動で行わない（上記ラベル運用の `wf:decision-needed` → `wf:done` と同じ）。
