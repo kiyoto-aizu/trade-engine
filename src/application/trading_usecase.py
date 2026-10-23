@@ -3044,7 +3044,10 @@ class TradingUseCase:
                                     float(board['current_price']), signal.qty,
                                     self._market_regime_event_inputs(rsi, entry_threshold, assessment),
                                 )
-                            logger.info(
+                            self._log_on_change(
+                                "market_regime_danger_skip",
+                                symbol,
+                                self.market_regime,
                                 "MarketRegimeにより新規買いを見送ります: 銘柄=%s | レジーム=%s",
                                 symbol,
                                 self.market_regime.value,

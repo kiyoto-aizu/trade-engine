@@ -9,6 +9,7 @@ from src.application import trading_usecase as trading_usecase_module
 from src.application.trading_usecase import TradingUseCase
 from src.config import config
 from src.domain.enums import OrderSide
+from src.domain.market_regime import MarketRegime
 from src.domain.models import PriceLimit
 from src.domain.volatility import VolatilityLevel
 from src.infrastructure.market_data import get_daily_closes
@@ -250,6 +251,30 @@ def test_board_unavailable_and_recovery_are_logged_once(monkeypatch, tmp_path, c
     assert len(recovered) == 1
     assert '7203' in unavailable[0].message
     assert '7203' in recovered[0].message
+
+
+def test_market_regime_danger_skip_repeats_at_debug_level(monkeypatch, tmp_path, caplog):
+    use_case, sender, _, symbols_path, now_provider, sleep = _build_loop(
+        monkeypatch,
+        tmp_path,
+        price_limit=PriceLimit(80.0, 99.0),
+        rsi=60.0,
+        close_minute=3,
+    )
+    use_case.market_regime = MarketRegime.DANGER
+
+    with caplog.at_level(logging.DEBUG, logger='src.application.trading_usecase'):
+        use_case.run(symbols_path, now_provider=now_provider, sleep=sleep)
+
+    matching = [
+        record for record in caplog.records
+        if 'MarketRegimeにより新規買いを見送ります' in record.message
+    ]
+    assert [record.levelno for record in matching].count(logging.INFO) == 1
+    assert [record.levelno for record in matching].count(logging.DEBUG) == 2
+    assert all('銘柄=7203' in record.message for record in matching)
+    assert all('レジーム=DANGER' in record.message for record in matching)
+    assert sender.orders == []
 
 
 @pytest.mark.parametrize(
