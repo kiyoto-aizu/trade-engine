@@ -28,7 +28,7 @@ def row(dataset="daily", code="123A0", **changes):
     result = dict(Code=code, Date=DAY, O=10, H=12, L=8, C=11, Vo=0, Va=None)
     if dataset == "daily":
         result.update(AdjFactor=0.5, AdjO=5, AdjH=6, AdjL=4, AdjC=5.5,
-                      AdjVo=0, UL=0, LL=None)
+                      AdjVo=0, UL="0", LL="1")
     else:
         result["Time"] = "09:00"
     result.update(changes)
@@ -103,7 +103,8 @@ def test_all_symbol_pages_fields_schema_and_provenance(stores, dataset):
     for index, source in enumerate(records):
         for name, value in source.items():
             if name not in {"Date", "Time"}:
-                assert rows[index][name] == value
+                expected = int(value) if name in {"UL", "LL"} and value is not None else value
+                assert rows[index][name] == expected
     if dataset == "minute":
         assert rows[0]["Time"].utcoffset() == timedelta(hours=9)
         assert rows[0]["Time"].strftime("%H:%M") == "09:00"
@@ -119,7 +120,7 @@ def test_all_symbol_pages_fields_schema_and_provenance(stores, dataset):
 def test_all_null_numeric_columns_have_fixed_types(stores, dataset):
     record = row(dataset)
     for name in canonical_schema(dataset).names:
-        if name not in {"Code", "Date", "Time"}:
+        if name not in {"Code", "Date", "Time", "UL", "LL"}:
             record[name] = None
     result = run(stores, Client([[record]], dataset), dataset=dataset)
     assert result.status == "COMPLETE"
@@ -127,6 +128,51 @@ def test_all_null_numeric_columns_have_fixed_types(stores, dataset):
     assert output.schema == canonical_schema(dataset)
     assert output.column("O").type == pa.float64()
     assert output.column("O").null_count == 1
+
+
+def test_minute_hhmm_accepts_close_and_does_not_assume_input_order(stores):
+    records = [
+        row("minute", Time="15:30"),
+        row("minute", Time="09:01"),
+        row("minute", Time="09:00"),
+    ]
+    result = run(stores, Client([records], "minute"), dataset="minute")
+    assert result.status == "COMPLETE"
+    output = table(stores, "minute").to_pylist()
+    assert [item["Time"].strftime("%H:%M") for item in output] == [
+        "15:30", "09:01", "09:00"
+    ]
+    assert all(item["Time"].utcoffset() == timedelta(hours=9) for item in output)
+
+
+def test_daily_string_flags_are_flags_not_prices(stores):
+    result = run(stores, Client([[row(UL="1", LL="0")]]))
+    assert result.status == "COMPLETE"
+    output = table(stores).to_pylist()[0]
+    assert (output["UL"], output["LL"]) == (1, 0)
+    assert output["UL"] != output["H"] and output["LL"] != output["L"]
+
+
+def test_normal_daily_all_null_record_is_not_a_quality_failure(stores):
+    record = row(UL="0", LL="1")
+    for name in canonical_schema("daily").names:
+        if name not in {"Code", "Date", "UL", "LL"}:
+            record[name] = None
+    result = run(stores, Client([[record]]))
+    assert result.status == "COMPLETE"
+    output = table(stores).to_pylist()[0]
+    assert all(output[name] is None for name in (
+        "O", "H", "L", "C", "Vo", "Va",
+        "AdjFactor", "AdjO", "AdjH", "AdjL", "AdjC", "AdjVo",
+    ))
+    assert (output["UL"], output["LL"]) == (0, 1)
+
+
+def test_daily_without_light_session_fields_and_unknown_code_is_kept(stores):
+    record = row(code="99990")
+    result = run(stores, Client([[record]]))
+    assert result.status == "COMPLETE"
+    assert table(stores).column("Code").to_pylist() == ["99990"]
 
 
 def test_unknown_fields_preserved_and_reported_without_leaking(stores):
@@ -220,7 +266,7 @@ def test_idempotency_and_transformer_version_change(stores):
     assert stores[1].current_manifest("daily", DAY) == manifest
     refreshed = run(stores, Client([[row()]]), refresh=True)
     assert not refreshed.raw_updated and refreshed.canonical_reused
-    updated_store = JQuantsCanonicalStore(stores[1].directory, transformer_version="2")
+    updated_store = JQuantsCanonicalStore(stores[1].directory, transformer_version="3")
     third = run((stores[0], updated_store), canonical_only=True)
     assert not third.canonical_reused
     assert third.raw_generation_id == first.raw_generation_id
@@ -255,7 +301,10 @@ def test_cross_page_exact_and_conflicting_duplicates_fail_without_dedup(stores, 
     ("daily", {"AdjFactor": 0}),
     ("daily", {"Vo": -1}),
     ("daily", {"Va": -1}),
-    ("daily", {"UL": "1"}),
+    ("daily", {"UL": 1}),
+    ("daily", {"UL": None}),
+    ("daily", {"LL": "2"}),
+    ("daily", {"LL": None}),
     ("minute", {"Time": "24:00"}),
     ("minute", {"Time": "09:60"}),
     ("minute", {"Time": "9:00"}),
@@ -396,10 +445,10 @@ def test_raw_row_count_mismatch_prevents_canonical_publication(stores):
         kind="daily", endpoint="equities/bars/daily", conditions={"date": DAY}
     )
     modified = replace(raw, manifest={**raw.manifest, "row_count": 2})
-    changed = JQuantsCanonicalStore(stores[1].directory, transformer_version="2")
+    changed = JQuantsCanonicalStore(stores[1].directory, transformer_version="3")
     with pytest.raises(JQuantsRawValidationError):
         changed.transform(modified, dataset="daily", target_date=DAY)
-    assert stores[1].current_manifest("daily", DAY)["transformer_version"] == "1"
+    assert stores[1].current_manifest("daily", DAY)["transformer_version"] == "2"
 
 
 def test_batches_larger_than_writer_batch_size(stores):

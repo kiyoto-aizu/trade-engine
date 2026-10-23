@@ -22,7 +22,7 @@ import pyarrow.parquet as pq
 from src.infrastructure.market_data.jquants_raw_store import JQuantsPublishedRaw, JQuantsRawStoreError
 
 SCHEMA_VERSION = "1"
-TRANSFORMER_VERSION = "1"
+TRANSFORMER_VERSION = "2"
 _COMMON = ("O", "H", "L", "C", "Vo", "Va")
 _ADJUSTED = ("AdjFactor", "AdjO", "AdjH", "AdjL", "AdjC", "AdjVo")
 _JST = ZoneInfo("Asia/Tokyo")
@@ -290,9 +290,9 @@ def _convert_row(record: Mapping[str, Any], dataset: str, target_date: str) -> d
     if dataset == "daily":
         for name in ("UL", "LL"):
             value = record[name]
-            if value is not None and (type(value) is not int or value not in (0, 1)):
+            if not isinstance(value, str) or value not in ("0", "1"):
                 raise ValueError("Invalid price limit flag")
-            row[name] = value
+            row[name] = int(value)
     for prefix in ("", "Adj") if dataset == "daily" else ("",):
         high, low = row[prefix + "H"], row[prefix + "L"]
         for name in ("O", "H", "L", "C"):
