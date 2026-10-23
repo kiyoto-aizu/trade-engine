@@ -9,37 +9,37 @@ Issueを見ただけで「今どの工程か」「次に誰が何をするか」
 
 | ラベル | 状態 | 主担当 | 次アクション |
 |---|---|---|---|
-| `plan-ready` | 要件整理・実装指示が完了 | Copilot(chat) → あなた | あなたがCopilot(VSCode)へ実装投入 |
-| `impl-running` | 実装中 | Copilot(VSCode) | 実装・テスト・結果報告 |
-| `impl-done` | 実装結果が揃った | Copilot(chat) | 必要ならClaudeレビュー依頼作成 |
-| `review-needed` | Claudeレビュー待ち/中 | Claude | レビュー結果を返却 |
-| `decision-needed` | 判断待ち | あなた | Go / Rework を決定 |
-| `done` | 完了 | あなた | Closeして終了 |
+| `wf:plan-ready` | 要件整理・実装指示が完了 | Copilot(chat) → あなた | あなたがCopilot(VSCode)へ実装投入 |
+| `wf:impl-running` | 実装中 | Copilot(VSCode) | 実装・テスト・結果報告 |
+| `wf:impl-done` | 実装結果が揃った | Copilot(chat) | 必要ならClaudeレビュー依頼作成 |
+| `wf:review-needed` | Claudeレビュー待ち/中 | Claude | レビュー結果を返却 |
+| `wf:decision-needed` | 判断待ち | あなた | Go / Rework を決定 |
+| `wf:done` | 完了 | あなた | Closeして終了 |
 
 ---
 
 ## 遷移ルール（基本フロー）
 
-1. Issue作成時: `plan-ready`
-2. 実装開始時: `plan-ready` → `impl-running`
-3. 実装結果提出後: `impl-running` → `impl-done`
-4. レビュー依頼時: `impl-done` → `review-needed`
-5. レビュー返却後: `review-needed` → `decision-needed`
-6. 採用して完了: `decision-needed` → `done`
+1. Issue作成時: `wf:plan-ready`
+2. 実装開始時: `wf:plan-ready` → `wf:impl-running`
+3. 実装結果提出後: `wf:impl-running` → `wf:impl-done`
+4. レビュー依頼時: `wf:impl-done` → `wf:review-needed`
+5. レビュー返却後: `wf:review-needed` → `wf:decision-needed`
+6. 採用して完了: `wf:decision-needed` → `wf:done`
 
 ---
 
 ## 例外フロー
 
 ### A. レビュー不要な軽微修正
-`impl-done` → `decision-needed` → `done`
+`wf:impl-done` → `wf:decision-needed` → `wf:done`
 
 ### B. 差し戻し（再実装）
-`decision-needed` → `impl-running`
+`wf:decision-needed` → `wf:impl-running`
 （同じIssue内で継続、Task IDは据え置き）
 
 ### C. 要件変更が発生
-`impl-done` or `review-needed` → `plan-ready`
+`wf:impl-done` or `wf:review-needed` → `wf:plan-ready`
 （Copilot(chat)が指示書を更新して再スタート）
 
 ---
@@ -58,7 +58,7 @@ Issueを見ただけで「今どの工程か」「次に誰が何をするか」
 3. **Task ID（TRD-XXX）を全コメントに記載**
    - 検索性・追跡性を維持するため
 
-4. **判断は必ず `decision-needed` を経由**
+4. **判断は必ず `wf:decision-needed` を経由**
    - 「いつ誰が採否を決めたか」を明確に残す
 
 ---
