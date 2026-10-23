@@ -176,15 +176,115 @@ def test_daily_without_light_session_fields_and_unknown_code_is_kept(stores):
 
 
 def test_unknown_fields_preserved_and_reported_without_leaking(stores):
-    result = run(stores, Client([[row(FutureField="SECRET_VALUE")]]))
+    result = run(stores, Client([[row(FutureField="SECRET_VALUE", ExRT=None, MktCap=123.4)]]))
     assert result.status == "ATTENTION"
     assert result.quality["unknown_field_count"] == 1
     assert result.quality["rows_with_unknown_fields"] == 1
     assert "SECRET_VALUE" not in json.dumps(result.as_dict())
+    assert result.execution_metrics["field_observations"] == {
+        "ExRT": {"count": 1, "null_count": 1},
+        "FutureField": {"count": 1, "null_count": 0},
+        "MktCap": {"count": 1, "null_count": 0},
+    }
     raw = stores[0].resolve_published(
         kind="daily", endpoint="equities/bars/daily", conditions={"date": DAY}
     )
-    assert next(raw.iter_pages())[0]["FutureField"] == "SECRET_VALUE"
+    raw_row = next(raw.iter_pages())[0]
+    assert raw_row["FutureField"] == "SECRET_VALUE"
+    assert raw_row["ExRT"] is None and raw_row["MktCap"] == 123.4
+
+
+def test_confirmed_noncanonical_fields_are_recorded_without_hold(stores):
+    source = row(ExRT=None, MktCap=100.5)
+    result = run(stores, Client([[source]]))
+
+    assert result.status == "COMPLETE"
+    assert result.quality["unknown_field_count"] == 0
+    assert result.execution_metrics["field_observations"] == {
+        "ExRT": {"count": 1, "null_count": 1},
+        "MktCap": {"count": 1, "null_count": 0},
+    }
+    assert "ExRT" not in table(stores).schema.names
+    assert "MktCap" not in table(stores).schema.names
+    raw = stores[0].resolve_published(
+        kind="daily", endpoint="equities/bars/daily", conditions={"date": DAY}
+    )
+    assert next(raw.iter_pages())[0] == source
+
+
+def test_execution_metrics_are_saved_without_stock_records_or_secrets(stores, tmp_path):
+    metrics_directory = tmp_path / "metrics"
+    usecase = JQuantsSingleDayIngestion(
+        *stores,
+        client_factory=lambda: Client([[row(code="88880", MktCap=None)]]),
+        metrics_directory=metrics_directory,
+    )
+    result = usecase.run(dataset="daily", date=DAY)
+
+    assert result.status == "COMPLETE"
+    metrics_path = metrics_directory / "daily" / f"date={DAY}"
+    saved_files = list(metrics_path.glob("*.json"))
+    assert len(saved_files) == 1
+    content = saved_files[0].read_text(encoding="utf-8")
+    metrics = json.loads(content)
+    assert metrics["request_count"] == "未計測"
+    assert metrics["page_count"] == 1
+    assert metrics["field_observations"]["MktCap"] == {"count": 1, "null_count": 1}
+    assert metrics["peak_memory_bytes"] != "未計測"
+    assert "88880" not in content
+    assert "SECRET_VALUE" not in content
+
+
+def test_execution_metrics_include_http_client_counters(stores):
+    client = Client([[row()]])
+    client.metrics = type("Metrics", (), {
+        "as_dict": lambda self: {
+            "request_count": 2,
+            "page_count": 1,
+            "status_counts": {"200": 1, "429": 1},
+            "retry_count": 1,
+            "rate_limit_429_count": 1,
+            "wait_seconds": 120.2,
+        }
+    })()
+    result = run(stores, client)
+
+    assert result.execution_metrics["request_count"] == 2
+    assert result.execution_metrics["request_page_count"] == 1
+    assert result.execution_metrics["http_status_counts"] == {"200": 1, "429": 1}
+    assert result.execution_metrics["retry_count"] == 1
+    assert result.execution_metrics["rate_limit_429_count"] == 1
+    assert result.execution_metrics["wait_seconds"] == 120.2
+
+
+def test_daily_minute_canonical_comparison_is_informational(stores):
+    daily_rows = [
+        row(code="123A0", Vo=10),
+        row(code="22220", Vo=1),
+        row(code="99990", Vo=0, O=None, H=None, L=None, C=None),
+    ]
+    run(stores, Client([daily_rows]))
+    minute_rows = [
+        row("minute", code="22220", Time="09:00"),
+        row("minute", code="99990", Time="09:00"),
+        row("minute", code="55550", Time="09:00"),
+    ]
+    result = run(stores, Client([minute_rows], "minute"), dataset="minute")
+
+    comparison = result.execution_metrics["canonical_comparison"]
+    assert comparison == {
+        "status": "AVAILABLE",
+        "daily_positive_volume_symbol_count": 2,
+        "minute_symbol_count": 3,
+        "daily_only_symbol_count": 1,
+        "minute_only_symbol_count": 2,
+        "daily_only_ohlc_all_null_count": 0,
+        "daily_only_ohlc_not_all_null_count": 1,
+        "minute_only_daily_ohlc_all_null_count": 1,
+        "minute_only_daily_ohlc_not_all_null_count": 0,
+        "minute_only_daily_record_missing_count": 1,
+        "publication_gate": False,
+    }
 
 
 def test_empty_result_and_empty_held_are_distinct_from_failure(stores):
@@ -266,7 +366,7 @@ def test_idempotency_and_transformer_version_change(stores):
     assert stores[1].current_manifest("daily", DAY) == manifest
     refreshed = run(stores, Client([[row()]]), refresh=True)
     assert not refreshed.raw_updated and refreshed.canonical_reused
-    updated_store = JQuantsCanonicalStore(stores[1].directory, transformer_version="3")
+    updated_store = JQuantsCanonicalStore(stores[1].directory, transformer_version="4")
     third = run((stores[0], updated_store), canonical_only=True)
     assert not third.canonical_reused
     assert third.raw_generation_id == first.raw_generation_id
@@ -445,10 +545,10 @@ def test_raw_row_count_mismatch_prevents_canonical_publication(stores):
         kind="daily", endpoint="equities/bars/daily", conditions={"date": DAY}
     )
     modified = replace(raw, manifest={**raw.manifest, "row_count": 2})
-    changed = JQuantsCanonicalStore(stores[1].directory, transformer_version="3")
+    changed = JQuantsCanonicalStore(stores[1].directory, transformer_version="4")
     with pytest.raises(JQuantsRawValidationError):
         changed.transform(modified, dataset="daily", target_date=DAY)
-    assert stores[1].current_manifest("daily", DAY)["transformer_version"] == "2"
+    assert stores[1].current_manifest("daily", DAY)["transformer_version"] == "3"
 
 
 def test_batches_larger_than_writer_batch_size(stores):
@@ -543,7 +643,7 @@ def test_conflicting_cli_flags_rejected(monkeypatch):
 
 
 @pytest.mark.parametrize("mode", ["complete", "empty", "held", "failure", "quality"])
-def test_cli_exit_codes_and_safe_json(stores, monkeypatch, capsys, mode):
+def test_cli_exit_codes_and_safe_json(stores, monkeypatch, capsys, tmp_path, mode):
     if mode == "held":
         run(stores, Client([[row()]]))
     pages = {
@@ -553,9 +653,12 @@ def test_cli_exit_codes_and_safe_json(stores, monkeypatch, capsys, mode):
     client = Client(pages)
     monkeypatch.setattr(cli, "JQuantsRawStore", lambda: stores[0])
     monkeypatch.setattr(cli, "JQuantsCanonicalStore", lambda path: stores[1])
+    monkeypatch.setattr(cli.config, "JQUANTS_EXECUTION_METRICS_DIRECTORY", tmp_path / "metrics")
     original = cli.JQuantsSingleDayIngestion
     monkeypatch.setattr(cli, "JQuantsSingleDayIngestion",
-                        lambda raw, canonical: original(raw, canonical, client_factory=lambda: client))
+                        lambda raw, canonical, **kwargs: original(
+                            raw, canonical, client_factory=lambda: client, **kwargs
+                        ))
     code = cli.main(["--dataset", "daily", "--date", DAY, "--refresh"])
     output = capsys.readouterr()
     summary = json.loads(output.out)

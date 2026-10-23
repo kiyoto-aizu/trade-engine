@@ -247,6 +247,12 @@ def test_429_waits_between_bounded_attempts_without_real_waiting():
 
     assert len(transport.calls) == 3
     assert clock.sleeps.count(120) == 2
+    assert client.metrics.request_count == 3
+    assert client.metrics.page_count == 0
+    assert client.metrics.status_counts == {"429": 3}
+    assert client.metrics.retry_count == 2
+    assert client.metrics.rate_limit_429_count == 3
+    assert client.metrics.wait_seconds == 240
     assert error.value.category == "RATE_LIMITED"
 
 
@@ -264,6 +270,11 @@ def test_transient_transport_failures_retry_with_bounded_backoff(failure):
     assert next(client.iter_pages("equities/bars/daily")).data == ()
     assert len(transport.calls) == 2
     assert clock.sleeps.count(1) == 1
+    assert client.metrics.request_count == 2
+    assert client.metrics.page_count == 1
+    assert client.metrics.status_counts == {"200": 1}
+    assert client.metrics.retry_count == 1
+    assert client.metrics.wait_seconds == 1.2
     assert JQuantsTransportError.category == "TRANSPORT_ERROR"
 
 
