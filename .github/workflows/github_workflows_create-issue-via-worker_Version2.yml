@@ -1,0 +1,89 @@
+name: Create Issue via Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: "Issue title"
+        required: true
+        type: string
+      body:
+        description: "Issue body (markdown)"
+        required: true
+        type: string
+      labels:
+        description: "Comma-separated labels (e.g. plan-ready,jquants)"
+        required: false
+        default: ""
+        type: string
+      assignees:
+        description: "Comma-separated assignees (e.g. kiyoto-aizu)"
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: "Dry run"
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  post-to-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build payload JSON
+        id: payload
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          title = os.environ["INPUT_TITLE"]
+          body = os.environ["INPUT_BODY"]
+          labels_raw = os.environ.get("INPUT_LABELS","").strip()
+          assignees_raw = os.environ.get("INPUT_ASSIGNEES","").strip()
+          dry_run_raw = os.environ.get("INPUT_DRY_RUN","true").lower()
+
+          payload = {
+            "title": title,
+            "body": body,
+            "dry_run": dry_run_raw == "true",
+          }
+
+          if labels_raw:
+            payload["labels"] = [x.strip() for x in labels_raw.split(",") if x.strip()]
+          if assignees_raw:
+            payload["assignees"] = [x.strip() for x in assignees_raw.split(",") if x.strip()]
+
+          with open("payload.json","w",encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+          PY
+        env:
+          INPUT_TITLE: ${{ inputs.title }}
+          INPUT_BODY: ${{ inputs.body }}
+          INPUT_LABELS: ${{ inputs.labels }}
+          INPUT_ASSIGNEES: ${{ inputs.assignees }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+
+      - name: POST to Worker
+        env:
+          WORKER_URL: ${{ secrets.ISSUE_CREATION_WORKER_URL }}
+          WEBHOOK_SECRET: ${{ secrets.ISSUE_CREATION_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$WORKER_URL"
+          test -n "$WEBHOOK_SECRET"
+
+          echo "POST $WORKER_URL"
+          HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
+            -X POST "$WORKER_URL" \
+            -H "content-type: application/json; charset=utf-8" \
+            -H "x-webhook-secret: $WEBHOOK_SECRET" \
+            --data-binary @payload.json)
+
+          echo "HTTP: $HTTP_CODE"
+          cat response.json
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Request failed"
+            exit 1
+          fi
