@@ -57,9 +57,9 @@ def test_elapsed_limit_applies_only_when_configured():
     assert evaluate_metrics(metrics(durations_seconds={"total": 101.0}), limits).verdict == NO_GO
 
 
-def test_unmeasured_requests_do_not_fail():
+def test_unmeasured_requests_are_hold():
     result = evaluate_metrics(metrics(request_count="未計測"))
-    assert result.verdict == GO
+    assert result.verdict == HOLD
     assert "REQUEST_METRICS_UNMEASURED" in result.reasons
 
 

@@ -76,7 +76,7 @@ def evaluate_metrics(
         elif retry_rate > limits.retry_rate_hold:
             raise_to(HOLD, "RETRY_RATE_ELEVATED")
     elif requests is None:
-        reasons.append("REQUEST_METRICS_UNMEASURED")
+        raise_to(HOLD, "REQUEST_METRICS_UNMEASURED")
 
     durations = metrics.get("durations_seconds")
     total = _number(durations.get("total")) if isinstance(durations, Mapping) else None

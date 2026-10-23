@@ -46,6 +46,9 @@ def test_unreadable_file_is_no_go(tmp_path):
     (tmp_path / "daily" / "date=2026-10-22" / "bad.json").write_text("{", encoding="utf-8")
     rows = summarize_directory(tmp_path)
     assert any(r["reasons"] == "UNREADABLE_METRICS" for r in rows)
+    (tmp_path / "daily" / "date=2026-10-22" / "bad.json").write_text("[]", encoding="utf-8")
+    rows = summarize_directory(tmp_path)
+    assert sum(r["reasons"] == "UNREADABLE_METRICS" for r in rows) == 1
 
 
 def test_csv_contains_only_declared_columns(tmp_path):

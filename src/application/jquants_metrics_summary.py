@@ -41,6 +41,8 @@ def summarize_run(
     path: Path, thresholds: JQuantsGoThresholds | None = None
 ) -> dict[str, Any]:
     metrics = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(metrics, dict):
+        raise ValueError("metrics JSON must be an object")
     durations = metrics.get("durations_seconds")
     durations = durations if isinstance(durations, dict) else {}
     evaluation = evaluate_metrics(metrics, thresholds)
