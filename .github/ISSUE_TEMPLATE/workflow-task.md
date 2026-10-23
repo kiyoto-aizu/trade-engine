@@ -2,7 +2,7 @@
 name: Workflow Task
 about: Copilot/Claude連携の作業チケット
 title: "[TASK] <short title>"
-labels: ["plan-ready"]
+labels: ["wf:plan-ready"]
 assignees: []
 ---
 

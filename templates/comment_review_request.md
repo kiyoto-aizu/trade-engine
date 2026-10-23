@@ -2,7 +2,7 @@
 ## Review Request for Claude
 - Task ID: TRD-XXX
 - Review Focus: 要件漏れ / 設計の弱点 / データ不整合
-- Label Transition: `impl-done` -> `review-needed`
+- Label Transition: `wf:impl-done` -> `wf:review-needed`
 
 ### Context
 - Objective:

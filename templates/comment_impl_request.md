@@ -3,7 +3,7 @@
 - Task ID: TRD-XXX
 - Base Branch: main
 - Target Branch: feat/TRD-XXX
-- Label Transition: `plan-ready` -> `impl-running`
+- Label Transition: `wf:plan-ready` -> `wf:impl-running`
 
 ### Task Breakdown
 1. 

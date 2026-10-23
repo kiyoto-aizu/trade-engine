@@ -18,4 +18,4 @@
 - approve / request-changes
 
 ### Label Transition
-- `review-needed` -> `decision-needed`
+- `wf:review-needed` -> `wf:decision-needed`

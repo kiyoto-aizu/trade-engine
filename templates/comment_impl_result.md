@@ -24,4 +24,4 @@
 
 ### 5. Ready for Review
 - Claude Review Needed?: yes/no
-- Label Transition: `impl-running` -> `impl-done`
+- Label Transition: `wf:impl-running` -> `wf:impl-done`
