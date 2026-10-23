@@ -28,11 +28,16 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--refresh", action="store_true")
     mode.add_argument("--canonical-only", action="store_true")
+    parser.add_argument(
+        "--measure-peak-memory", action="store_true",
+        help="Opt in to tracemalloc peak measurement (slows large runs)",
+    )
     args = parser.parse_args(argv)
     try:
         usecase = JQuantsSingleDayIngestion(
             JQuantsRawStore(), JQuantsCanonicalStore(config.JQUANTS_CANONICAL_DIRECTORY),
             metrics_directory=config.JQUANTS_EXECUTION_METRICS_DIRECTORY,
+            measure_peak_memory=args.measure_peak_memory,
         )
         summary = usecase.run(
             dataset=args.dataset, date=args.date,

@@ -78,11 +78,13 @@ class JQuantsSingleDayIngestion:
         self, raw_store: JQuantsRawStore, canonical_store: JQuantsCanonicalStore,
         *, client_factory: Callable[[], _Client] = JQuantsV2Client,
         metrics_directory: Path | str | None = None,
+        measure_peak_memory: bool = False,
     ) -> None:
         self.raw_store = raw_store
         self.canonical_store = canonical_store
         self.client_factory = client_factory
         self.metrics_directory = None if metrics_directory is None else Path(metrics_directory)
+        self.measure_peak_memory = measure_peak_memory
 
     def run(
         self, *, dataset: str, date: str, refresh: bool = False, canonical_only: bool = False
@@ -96,7 +98,7 @@ class JQuantsSingleDayIngestion:
         endpoint = f"equities/bars/{dataset}"
         conditions = {"date": date}
         total_start = perf_counter()
-        started_tracemalloc = not tracemalloc.is_tracing()
+        started_tracemalloc = self.measure_peak_memory and not tracemalloc.is_tracing()
         if started_tracemalloc:
             tracemalloc.start()
         telemetry: dict[str, Any] = {
@@ -321,19 +323,17 @@ class JQuantsSingleDayIngestion:
             daily_manifest = manifests["daily"]
             minute_manifest = manifests["minute"]
             assert daily_manifest is not None and minute_manifest is not None
-            daily_path = (
-                self.canonical_store.directory / "daily" / f"date={date}" / "generations"
-                / daily_manifest["generation_id"] / "part-00000.parquet"
+            daily_path = self.canonical_store.parquet_path(
+                "daily", date, daily_manifest["generation_id"]
             )
-            minute_path = (
-                self.canonical_store.directory / "minute" / f"date={date}" / "generations"
-                / minute_manifest["generation_id"] / "part-00000.parquet"
+            minute_path = self.canonical_store.parquet_path(
+                "minute", date, minute_manifest["generation_id"]
             )
             daily = pq.read_table(daily_path, columns=["Code", "Vo", "O", "H", "L", "C"])
             minute = pq.read_table(minute_path, columns=["Code"])
             daily_codes = daily.column("Code").to_pylist()
             daily_volumes = daily.column("Vo").to_pylist()
-            daily_only = {
+            daily_positive_codes = {
                 code for code, volume in zip(daily_codes, daily_volumes)
                 if volume is not None and volume > 0
             }
@@ -347,7 +347,6 @@ class JQuantsSingleDayIngestion:
                 )
             }
             minute_codes = set(minute.column("Code").to_pylist())
-            daily_positive_codes = daily_only
             daily_only_codes = daily_positive_codes - minute_codes
             minute_only_codes = minute_codes - daily_positive_codes
 

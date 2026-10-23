@@ -230,9 +230,17 @@ def test_execution_metrics_are_saved_without_stock_records_or_secrets(stores, tm
     assert metrics["request_count"] == "未計測"
     assert metrics["page_count"] == 1
     assert metrics["field_observations"]["MktCap"] == {"count": 1, "null_count": 1}
-    assert metrics["peak_memory_bytes"] != "未計測"
+    assert metrics["peak_memory_bytes"] == "未計測"
     assert "88880" not in content
     assert "SECRET_VALUE" not in content
+
+
+def test_peak_memory_is_measured_only_when_opted_in(stores):
+    usecase = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: Client([[row()]]), measure_peak_memory=True,
+    )
+    result = usecase.run(dataset="daily", date=DAY)
+    assert isinstance(result.execution_metrics["peak_memory_bytes"], int)
 
 
 def test_execution_metrics_include_http_client_counters(stores):

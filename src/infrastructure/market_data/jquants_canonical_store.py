@@ -27,6 +27,7 @@ TRANSFORMER_VERSION = "3"
 _COMMON = ("O", "H", "L", "C", "Vo", "Va")
 _ADJUSTED = ("AdjFactor", "AdjO", "AdjH", "AdjL", "AdjC", "AdjVo")
 CONFIRMED_NON_CANONICAL_FIELDS = frozenset({"ExRT", "MktCap"})
+PARQUET_FILENAME = "part-00000.parquet"
 _JST = ZoneInfo("Asia/Tokyo")
 
 
@@ -109,6 +110,9 @@ class JQuantsCanonicalStore:
         strict_date(target_date)
         return self.directory / dataset / f"date={target_date}"
 
+    def parquet_path(self, dataset: str, target_date: str, generation_id: str) -> Path:
+        return self._partition(dataset, target_date) / "generations" / generation_id / PARQUET_FILENAME
+
     def current_manifest(self, dataset: str, target_date: str) -> dict[str, Any] | None:
         partition = self._partition(dataset, target_date)
         try:
@@ -124,7 +128,7 @@ class JQuantsCanonicalStore:
             raise JQuantsCanonicalError("Invalid canonical generation")
         folder = partition / "generations" / generation
         manifest = json.loads((folder / "manifest.json").read_text(encoding="ascii"))
-        parquet = folder / "part-00000.parquet"
+        parquet = folder / PARQUET_FILENAME
         identity = {key: manifest[key] for key in (
             "dataset", "date", "raw_generation_id", "raw_content_sha256",
             "schema_version", "transformer_version",
@@ -227,7 +231,7 @@ class JQuantsCanonicalStore:
         unsupported: set[str] = set()
         observed_fields: set[str] = set()
         field_observations: dict[str, dict[str, int]] = {}
-        parquet = staging / "part-00000.parquet"
+        parquet = staging / PARQUET_FILENAME
         with pq.ParquetWriter(parquet, schema, compression="zstd") as writer:
             for page in raw.iter_pages():
                 batch: list[dict[str, Any]] = []

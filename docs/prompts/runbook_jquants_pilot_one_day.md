@@ -156,7 +156,7 @@ APIキー・認証情報・raw本文・株価レコードは含めない。
 - elapsed_transform_sec:
 - elapsed_canonical_validate_sec:
 - elapsed_total_sec:
-- peak_memory_mb:
+- peak_memory_mb: （既定は未計測。計測する場合のみ --measure-peak-memory を付与。所要時間が悪化するため、時間の比較には使わない）
 - metrics_json:
 - free_disk_before_gb:
 - free_disk_after_gb:
