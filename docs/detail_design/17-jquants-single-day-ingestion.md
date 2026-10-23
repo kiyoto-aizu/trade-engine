@@ -42,10 +42,13 @@ rawは既存ストアの検証済み公開世代を解決して読み、canonica
 | 公開ポインタ | 出力 | 日付partitionの`CURRENT` | 完全検証後に原子的に置換 |
 | 変換試行 | 出力 | 日付partitionの`ATTEMPT.json` | `RUNNING` / `FAILED` / `VALIDATED` |
 | 実行サマリ | 出力 | 標準出力のJSON | 集計・世代・警告・安全なエラー分類のみ |
+| 実行メトリクス | 出力 | `data/jquants/metrics/<daily,minute>/date=YYYY-MM-DD/<UTC時刻>-<id>.json` | Git管理外。秘密情報・株価レコードを含めない |
 
 manifestはraw世代ID/content hash、schema/transformer版、UTC生成時刻、
 行数・銘柄数・品質結果、未対応フィールド名、Parquetのhashとサイズを保持する。
-未対応フィールドの**値**はrawだけに残す。CLIにはフィールド名も値も出さず件数のみ出す。
+未対応フィールドの**値**はrawだけに残す。メトリクスには項目名と存在件数/null件数のみを記録し、値は出さない。
+`ExRT`と`MktCap`は確認済み・canonical未対応の許可リストであり、件数を記録するがHoldにしない。
+許可リスト外の項目のみ要確認とする。いずれもcanonical schemaには追加しない。
 サマリのサイズはrawの`pages.jsonl`とParquet本体のバイト数で、manifest等は含まない。
 ページ数・行数は変換入力である公開世代の集計であり、EMPTY_HELDの空試行の件数ではない。
 失敗時に出力行数が0でも、rawの状態・世代と品質の`input_rows`は別情報である。
@@ -104,7 +107,13 @@ float64はAPI数値のIEEE 754倍精度表現であり、十進固定小数の�
 2^53超整数の完全精度は保証しない。厳密な取得値はrawに保存する。
 分足の株式分割調整・欠落バー補完・特徴量計算は行わない。
 
-### 5.2 品質検査
+### 5.2 確認済み・canonical未対応フィールド
+
+初期許可リストは`ExRT`と`MktCap`。各項目の意味は推測で記述しない。
+項目ごとにrawの全出現件数と明示null件数を計測し、rawには全項目を保持する。
+許可リスト外のフィールドだけを未知項目としてHold対象にし、canonicalへ追加しない。
+
+### 5.3 品質検査
 
 - 全ページの必須キー・型・日時・対象日・有限数・非負値を検証する。
 - 調整前/後それぞれ、非null値について`Low <= O/H/L/C <= High`を検証する。
@@ -117,7 +126,19 @@ float64はAPI数値のIEEE 754倍精度表現であり、十進固定小数の�
 - 型違反・OHLC異常・重複等があればqualityを試行記録とサマリに残し、新版を公開しない。
 - rawは確定済みのまま残るので、修正したtransformer版で通信なしに再変換できる。
 
-### 5.3 公開世代・冪等性
+### 5.4 実行メトリクスと日足・分足比較
+
+実行メトリクスJSONにはリクエスト数、ページ数、HTTPステータス別件数、リトライ数、
+429件数、待機秒数、取得/raw検証/変換/canonical検証/合計時間、raw/canonicalサイズ、
+ピークメモリ、項目ごとの出現件数/null件数を記録する。
+ピークメモリはPython標準`tracemalloc`によるPythonメモリ計測で、計測できない場合は`未計測`とする。
+APIキー、認証ヘッダー、raw本文、ページキー、株価レコード、銘柄コードは含めない。
+
+同日のdaily/minute canonicalが両方公開済みの場合のみ、日足出来高>0の銘柄数、分足銘柄数、
+片方だけに存在する数を集計し、日足OHLCが全てnull・一部または全てnon-null・日足行なしの内訳を記録する。
+比較は情報記録だけで、品質・公開可否の条件にせず、差異の原因を断定しない。
+
+### 5.5 公開世代・冪等性
 
 rawは`resolve_published()`を使い、その内部で既存の`get_current_manifest()`による
 published_generation_id、CURRENT、manifest、全ページhashの照合を行う。
@@ -127,7 +148,7 @@ published_generation_id、CURRENT、manifest、全ページhashの照合を行�
 canonical IDはdataset、日付、raw世代/hash、schema版、transformer版のhashである。
 同一IDはParquet hash・schema・件数・品質・来歴を再検証して再利用し、生成時刻も変えない。
 
-### 5.4 対象範囲と仕様確認状況
+### 5.6 対象範囲と仕様確認状況
 
 「対象日・全銘柄」はAPIのdate指定による取得を意味し、現在の銘柄マスタで範囲を制限しない。
 チャットで共有された仕様情報では、格納期間内なら上場廃止銘柄の上場期間データも取得可能とされる。
@@ -144,7 +165,7 @@ Parquetとmanifestを書込み・fsyncし、不変世代を再検証した後で
 同じ入力で再実行すれば回復できる。SQLiteとcanonicalを一体のトランザクションにはしない。
 通常の例外ではstagingを削除するが、プロセス強制停止の残骸は自動掃除しない。
 
-### 5.4 空結果と失敗
+### 5.7 空結果と失敗
 
 | 条件 | raw | canonical・サマリ |
 |---|---|---|
@@ -185,8 +206,10 @@ raw/APIは既存の分類を引き継ぎ、低層保存・形式エラーは`STO
 | `JQUANTS_CANONICAL_DIRECTORY` | canonicalルート | `data/jquants/canonical` |
 | `JQUANTS_RAW_DIRECTORY` | 既存rawルート | `data/jquants/raw` |
 | `JQUANTS_LEDGER_DATABASE_FILE` | 既存raw台帳 | `data/jquants/ledger.sqlite3` |
+| `JQUANTS_EXECUTION_METRICS_DIRECTORY` | 実行メトリクス出力先 | `data/jquants/metrics`（固定） |
 
-詳細は[環境変数リファレンス](../reference/config-reference.md)。
+Windowsで`zoneinfo`が`Asia/Tokyo`を解決できるよう、`requirements.txt`に`tzdata`を追加する。
+その他の設定詳細は[環境変数リファレンス](../reference/config-reference.md)。
 
 ## 9. 決定事項と変更履歴
 
@@ -195,21 +218,24 @@ raw/APIは既存の分類を引き継ぎ、低層保存・形式エラーは`STO
 | 2026-10-23 | canonical独自schema・保存先 | 既存MinuteBar/Parquetの互換性を維持 |
 | 2026-10-23 | 完全一致重複も不合格 | raw→canonical件数整合を維持し、黙った削除をしない |
 | 2026-10-23 | canonicalはmanifestと原子的CURRENTで公開 | rawのSQLite公開プロトコルを再設計しない |
+| 2026-10-23 | `ExRT`/`MktCap`は記録のみ、transformer v3 | 確認済み未知項目による不要なHoldを避ける。canonical schemaは維持 |
 
 ### 検証結果
 
-Windowsで次を実行し、**129 passed（既存64件 + 新規65件）、failed/error/skip 0**。
+今回の実装で関連4ファイルを実行した。合成データ・一時領域のみを使い、実APIを呼び出していない。
+dotenv読込を無効化し、必要設定はテスト専用のダミー値を子プロセスへ渡した。
 
 ```powershell
-py -m pytest tests\test_jquants_single_day_ingestion.py tests\test_jquants_v2_client.py tests\test_jquants_raw_store.py -q --tb=short
+$env:PYTHON_DOTENV_DISABLED='1'
+# 必須設定はテスト専用のプレースホルダーを設定
+.\.venv\Scripts\python.exe -m pytest -q --tb=short `
+  tests\test_jquants_single_day_ingestion.py tests\test_jquants_v2_client.py `
+  tests\test_jquants_raw_store.py tests\test_runtime_guard.py
 ```
 
-複数ページ、全項目/null/0、英字コード、完全一致/競合重複、異常値、
-raw公開復旧、通信失敗・EMPTY_HELD、変換再試行、変換版変更、冪等性、
-canonical切替前後の障害、稼働中ロック、CLIの引数・終了状態・秘匿を検証した。
-10,000行の合成入力で8,192行の書込みバッチ境界と全件数保持を確認した。
-新規本体3ファイルのPylance診断は0件、`git diff --check`も成功した。
-実API・実待機は使わず、全件リポジトリテストは実行していない。
+結果: **148 passed, failed/error/skip 0**。runtime guardを含む関連テストが成功した。
+未知項目許可リスト、raw保持、メトリクスの秘匿・保存、HTTP計測値、
+合成canonical突き合わせ、既存取得/復旧/ロック動作を検証した。
 
 ## 10. 未決・既知の課題
 
@@ -225,8 +251,9 @@ canonical切替前後の障害、稼働中ロック、CLIの引数・終了状�
 - 世代解決は再利用時1回、取得時は前後各1回。行・銘柄ごとに全件検証しない。
   復旧APIも既存公開世代を検証するため、再利用時の全raw検証は計2回となる。
   raw capture自身の既存検証とcanonicalのParquet hash検証も別途実行される。
-- 時間集計の`acquisition`はraw取得・確定、`verification`は世代解決、
-  `conversion`は変換とcanonical全検証・公開を含み、純粋なCPU処理時間ではない。
+- 標準出力の従来`durations_seconds`は互換性のため維持する。実行メトリクスJSONでは
+  `acquisition`、`raw_validation`、`conversion`、`canonical_validation`、`total`を分ける。
+  `tracemalloc`によるピークはPythonヒープの計測値であり、プロセス全体のRSSではない。
 
 ### 公式仕様の照合と実API前チェック
 

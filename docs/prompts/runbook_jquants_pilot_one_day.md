@@ -25,8 +25,9 @@
 - 未コミット差分がある場合はそのままでよいが、記録しておく
 - 実行前後で余計なファイルが増えていないか追跡できる状態にする
 
-### 0-2. APIキー確認（値は表示しない）
-- 存在のみ確認する（値のecho禁止）
+### 0-2. APIキー
+- 実APIパイロットを実施する場合のみ、運用手順に従い設定する（値を表示・記録しない）
+- 合成データでのテストではAPIキーを設定せず、ネットワークを使用しない
 
 ### 0-3. ディスク空き確認
 - raw + canonical + staging 分の空きが十分あること
@@ -42,18 +43,18 @@
 - 429多発で時間上限超過
 - 品質検証失敗
 - ディスク不足
-- 未知項目出現（方針上、人手確認まで後続停止）
+- 未許可の未知項目出現（`ExRT` と `MktCap` は確認済み・canonical未対応の記録対象であり、Holdにしない）
 
 ---
 
 ## 1. コマンド（PowerShell）
 
-> CLI名は実装に合わせて置き換えてください。  
-> ここでは例として `src.entrypoints.run_jquants_single_day_ingestion` を使用します。
+実CLIは `src.entrypoints.ingest_jquants_single_day`。以下は実APIを実行する場合の例であり、
+この手順書の更新・テストでは実APIを呼び出さない。
 
 ### 1-1. 日足（全銘柄1日）
 ```powershell
-.\.venv\Scripts\python.exe -m src.entrypoints.run_jquants_single_day_ingestion `
+.\.venv\Scripts\python.exe -m src.entrypoints.ingest_jquants_single_day `
   --dataset daily `
   --date 2026-10-22 `
   --refresh
@@ -61,7 +62,7 @@
 
 ### 1-2. 分足（全銘柄1日）
 ```powershell
-.\.venv\Scripts\python.exe -m src.entrypoints.run_jquants_single_day_ingestion `
+.\.venv\Scripts\python.exe -m src.entrypoints.ingest_jquants_single_day `
   --dataset minute `
   --date 2026-10-22 `
   --refresh
@@ -69,7 +70,7 @@
 
 ### 1-3. 通信なし再変換確認（任意）
 ```powershell
-.\.venv\Scripts\python.exe -m src.entrypoints.run_jquants_single_day_ingestion `
+.\.venv\Scripts\python.exe -m src.entrypoints.ingest_jquants_single_day `
   --dataset daily `
   --date 2026-10-22 `
   --canonical-only
@@ -83,9 +84,12 @@
 
 - ステータス推移（RUNNING / COMPLETE / EMPTY_UNKNOWN / EMPTY_HELD / PARTIAL / FAILED）
 - ページ数、行数、銘柄数
-- リトライ回数、429発生の有無
-- 取得時間 / 検証時間 / 変換時間
+- リクエスト数、HTTPステータス別件数、リトライ回数、429件数
+- 待機合計秒数
+- 取得 / raw検証 / 変換 / canonical検証 / 合計の所要時間
 - raw/canonical の保存サイズ
+- ピークメモリ（Python標準ライブラリの計測範囲。取得できない場合は `未計測`）
+- 未対応フィールドごとの存在件数・null件数（値・株価レコードは記録しない）
 - 警告件数（重複、未知項目、要確認）
 
 ---
@@ -100,7 +104,7 @@
 
 ### 要確認（Hold）
 - EMPTY_UNKNOWN または EMPTY_HELD
-- 未知項目あり
+- 未許可の未知項目あり
 - 警告が想定より多い
 
 ### 失敗（No-Go）
@@ -111,6 +115,15 @@
 - 公開確定に失敗
 
 ---
+
+実行計測JSONは `data/jquants/metrics/<dataset>/date=<date>/` に実行ごとに保存される。
+この保存先はGit管理外。JSONにはリクエスト/ページ数、HTTPステータス別件数、リトライ、
+429、待機時間、処理時間、保存サイズ、ピークメモリ、フィールドごとの件数/null件数を記録し、
+APIキー・認証情報・raw本文・株価レコードは含めない。
+
+同じ日付の日足・分足canonicalが両方公開済みなら、出来高>0の日足銘柄数、分足銘柄数、
+片方だけに存在する銘柄数と、日足OHLCが全てnullかどうかの内訳を追記する。
+この比較は情報記録のみで、公開可否に使わず、差異の原因も断定しない。
 
 ## 4. 記録テンプレ（実行ごとに埋める）
 
@@ -127,6 +140,7 @@
 - canonical_generation_id:
 - pages:
 - requests:
+- http_status_counts:
 - retries_total:
 - http_429_count:
 - rows_total:
@@ -134,14 +148,16 @@
 - duplicates_exact:
 - duplicates_conflict:
 - unknown_fields_count:
-- null_records_count:
+- unknown_field_metrics: （項目ごとのcount/null_count。値は記載しない）
 - raw_size_mb:
 - canonical_size_mb:
 - elapsed_fetch_sec:
-- elapsed_validate_sec:
+- elapsed_raw_validate_sec:
 - elapsed_transform_sec:
+- elapsed_canonical_validate_sec:
 - elapsed_total_sec:
 - peak_memory_mb:
+- metrics_json:
 - free_disk_before_gb:
 - free_disk_after_gb:
 
@@ -157,6 +173,7 @@
 
 ## 5. 注意事項
 - APIキー、認証ヘッダー、raw本文、ページキーをログや報告に貼らない
+- 実行計測JSONやIssueコメントに株価レコード・銘柄コードを貼らない
 - `trade-report` に有料データ生値・復元可能な派生を出さない
 - パイロット中は日足と分足を同時に走らせない
 - 失敗時は再実行前に原因を記録してから実施する
