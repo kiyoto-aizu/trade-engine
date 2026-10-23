@@ -28,9 +28,9 @@ $body = @{
 - Task ID: TRD-PR3-1
 - Base Branch: main
 - Target Branch: feat/TRD-PR3-1
-- Label Transition: `plan-ready` -> `impl-running`
+- Label Transition: `wf:plan-ready` -> `wf:impl-running`
 "@
-  labels    = @("plan-ready","jquants","data-pipeline","quality","windows")
+  labels    = @("wf:plan-ready","jquants","data-pipeline","quality","windows")
   assignees = @("kiyoto-aizu")
 } | ConvertTo-Json -Depth 10
 
