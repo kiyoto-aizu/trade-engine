@@ -8,3 +8,5 @@ duckdb
 sqlglot
 openpyxl
 matplotlib
+# Windows zoneinfo database for Asia/Tokyo.
+tzdata
