@@ -100,6 +100,26 @@ class JQuantsPage:
     metadata: JQuantsPageMetadata
 
 
+@dataclass
+class JQuantsRequestMetrics:
+    request_count: int = 0
+    page_count: int = 0
+    status_counts: dict[str, int] = field(default_factory=dict)
+    retry_count: int = 0
+    rate_limit_429_count: int = 0
+    wait_seconds: float = 0.0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "request_count": self.request_count,
+            "page_count": self.page_count,
+            "status_counts": dict(sorted(self.status_counts.items())),
+            "retry_count": self.retry_count,
+            "rate_limit_429_count": self.rate_limit_429_count,
+            "wait_seconds": self.wait_seconds,
+        }
+
+
 class _Response(Protocol):
     status_code: int
     content: bytes
@@ -137,14 +157,17 @@ class JQuantsRateLimiter:
         self._last_request_at: float | None = None
         self._lock = threading.Lock()
 
-    def wait_for_slot(self) -> None:
+    def wait_for_slot(self) -> float:
         with self._lock:
             now = self._clock()
+            waited = 0.0
             if self._last_request_at is not None:
                 remaining = self._minimum_interval_seconds - (now - self._last_request_at)
                 if remaining > 0:
                     self._sleep(remaining)
+                    waited = remaining
             self._last_request_at = self._clock()
+            return waited
 
 
 _DEFAULT_RATE_LIMITER = JQuantsRateLimiter(config.JQUANTS_REQUEST_INTERVAL_SECONDS)
@@ -216,6 +239,7 @@ class JQuantsV2Client:
 
         self._rate_limiter = rate_limiter if rate_limiter is not None else _DEFAULT_RATE_LIMITER
         self._sleep = sleep
+        self.metrics = JQuantsRequestMetrics()
         self._base_url = _safe_base_url()
         if transport is None:
             self._session = _new_session()
@@ -271,9 +295,10 @@ class JQuantsV2Client:
         response: _Response | None = None
 
         for attempt in range(1, self._max_attempts + 1):
-            self._rate_limiter.wait_for_slot()
+            self.metrics.wait_seconds += self._rate_limiter.wait_for_slot()
             request_failed = False
             retryable_transport_failure = False
+            self.metrics.request_count += 1
             try:
                 response = self._transport.get(
                     url,
@@ -289,7 +314,8 @@ class JQuantsV2Client:
                 request_failed = True
             if request_failed:
                 if retryable_transport_failure and attempt < self._max_attempts:
-                    self._sleep(self._backoff_seconds(attempt))
+                    self._wait(self._backoff_seconds(attempt))
+                    self.metrics.retry_count += 1
                     continue
                 raise JQuantsTransportError(
                     f"J-Quants request failed after {attempt} attempt(s)"
@@ -299,18 +325,25 @@ class JQuantsV2Client:
             status_code = response.status_code
             if not isinstance(status_code, int) or not 100 <= status_code <= 599:
                 raise JQuantsResponseError("J-Quants returned an invalid HTTP status") from None
+            status_key = str(status_code)
+            self.metrics.status_counts[status_key] = (
+                self.metrics.status_counts.get(status_key, 0) + 1
+            )
             if 200 <= status_code < 300:
                 break
             if status_code == 429:
+                self.metrics.rate_limit_429_count += 1
                 if attempt < self._max_attempts:
-                    self._sleep(config.JQUANTS_429_WAIT_SECONDS)
+                    self._wait(config.JQUANTS_429_WAIT_SECONDS)
+                    self.metrics.retry_count += 1
                     continue
                 raise JQuantsRateLimitError(
                     f"J-Quants rate limit persisted after {attempt} attempt(s)"
                 ) from None
             if 500 <= status_code < 600:
                 if attempt < self._max_attempts:
-                    self._sleep(self._backoff_seconds(attempt))
+                    self._wait(self._backoff_seconds(attempt))
+                    self.metrics.retry_count += 1
                     continue
                 raise JQuantsServerError(
                     f"J-Quants server error persisted after {attempt} attempt(s)"
@@ -359,7 +392,12 @@ class JQuantsV2Client:
                 has_next_page=returned_key is not None,
             ),
         )
+        self.metrics.page_count += 1
         return page, returned_key
+
+    def _wait(self, seconds: float) -> None:
+        self._sleep(seconds)
+        self.metrics.wait_seconds += seconds
 
     @staticmethod
     def _backoff_seconds(attempt: int) -> float:

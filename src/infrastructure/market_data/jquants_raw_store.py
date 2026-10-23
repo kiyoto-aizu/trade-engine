@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
+from time import perf_counter
 from typing import Any, BinaryIO, Protocol
 
 from src.config import config
@@ -66,6 +67,7 @@ class JQuantsDatasetResult:
     content_sha256: str | None
     committed_path: Path | None
     warning_category: str | None = None
+    validation_seconds: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -187,6 +189,7 @@ class JQuantsRawStore:
                     if row_count == 0
                     else JQuantsDatasetState.COMPLETE
                 )
+                validation_start = perf_counter()
                 self._verify_capture(
                     pages_path,
                     dataset_id,
@@ -198,6 +201,7 @@ class JQuantsRawStore:
                     row_count,
                     page_hashes,
                 )
+                validation_seconds = perf_counter() - validation_start
                 published_manifest = self._get_published_manifest(
                     dataset_id, kind, safe_endpoint, safe_conditions
                 )
@@ -258,6 +262,7 @@ class JQuantsRawStore:
                     content_sha256=content_hash,
                     committed_path=committed_path,
                     warning_category=warning_category,
+                    validation_seconds=validation_seconds,
                 )
             except BaseException as error:
                 if not self._has_pending_publication(dataset_id, run_id):

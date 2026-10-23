@@ -8,6 +8,7 @@ import math
 import os
 import re
 import shutil
+from time import perf_counter
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -22,9 +23,10 @@ import pyarrow.parquet as pq
 from src.infrastructure.market_data.jquants_raw_store import JQuantsPublishedRaw, JQuantsRawStoreError
 
 SCHEMA_VERSION = "1"
-TRANSFORMER_VERSION = "2"
+TRANSFORMER_VERSION = "3"
 _COMMON = ("O", "H", "L", "C", "Vo", "Va")
 _ADJUSTED = ("AdjFactor", "AdjO", "AdjH", "AdjL", "AdjC", "AdjVo")
+CONFIRMED_NON_CANONICAL_FIELDS = frozenset({"ExRT", "MktCap"})
 _JST = ZoneInfo("Asia/Tokyo")
 
 
@@ -55,7 +57,7 @@ class JQuantsCanonicalError(Exception):
 class JQuantsQualityError(JQuantsCanonicalError):
     category = "QUALITY_ERROR"
 
-    def __init__(self, quality: dict[str, int]) -> None:
+    def __init__(self, quality: dict[str, Any]) -> None:
         super().__init__("Canonical quality validation failed")
         self.quality = dict(quality)
 
@@ -65,6 +67,7 @@ class JQuantsCanonicalResult:
     generation_id: str
     manifest: Mapping[str, Any]
     reused: bool
+    timings_seconds: Mapping[str, float]
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -165,18 +168,29 @@ class JQuantsCanonicalStore:
         attempt = partition / "ATTEMPT.json"
         _atomic_write(attempt, _json_bytes({**identity, "state": "RUNNING"}))
         staging = partition / "staging" / uuid.uuid4().hex
+        conversion_seconds = 0.0
+        verification_seconds = 0.0
         try:
             if destination.exists():
+                verification_start = perf_counter()
                 manifest = self._verify(partition, generation, dataset, target_date)
+                verification_seconds += perf_counter() - verification_start
                 reused = True
             else:
                 staging.mkdir(parents=True)
+                conversion_start = perf_counter()
                 manifest = self._convert(raw, dataset, target_date, staging, identity, generation)
+                conversion_seconds += perf_counter() - conversion_start
                 destination.parent.mkdir(exist_ok=True)
                 os.replace(staging, destination)
+                verification_start = perf_counter()
                 manifest = self._verify(partition, generation, dataset, target_date)
+                verification_seconds += perf_counter() - verification_start
                 reused = False
-            result = JQuantsCanonicalResult(generation, manifest, reused)
+            result = JQuantsCanonicalResult(
+                generation, manifest, reused,
+                {"conversion": conversion_seconds, "verification": verification_seconds},
+            )
             # All validation precedes the only visibility-changing operation.
             _atomic_write(attempt, _json_bytes({**identity, "state": "VALIDATED",
                                               "generation_id": generation}))
@@ -203,12 +217,16 @@ class JQuantsCanonicalStore:
         staging: Path, identity: dict[str, str], generation: str,
     ) -> dict[str, Any]:
         schema = canonical_schema(dataset)
-        quality = dict(input_rows=0, invalid_rows=0, exact_duplicates=0,
-                       conflicting_duplicates=0, unknown_field_count=0,
-                       rows_with_unknown_fields=0)
+        quality: dict[str, Any] = dict(
+            input_rows=0, invalid_rows=0, exact_duplicates=0,
+            conflicting_duplicates=0, unknown_field_count=0,
+            rows_with_unknown_fields=0,
+        )
         seen: dict[tuple[str, ...], bytes] = {}
         codes: set[str] = set()
-        unknown: set[str] = set()
+        unsupported: set[str] = set()
+        observed_fields: set[str] = set()
+        field_observations: dict[str, dict[str, int]] = {}
         parquet = staging / "part-00000.parquet"
         with pq.ParquetWriter(parquet, schema, compression="zstd") as writer:
             for page in raw.iter_pages():
@@ -216,8 +234,16 @@ class JQuantsCanonicalStore:
                 for record in page:
                     quality["input_rows"] += 1
                     extras = set(record) - set(schema.names)
-                    unknown.update(extras)
-                    quality["rows_with_unknown_fields"] += bool(extras)
+                    observed_fields.update(extras)
+                    unapproved = extras - CONFIRMED_NON_CANONICAL_FIELDS
+                    unsupported.update(unapproved)
+                    quality["rows_with_unknown_fields"] += bool(unapproved)
+                    for name in extras:
+                        counts = field_observations.setdefault(
+                            name, {"count": 0, "null_count": 0}
+                        )
+                        counts["count"] += 1
+                        counts["null_count"] += record[name] is None
                     try:
                         row = _convert_row(record, dataset, target_date)
                     except (ValueError, TypeError, OverflowError):
@@ -240,7 +266,7 @@ class JQuantsCanonicalStore:
                         batch.clear()
                 if batch:
                     writer.write_table(pa.Table.from_pylist(batch, schema=schema))
-        quality["unknown_field_count"] = len(unknown)
+        quality["unknown_field_count"] = len(unsupported)
         if quality["input_rows"] != raw.manifest["row_count"]:
             quality["invalid_rows"] += 1
         if any(quality[name] for name in (
@@ -254,7 +280,9 @@ class JQuantsCanonicalStore:
             **identity, "generation_id": generation,
             "created_at_utc": datetime.now(timezone.utc).isoformat(),
             "row_count": quality["input_rows"], "symbol_count": len(codes),
-            "unsupported_fields": sorted(unknown),
+            "unsupported_fields": sorted(unsupported),
+            "noncanonical_fields": sorted(observed_fields),
+            "field_observations": field_observations,
             "quality": quality, "size_bytes": parquet.stat().st_size,
             "parquet_sha256": _hash_file(parquet),
         }
