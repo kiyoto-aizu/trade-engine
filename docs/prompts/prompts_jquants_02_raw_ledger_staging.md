@@ -14,7 +14,7 @@ PR1/PR1.1で実装済みのJ-Quants V2クライアントを利用し、
 ---
 
 ## 対象
-- リポジトリ：kiyoto-aizu/trade-pjoject
+- リポジトリ：kiyoto-aizu/trade-engine
 - 既存未コミット変更は維持
 - 実API接続、コミット、プッシュは行わない
 

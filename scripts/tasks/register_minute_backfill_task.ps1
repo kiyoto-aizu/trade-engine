@@ -1,6 +1,6 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [string]$TaskName = 'trade-pjoject-minute-backfill',
+    [string]$TaskName = 'trade-engine-minute-backfill',
     [datetime]$At = [datetime]'07:30',
     [switch]$Remove
 )

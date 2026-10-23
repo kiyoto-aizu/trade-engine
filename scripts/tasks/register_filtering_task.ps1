@@ -1,6 +1,6 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [string]$TaskName = 'trade-pjoject-filtering',
+    [string]$TaskName = 'trade-engine-filtering',
     [datetime]$At = [datetime]'09:30',
     [switch]$Remove
 )
@@ -27,7 +27,7 @@ $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Tuesday, Wednesd
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runner`""
 # -WakeToRun: PCがスリープしても目覚めさせて実行を継続する
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -WakeToRun
-$description = "Runs trade-pjoject filtering from $projectRoot on business weekdays."
+$description = "Runs trade-engine filtering from $projectRoot on business weekdays."
 
 if ($PSCmdlet.ShouldProcess($TaskName, "Register weekday filtering task at $($At.ToString('HH:mm'))")) {
     Register-ScheduledTask `

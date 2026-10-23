@@ -6,7 +6,7 @@
 不明点を推測で埋めず、確認できた事実と提案を区別してください。
 
 ## 対象
-- 主対象リポジトリ：kiyoto-aizu/trade-pjoject
+- 主対象リポジトリ：kiyoto-aizu/trade-engine
 - レポート側：kiyoto-aizu/trade-report
 - ローカルで参照できないリポジトリは、その旨を報告してください。
 

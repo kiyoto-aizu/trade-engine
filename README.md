@@ -236,8 +236,8 @@ kabuステーションを起動・ログインしたWindowsユーザーで、平
 登録内容の確認と手動起動は次のとおりです。
 
 ```
-Get-ScheduledTask -TaskName trade-pjoject-screening
-Start-ScheduledTask -TaskName trade-pjoject-screening
+Get-ScheduledTask -TaskName trade-engine-screening
+Start-ScheduledTask -TaskName trade-engine-screening
 ```
 
 タスクはログオン中にのみ実行されます。実行時刻の変更と削除は次のコマンドで行えます。
@@ -303,8 +303,8 @@ kabuステーションを起動・ログインしたWindowsユーザーで、平
 登録内容の確認と手動起動は次のとおりです。
 
 ```
-Get-ScheduledTask -TaskName trade-pjoject-filtering
-Start-ScheduledTask -TaskName trade-pjoject-filtering
+Get-ScheduledTask -TaskName trade-engine-filtering
+Start-ScheduledTask -TaskName trade-engine-filtering
 ```
 
 実行時刻の変更と削除は次のコマンドで行えます。
@@ -373,8 +373,8 @@ Windowsの計画実行では、スクリーニング・フィルタリングと�
 登録内容の確認、手動起動、削除は次のとおりです。
 
 ```
-Get-ScheduledTask -TaskName trade-pjoject-backtest
-Start-ScheduledTask -TaskName trade-pjoject-backtest
+Get-ScheduledTask -TaskName trade-engine-backtest
+Start-ScheduledTask -TaskName trade-engine-backtest
 .\scripts\tasks\register_backtest_task.ps1 -Remove
 ```
 

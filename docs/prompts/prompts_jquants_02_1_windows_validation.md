@@ -9,7 +9,7 @@
 PR3の実装はまだ始めない。
 
 ## 制約
-- 対象：kiyoto-aizu/trade-pjoject
+- 対象：kiyoto-aizu/trade-engine
 - 実API接続、.env内容確認、コミット、プッシュは行わない
 - 既存の未コミット変更・削除・未追跡ファイルを保持する
 - テストのためにOS判定やロック実装を差し替えない

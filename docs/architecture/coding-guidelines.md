@@ -1,8 +1,8 @@
-# trade-pjoject コーディング規約・設計方針 第3版
+# trade-engine コーディング規約・設計方針 第3版
 
 更新日: 2026-10-04
 
-このドキュメントは、trade-pjoject でコードを書く／レビューする際に従うべきルールをまとめたものです。
+このドキュメントは、trade-engine でコードを書く／レビューする際に従うべきルールをまとめたものです。
 AIにコードを書かせる・レビューさせる際は、このファイルをコンテキストとして読み込ませてください。
 （旧実装のレビュー記録は [review-legacy-code.md](../reviews/review-legacy-code.md) を参照してください）
 
@@ -11,7 +11,7 @@ AIにコードを書かせる・レビューさせる際は、このファイル
 ## 1. レイヤー構成
 
 ```
-trade-pjoject/
+trade-engine/
 ├── src/
 │   ├── api/                        # request_handler.py: infrastructure専用HTTP共通処理
 │   ├── application/                # usecase・分析/配分機能

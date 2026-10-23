@@ -1,6 +1,6 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [string]$TaskName = 'trade-pjoject-backtest',
+    [string]$TaskName = 'trade-engine-backtest',
     [datetime]$At = [datetime]'08:00',
     [switch]$Remove
 )
@@ -32,6 +32,6 @@ if ($PSCmdlet.ShouldProcess($TaskName, "Register weekly backtest task on Saturda
         -Action $action `
         -Trigger $trigger `
         -Settings $settings `
-        -Description 'Runs the weekly trade-pjoject time-series backtest from daily filtering results.' `
+        -Description 'Runs the weekly trade-engine time-series backtest from daily filtering results.' `
         -Force | Out-Null
 }

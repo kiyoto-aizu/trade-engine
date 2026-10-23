@@ -5,7 +5,7 @@ PR1で実装済みのJ-Quants V2クライアントについて、
 曖昧なエラー分類・秘匿漏れ・ページング異常系を最小差分で補強する。
 
 ## 前提
-- 対象リポジトリ：kiyoto-aizu/trade-pjoject
+- 対象リポジトリ：kiyoto-aizu/trade-engine
 - PR1で追加済み：
   - `jquants_v2_client.py`
   - `config.py` のJ-Quants設定

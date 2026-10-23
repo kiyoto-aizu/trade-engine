@@ -8,7 +8,7 @@
 ---
 
 ## 前提
-- 対象リポジトリ：`kiyoto-aizu/trade-pjoject`
+- 対象リポジトリ：`kiyoto-aizu/trade-engine`
 - プラン：Light + 分足アドオン
 - 契約境界（確認時点）
   - 日足：`2021-10-21` 以降

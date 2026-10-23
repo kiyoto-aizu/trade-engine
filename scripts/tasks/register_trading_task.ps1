@@ -1,6 +1,6 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [string]$TaskName = 'trade-pjoject-trading',
+    [string]$TaskName = 'trade-engine-trading',
     [datetime]$At = [datetime]'09:35',
     [switch]$Remove
 )
@@ -36,6 +36,6 @@ if ($PSCmdlet.ShouldProcess($TaskName, "Register weekday trading task at $($At.T
         -Action $action `
         -Trigger $trigger `
         -Settings $settings `
-        -Description 'Runs trade-pjoject paper trading from the production market API.' `
+        -Description 'Runs trade-engine paper trading from the production market API.' `
         -Force | Out-Null
 }

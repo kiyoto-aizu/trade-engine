@@ -1,4 +1,4 @@
-# trade-pjoject 旧実装のコードレビュー記録
+# trade-engine 旧実装のコードレビュー記録
 
 対象: `trading_bot.py` / `component/get_api_5d_closes.py` / `config.py` を中心にしたレビュー。
 このファイルは旧実装を対象にした過去のレビュー記録です。現行コードの状態を示すものではありません。コーディング規約は [coding-guidelines.md](../architecture/coding-guidelines.md) を参照してください。

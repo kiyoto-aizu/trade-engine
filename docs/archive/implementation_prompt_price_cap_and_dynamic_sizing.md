@@ -1,6 +1,6 @@
 # 実装プロンプト：スクリーニング価格上限フィルタ ＋ 動的ポジションサイジング
 
-対象リポジトリ: `trade-pjoject`（DDDレイヤー構成: domain / application / infrastructure / entrypoints）
+対象リポジトリ: `trade-engine`（DDDレイヤー構成: domain / application / infrastructure / entrypoints）
 
 ## 背景・目的
 

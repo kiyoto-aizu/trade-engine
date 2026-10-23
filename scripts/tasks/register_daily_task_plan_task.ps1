@@ -1,6 +1,6 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [string]$TaskName = 'trade-pjoject-daily-task-plan',
+    [string]$TaskName = 'trade-engine-daily-task-plan',
     [datetime]$At = [datetime]'07:00',
     [switch]$Remove
 )

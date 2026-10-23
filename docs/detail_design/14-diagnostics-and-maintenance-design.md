@@ -160,7 +160,7 @@ flowchart TD
 | `--dates` | 分足診断の対象日（カンマ区切り） | `2026-09-29,2026-09-30,2026-10-01,2026-10-02,2026-10-05` |
 | `--no-simulation` | 分足診断の上位候補再現を無効化 | `False`（シミュレーション有効） |
 | 登録スクリプト `-At` | 予定通知／実行確認のWindowsタスク起動時刻 | `07:00`／`18:00` |
-| 登録スクリプト `-TaskName` | Windowsタスク名 | `trade-pjoject-daily-task-plan`／`trade-pjoject-daily-task-check` |
+| 登録スクリプト `-TaskName` | Windowsタスク名 | `trade-engine-daily-task-plan`／`trade-engine-daily-task-check` |
 
 分足診断のログ入力ディレクトリはスクリーニング結果ディレクトリの親にある `logs/jobs`、結果JSONは同じ親の `analysis`。日次レポートは実行確認entrypointの既定でプロジェクトルート `data/reports/daily` を参照する。
 

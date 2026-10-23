@@ -8,7 +8,7 @@ assignees: []
 
 ## 0. Meta
 - Task ID: TRD-XXX
-- Repo: trade-pjoject or trade-report
+- Repo: trade-engine or trade-report
 - Priority: P1/P2/P3
 - Owner: @kiyoto-aizu
 - Due: YYYY-MM-DD
