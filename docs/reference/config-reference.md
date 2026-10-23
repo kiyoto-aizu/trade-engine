@@ -134,6 +134,16 @@
 | `ENABLE_LIVE_ORDERING` | "false" | 任意 |  |
 | `INDEX_MINUTE_BAR_PARQUET_DIR` | str(_repo_root / 'data' / 'index_minute_bars_parquet') | 任意 | 日経225など指数の分足Parquetの保存先。個別銘柄用とはDuckDB読み込み(symbol列がBIGINT)を壊さないため分離する。 |
 | `IS_DEMO` | "true" | 任意 |  |
+| `JQUANTS_429_WAIT_SECONDS` | "120" | 任意 |  |
+| `JQUANTS_API_KEY` | (非表示) | 任意 | J-Quants API V2。接続先はAPIキーの誤送信を避けるため固定する。 |
+| `JQUANTS_CANONICAL_DIRECTORY` | str(_repo_root / 'data' / 'jquants' / 'canonical') | 任意 |  |
+| `JQUANTS_LEDGER_DATABASE_FILE` | str(_repo_root / 'data' / 'jquants' / 'ledger.sqlite3') | 任意 |  |
+| `JQUANTS_MAX_ATTEMPTS` | "4" | 任意 |  |
+| `JQUANTS_RAW_DIRECTORY` | str(_repo_root / 'data' / 'jquants' / 'raw') | 任意 |  |
+| `JQUANTS_REQUEST_INTERVAL_SECONDS` | "1.2" | 任意 |  |
+| `JQUANTS_RETRY_BASE_SECONDS` | "1" | 任意 |  |
+| `JQUANTS_RETRY_MAX_SECONDS` | "30" | 任意 |  |
+| `JQUANTS_TIMEOUT_SECONDS` | "30" | 任意 |  |
 | `KABU_TOKEN_REFRESH_FAILURE_BACKOFF_SECONDS` | (非表示) | 任意 | トークン再取得後も401が続く（復旧失敗）場合に、次の再取得試行まであける間隔（秒）。 他プロセスとのトークン発行の奪い合いを防ぐための間隔 |
 | `KABU_TOKEN_REFRESH_MIN_INTERVAL_SECONDS` | (非表示) | 任意 | 401応答を受けた際にトークンを再取得する最小間隔（秒）。この間隔内は取得済みの トークンで再試行し、/tokenへの呼び出し自体は増やさない |
 | `LIQUIDATION_POSITIONS_FETCH_RETRIES` | "3" | 任意 | 強制決済(緊急停止・EOD)時に保有株一覧の取得が失敗した場合の再試行回数・間隔(秒)。 失敗(None)と保有ゼロ([])を取り違えないための安全策 |
@@ -163,4 +173,4 @@
 | `TRADING_PROGRESS_REPORT_2_HOUR` | "14" | 任意 |  |
 | `TRADING_PROGRESS_REPORT_2_MINUTE` | "0" | 任意 |  |
 
-説明欄が空の項目: 61件。
+説明欄が空の項目: 70件。

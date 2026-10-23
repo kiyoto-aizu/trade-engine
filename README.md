@@ -460,6 +460,7 @@ python -m src.entrypoints.run_weekly_analysis --week-start 2026-09-07 --force
 - [戦略レビュー詳細設計](docs/detail_design/12-strategy-review-design.md)
 - [通知詳細設計](docs/detail_design/13-notification-design.md)
 - [診断・保守詳細設計](docs/detail_design/14-diagnostics-and-maintenance-design.md)
+- [J-Quants 指定日の全銘柄取得とcanonical Parquet](docs/detail_design/17-jquants-single-day-ingestion.md)
 - [kabuステーションAPI仕様書](references/kabu_STATION_API.yaml)
 
 ## テスト

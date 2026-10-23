@@ -358,6 +358,9 @@ JQUANTS_RETRY_MAX_SECONDS = _non_negative_env("JQUANTS_RETRY_MAX_SECONDS", "30",
 JQUANTS_RAW_DIRECTORY = Path(
     os.getenv("JQUANTS_RAW_DIRECTORY", str(_repo_root / "data" / "jquants" / "raw"))
 )
+JQUANTS_CANONICAL_DIRECTORY = Path(
+    os.getenv("JQUANTS_CANONICAL_DIRECTORY", str(_repo_root / "data" / "jquants" / "canonical"))
+)
 JQUANTS_LEDGER_DATABASE_FILE = Path(
     os.getenv(
         "JQUANTS_LEDGER_DATABASE_FILE",

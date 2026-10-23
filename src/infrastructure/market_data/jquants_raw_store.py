@@ -11,7 +11,7 @@ import sys
 import tempfile
 import threading
 import uuid
-from collections.abc import Callable, Generator, Iterable, Mapping
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -84,6 +84,33 @@ class JQuantsIncompleteDataset:
     page_count: int
     row_count: int
     error_category: str | None
+
+
+@dataclass(frozen=True)
+class JQuantsPublishedRaw:
+    manifest: Mapping[str, Any]
+    pages_path: Path
+
+    def iter_pages(self) -> Iterator[list[dict[str, Any]]]:
+        """Stream a pinned, previously verified immutable generation."""
+        count = 0
+        rows = 0
+        with self.pages_path.open(encoding="utf-8") as source:
+            for count, line in enumerate(source, 1):
+                record = json.loads(line)
+                data = record["response"]["data"]
+                digest = hashlib.sha256(
+                    JQuantsRawStore._json_text({"data": data}).encode("utf-8")
+                ).hexdigest()
+                if (
+                    count > self.manifest["page_count"]
+                    or digest != self.manifest["page_sha256"][count - 1]
+                ):
+                    raise JQuantsRawValidationError("Published raw changed during reading")
+                rows += len(data)
+                yield data
+        if count != self.manifest["page_count"] or rows != self.manifest["row_count"]:
+            raise JQuantsRawValidationError("Published raw counts changed during reading")
 
 
 class _PagedClient(Protocol):
@@ -285,6 +312,13 @@ class JQuantsRawStore:
                 JQuantsDatasetState.FAILED,
             )
         )
+        return self._list_datasets(states)
+
+    def list_attention_datasets(self) -> list[JQuantsIncompleteDataset]:
+        """Empty results needing review, distinct from incomplete captures."""
+        return self._list_datasets(("EMPTY_UNKNOWN", "EMPTY_HELD"))
+
+    def _list_datasets(self, states: tuple[str, ...]) -> list[JQuantsIncompleteDataset]:
         placeholders = ",".join("?" for _ in states)
         with self._connection() as connection:
             rows = connection.execute(
@@ -310,6 +344,37 @@ class JQuantsRawStore:
             )
             for row in rows
         ]
+
+    @contextmanager
+    def ingestion_lock(
+        self, *, kind: str, endpoint: str, conditions: Mapping[str, Any]
+    ) -> Generator[str, None, None]:
+        """Serialize whole ingestion jobs; capture/recovery retain their own lock."""
+        safe_endpoint = self._validate_endpoint(endpoint)
+        safe_conditions = self._validate_conditions(conditions)
+        dataset_id = self._dataset_id(kind, safe_endpoint, safe_conditions)
+        operation_id = hashlib.sha256(f"ingestion:{dataset_id}".encode("ascii")).hexdigest()
+        handle = self._acquire_dataset_lock(operation_id)
+        try:
+            yield dataset_id
+        finally:
+            self._release_dataset_lock(handle)
+
+    def resolve_published(
+        self, *, kind: str, endpoint: str, conditions: Mapping[str, Any]
+    ) -> JQuantsPublishedRaw | None:
+        manifest = self.get_current_manifest(
+            kind=kind, endpoint=endpoint, conditions=conditions
+        )
+        if manifest is None:
+            return None
+        return JQuantsPublishedRaw(
+            manifest=manifest,
+            pages_path=(
+                self._dataset_committed_directory(manifest["dataset_id"])
+                / "generations" / manifest["generation_id"] / "pages.jsonl"
+            ),
+        )
 
     def get_current_manifest(
         self,

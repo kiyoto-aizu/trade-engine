@@ -6,7 +6,8 @@
 ## 1. 概要
 
 PR2はJ-Quants V2ページ取得結果をrawとして保存し、SQLite台帳で取得試行と最後に確定した世代を別々に管理します。検証済み世代をCURRENTで公開します。
-日次全銘柄ジョブ、過去補填、canonical Parquet、バックテスト接続は実装しません。
+PR2単体では日次全銘柄ジョブ、過去補填、canonical Parquet、バックテスト接続は実装しません。
+後続の[PR3単日取得・canonical](./17-jquants-single-day-ingestion.md)は既存の公開・復旧処理を利用します。
 契約境界日をコードへ固定せず、既存Yahoo/kabu/売買経路も変更しません。
 
 ## 2. 実行方式
