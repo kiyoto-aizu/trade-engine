@@ -21,7 +21,7 @@ VALID_STATUSES = frozenset({"COMPLETE", "ATTENTION", "FAILED"})
 # Items required by the design that metrics JSON cannot yet express.
 BASE_NOT_EVALUATED = ("WARNINGS", "UNKNOWN_FIELDS", "SYMBOL_COUNT", "DISK_SPACE")
 RAW_SOURCES = frozenset({"fetch", "existing", "none"})
-_CODE = re.compile(r"^[A-Z0-9_]{1,64}$")
+_CODE = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,7 @@ def safe_number(value: Any) -> float | None:
 
 def safe_code(value: Any) -> str | None:
     """Enumerated codes only; anything else is dropped so free text never propagates."""
-    return value if isinstance(value, str) and _CODE.match(value) else None
+    return value if isinstance(value, str) and _CODE.fullmatch(value) else None
 
 
 def safe_codes(value: Any) -> list[str] | None:

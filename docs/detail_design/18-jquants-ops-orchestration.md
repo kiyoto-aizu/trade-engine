@@ -65,7 +65,12 @@ Hold と No-Go の扱い（日次・再開が「○」でも記録は必須）:
 旧世代を保持した PARTIAL は FAILED でなく ATTENTION（Hold）になる。Issue #16 で metrics JSON に
 `error_category`・`warnings`（列挙コードのみ）・`symbol_count`・`unknown_field_count`・実行モード（`raw_source`: fetch/existing/none）を
 追加し、判定（`ERROR_CATEGORY_*` / `WARNINGS_PRESENT` / `UNKNOWN_FIELDS_SEEN` / `SYMBOL_COUNT_ZERO` / `FETCH_WITHOUT_REQUESTS`）と
-集計CSVの列に反映した。コード以外の文字列は値として採用しない。
+集計CSVの列に反映した。コード以外の文字列は値として採用しない（コードは先頭が英大文字の英大文字・数字・`_` のみ。数字だけの銘柄コード風文字列は不可）。
+書き出し側でも同じ判定を通し、非コードは捨てて `INVALID_WARNING_DROPPED` を記録する。銘柄数・未知フィールド数は「未計測」のとき null とし、未評価のまま残す。
+
+割り切り（暫定）:
+- `error_category` が `RATE_LIMITED` でも status が ATTENTION なら判定は Hold どまり。429 の当日停止は、429 件数の閾値（`RATE_LIMIT_429_HIGH`）側で扱う。
+- 銘柄数0 は Hold（`SYMBOL_COUNT_ZERO`）。「休場日の空」と「未公開の空」の区別が未決のため、補填が休場日を含むと Hold が増え、人の確認対象が増える。Hold は次の日付を止めない。
 
 補填の1日あたり予算（初期案）: 最大N日分/実行時間上限。Nは実測の所要時間から決める（判断待ち）。
 
@@ -159,10 +164,10 @@ Hold と No-Go の扱い（日次・再開が「○」でも記録は必須）:
 - 実行基盤（Windowsタスクスケジューラ等）、通知方法、全体ロック/停止フラグの方式。
 - 営業日カレンダーの出どころ、休場日の空と未公開の空の区別、日次の実行時刻。
 - 契約境界の定数の所在。
-- 補填の有効化は DISK_SPACE の評価方法が決まるまで見送り（それまで `evaluation_complete` は常に False のため補填は開始できない）。
+- 補填の有効化は DISK_SPACE の評価方法が決まるまで見送り（追跡先: #24。それまで `evaluation_complete` は常に False のため補填は開始できない）。
 - 「補填由来の日付」の判定方法（台帳にジョブ種別を持つか、日次の対象窓より古い日付とみなすか）。
 - 確認済みの No-Go を `--fail-on-no-go` から外す手段（`--since`、確認済み日付の除外リスト、当日実行のみ等）。通知方法と合わせて決める。
-- 429の連続回数・dataset別の件数閾値（実測前の暫定値のまま運用する範囲。追跡先: #12 / #16）。
+- 429の連続回数・dataset別の件数閾値（実測前の暫定値のまま運用する範囲。追跡先: #12。#16 では実測できないため持ち越し）。
 - （対応済み: metrics JSON への項目追加。Issue #16）
 - 停止フラグの解除手順、補填完了の定義、過去日のデータ訂正の有無。
 - ディスク基準のチェック時点（実行前）と、初回（サイズ不明）の扱い。

@@ -16,6 +16,7 @@ import uuid
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from src.application.jquants_metrics_evaluation import safe_codes
 from src.infrastructure.market_data.jquants_canonical_store import (
     JQuantsCanonicalError,
     JQuantsCanonicalStore,
@@ -290,6 +291,20 @@ class JQuantsSingleDayIngestion:
                 summary.metrics_file = str(self._write_metrics(summary))
         return summary
 
+    @staticmethod
+    def _enumerated_warnings(warnings: list[str]) -> list[str]:
+        codes = safe_codes(warnings) or []
+        if len(set(warnings)) != len(codes):
+            codes = sorted({*codes, "INVALID_WARNING_DROPPED"})
+        return codes
+
+    @staticmethod
+    def _unknown_field_count(quality: Mapping[str, Any]) -> int | None:
+        value = quality.get("unknown_field_count") if isinstance(quality, Mapping) else None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        return value
+
     def _write_metrics(self, summary: JQuantsIngestionSummary) -> Path:
         assert self.metrics_directory is not None
         directory = self.metrics_directory / summary.dataset / f"date={summary.date}"
@@ -303,9 +318,10 @@ class JQuantsSingleDayIngestion:
             "status": summary.status,
             # Enumerated codes and counts only; never symbol codes or record values.
             "error_category": summary.error_category,
-            "warnings": sorted(set(summary.warnings)),
-            "symbol_count": summary.symbol_count,
-            "unknown_field_count": int(summary.quality.get("unknown_field_count", 0) or 0),
+            "warnings": self._enumerated_warnings(summary.warnings),
+            # None means "not measured" (e.g. the run stopped before canonical conversion).
+            "symbol_count": summary.symbol_count if summary.canonical_generation_id else None,
+            "unknown_field_count": self._unknown_field_count(summary.quality),
             "raw_source": summary.raw_source,
         }
         temporary = path.with_suffix(".tmp")

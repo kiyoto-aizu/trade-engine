@@ -141,3 +141,19 @@ def test_429_is_excluded_from_other_retries():
     result = evaluate_metrics(m, LIMITS)
     assert "OTHER_RETRIES_ELEVATED" not in result.reasons
     assert "RATE_LIMIT_429_SEEN" in result.reasons
+
+
+def test_digit_only_and_trailing_newline_are_not_codes():
+    base = dict(symbol_count=5, unknown_field_count=0, raw_source="fetch")
+    for bad in ("88880", "8944", "ABC\n"):
+        result = evaluate_metrics(metrics(**base, warnings=[bad]), LIMITS)
+        assert "WARNINGS_PRESENT" in result.reasons
+    from src.application.jquants_metrics_evaluation import safe_code
+    assert safe_code("8944") is None and safe_code("ABC\n") is None
+    assert safe_code("RATE_LIMITED") == "RATE_LIMITED"
+
+
+def test_unmeasured_symbol_and_unknown_counts_stay_not_evaluated():
+    result = evaluate_metrics(
+        metrics(symbol_count=None, unknown_field_count=None, warnings=[]), LIMITS)
+    assert {"SYMBOL_COUNT", "UNKNOWN_FIELDS"} <= set(result.not_evaluated)

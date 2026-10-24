@@ -728,3 +728,13 @@ def test_written_metrics_json_has_judgement_fields_and_evaluates(stores, tmp_pat
     result = evaluate_metrics(saved)
     assert "OTHER_RETRIES_ELEVATED" not in result.reasons
     assert {"WARNINGS", "UNKNOWN_FIELDS", "SYMBOL_COUNT"}.isdisjoint(result.not_evaluated)
+
+
+def test_writer_drops_non_code_warnings_and_marks_unmeasured_counts(stores, tmp_path):
+    ingestion = JQuantsSingleDayIngestion(*stores, metrics_directory=tmp_path / "m")
+    assert ingestion._enumerated_warnings(["B_WARN", "8944", "free text", "B_WARN"]) == [
+        "B_WARN", "INVALID_WARNING_DROPPED"]
+    assert ingestion._enumerated_warnings(["B_WARN", "A_WARN"]) == ["A_WARN", "B_WARN"]
+    assert ingestion._unknown_field_count({}) is None
+    assert ingestion._unknown_field_count({"unknown_field_count": "x"}) is None
+    assert ingestion._unknown_field_count({"unknown_field_count": 2}) == 2
