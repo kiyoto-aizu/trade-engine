@@ -103,13 +103,10 @@ def evaluate_metrics(
         raise_to(HOLD, "ELAPSED_LIMIT_UNSET")
     elif total is None:
         raise_to(HOLD, "ELAPSED_UNMEASURED")
-    else:
-        # Mandatory 429 waits are operational, not a slowdown of the run itself.
-        active = max(total - (safe_number(metrics.get("wait_seconds")) or 0.0), 0.0)
-        if active > limits.elapsed_limit_seconds:
-            raise_to(NO_GO, "ELAPSED_OVER_LIMIT")
-        elif active > limits.elapsed_limit_seconds * limits.elapsed_hold_ratio:
-            raise_to(HOLD, "ELAPSED_NEAR_LIMIT")
+    elif total > limits.elapsed_limit_seconds:
+        raise_to(NO_GO, "ELAPSED_OVER_LIMIT")
+    elif total > limits.elapsed_limit_seconds * limits.elapsed_hold_ratio:
+        raise_to(HOLD, "ELAPSED_NEAR_LIMIT")
 
     return JQuantsEvaluation(verdict, tuple(reasons), tuple(not_evaluated))
 

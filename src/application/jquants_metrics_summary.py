@@ -30,7 +30,9 @@ COLUMNS = (
     "status",
     "partial_verdict",
     "reasons",
+    "setup_reasons",
     "not_evaluated",
+    "evaluation_complete",
     "is_latest",
     "consecutive_failed",
     "request_count",
@@ -42,9 +44,13 @@ COLUMNS = (
     "conversion_seconds",
     "canonical_validation_seconds",
     "total_seconds",
+    "active_seconds",
     "raw_size_bytes",
     "canonical_size_bytes",
 )
+
+# Reasons caused by missing configuration, not by the quality of the run.
+SETUP_REASONS = frozenset({"ELAPSED_LIMIT_UNSET"})
 
 
 def _number(value: Any) -> float | int | str:
@@ -66,14 +72,18 @@ def summarize_run(
     dataset = metrics.get("dataset")
     date = metrics.get("date")
     status = metrics.get("status")
+    total = safe_number(durations.get("total"))
+    wait = safe_number(metrics.get("wait_seconds")) or 0.0
     return {
         "dataset": dataset if dataset in DATASETS else "",
         "date": date if isinstance(date, str) and _DATE.match(date) else "",
         "file": path.name,
         "status": status if status in VALID_STATUSES else "INVALID",
         "partial_verdict": evaluation.verdict,
-        "reasons": ";".join(evaluation.reasons),
+        "reasons": ";".join(r for r in evaluation.reasons if r not in SETUP_REASONS),
+        "setup_reasons": ";".join(r for r in evaluation.reasons if r in SETUP_REASONS),
         "not_evaluated": ";".join(evaluation.not_evaluated),
+        "evaluation_complete": not evaluation.not_evaluated,
         "request_count": _number(metrics.get("request_count")),
         "retry_count": _number(metrics.get("retry_count")),
         "rate_limit_429_count": _number(metrics.get("rate_limit_429_count")),
@@ -83,6 +93,7 @@ def summarize_run(
         "conversion_seconds": _number(durations.get("conversion")),
         "canonical_validation_seconds": _number(durations.get("canonical_validation")),
         "total_seconds": _number(durations.get("total")),
+        "active_seconds": "" if total is None else round(max(total - wait, 0.0), 3),
         "raw_size_bytes": _number(metrics.get("raw_size_bytes")),
         "canonical_size_bytes": _number(metrics.get("canonical_size_bytes")),
     }
@@ -101,11 +112,14 @@ def _unreadable_row(path: Path) -> dict[str, Any]:
     }
 
 
-def _mark_latest_and_streaks(rows: list[dict[str, Any]]) -> None:
-    """Rows are in file-name (timestamp) order, so the last row per key is the latest."""
+def _mark_latest_and_streaks(entries: list[tuple[tuple[str, str], dict[str, Any]]]) -> None:
+    """Entries are in file-name (timestamp) order, so the last one per key is the latest.
+
+    Keys come from the directory names, never from file content.
+    """
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for row in rows:
-        groups.setdefault((row["dataset"], row["date"]), []).append(row)
+    for key, row in entries:
+        groups.setdefault(key, []).append(row)
     for attempts in groups.values():
         streak = 0
         for row in attempts:
@@ -120,14 +134,16 @@ def summarize_directory(
     thresholds_by_dataset: Mapping[str, JQuantsGoThresholds] | None = None,
 ) -> list[dict[str, Any]]:
     limits = thresholds_by_dataset or {}
-    rows = []
+    entries = []
     for path in sorted(Path(metrics_directory).glob("*/date=*/*.json")):
+        key = (path.parent.parent.name, path.parent.name)
         try:
-            rows.append(summarize_run(path, limits.get(path.parent.parent.name)))
+            row = summarize_run(path, limits.get(path.parent.parent.name))
         except (OSError, ValueError):
-            rows.append(_unreadable_row(path))
-    _mark_latest_and_streaks(rows)
-    return rows
+            row = _unreadable_row(path)
+        entries.append((key, row))
+    _mark_latest_and_streaks(entries)
+    return [row for _, row in entries]
 
 
 def write_csv(rows: Iterable[dict[str, Any]], output: Path | str) -> None:

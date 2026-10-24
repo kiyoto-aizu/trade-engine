@@ -68,15 +68,15 @@ def test_elapsed_limit_unset_is_hold():
     assert result.verdict == HOLD and "ELAPSED_LIMIT_UNSET" in result.reasons
 
 
-def test_elapsed_boundaries_use_active_time_without_429_waits():
+def test_elapsed_boundaries_use_wall_clock_total_including_waits():
     assert verdict(metrics(durations_seconds={"total": 70.0})) == GO
     assert verdict(metrics(durations_seconds={"total": 70.1})) == HOLD
     assert verdict(metrics(durations_seconds={"total": 100.0})) == HOLD
     assert verdict(metrics(durations_seconds={"total": 100.1})) == NO_GO
     waited = metrics(durations_seconds={"total": 150.0}, wait_seconds=120.0,
                      rate_limit_429_count=1, retry_count=1)
-    assert evaluate_metrics(waited, LIMITS).verdict == HOLD
-    assert "ELAPSED_OVER_LIMIT" not in evaluate_metrics(waited, LIMITS).reasons
+    assert evaluate_metrics(waited, LIMITS).verdict == NO_GO
+    assert "ELAPSED_OVER_LIMIT" in evaluate_metrics(waited, LIMITS).reasons
 
 
 def test_unmeasured_requests_are_hold():

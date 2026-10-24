@@ -92,11 +92,15 @@ def test_csv_columns_and_excel_friendly_encoding(tmp_path):
 
 
 def test_entrypoint_exit_codes(tmp_path):
+    import pytest
     write_run(tmp_path / "m", "daily", "2026-10-22", "a.json", status="FAILED")
     output = tmp_path / "sub" / "out.csv"
     args = ["--metrics-dir", str(tmp_path / "m"), "--output", str(output)]
     assert main(args) == 0
     assert output.exists()
-    assert main(args + ["--fail-on-no-go"]) == 1
+    assert main(args + ["--fail-on-no-go"]) == 3
     write_run(tmp_path / "m", "daily", "2026-10-22", "z.json", status="COMPLETE")
     assert main(args + ["--fail-on-no-go", "--daily-elapsed-limit", "100"]) == 0
+    assert main(["--metrics-dir", str(tmp_path / "none"), "--output", str(output)]) == 4
+    with pytest.raises(SystemExit):
+        main(args + ["--daily-elapsed-limit", "nan"])

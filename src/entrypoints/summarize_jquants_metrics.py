@@ -1,25 +1,43 @@
-"""Summarize J-Quants execution metrics into a CSV (read-only, no network)."""
+"""Summarize J-Quants execution metrics into a CSV (read-only, no network).
+
+Exit codes: 0 = written, 1 = unexpected error, 2 = invalid arguments,
+3 = a latest run is No-Go (only with --fail-on-no-go), 4 = metrics directory missing.
+"""
 
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
 from src.application.jquants_metrics_evaluation import JQuantsGoThresholds
 from src.application.jquants_metrics_summary import summarize_directory, write_csv
+
+EXIT_NO_GO = 3
+EXIT_MISSING_METRICS = 4
+
+
+def _positive_finite(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError("must be a finite number greater than 0")
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--metrics-dir", default="data/jquants/metrics")
     parser.add_argument("--output", default="data/jquants/metrics_summary.csv")
-    parser.add_argument("--daily-elapsed-limit", type=float, default=None,
-                        help="Seconds of active time allowed for a daily run")
-    parser.add_argument("--minute-elapsed-limit", type=float, default=None,
-                        help="Seconds of active time allowed for a minute run")
+    parser.add_argument("--daily-elapsed-limit", type=_positive_finite, default=None,
+                        help="Wall-clock seconds allowed for a daily run")
+    parser.add_argument("--minute-elapsed-limit", type=_positive_finite, default=None,
+                        help="Wall-clock seconds allowed for a minute run")
     parser.add_argument("--fail-on-no-go", action="store_true",
-                        help="Exit with 1 when the latest run of any dataset/date is No-Go")
+                        help="Exit with 3 when the latest run of any dataset/date is No-Go")
     args = parser.parse_args(argv)
+    if not Path(args.metrics_dir).is_dir():
+        print(f"metrics directory not found: {args.metrics_dir}")
+        return EXIT_MISSING_METRICS
     rows = summarize_directory(
         args.metrics_dir,
         {
@@ -33,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.fail_on_no_go and any(
         row["is_latest"] and row["partial_verdict"] == "No-Go" for row in rows
     ):
-        return 1
+        return EXIT_NO_GO
     return 0
 
 

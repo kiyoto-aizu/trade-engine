@@ -126,8 +126,8 @@
 ```
 - 出力は検証済みの数値と列挙コードのみ（株価レコード・銘柄コード・自由文字列は含まない）
 - `partial_verdict` は実装済み項目だけの部分判定。`not_evaluated` 列の項目は評価されていない
-- 所要時間の上限（429待機を除く実質時間）が未指定だと Hold になる
-- `--fail-on-no-go` は、各 dataset×date の最新試行が No-Go のとき終了コード1
+- 所要時間の上限（wall-clock の total。429待機などの待ちも含む）が未指定だと Hold になる。参考として `active_seconds` 列（total − wait_seconds）を出す
+- `--fail-on-no-go` は、各 dataset×date の最新試行が No-Go のとき終了コード3（metrics ディレクトリが無い場合は4）
 JSONにはリクエスト/ページ数、HTTPステータス別件数、リトライ、
 429、待機時間、処理時間、保存サイズ、ピークメモリ、フィールドごとの件数/null件数を記録し、
 APIキー・認証情報・raw本文・株価レコードは含めない。
