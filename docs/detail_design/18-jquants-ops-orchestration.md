@@ -131,6 +131,8 @@ Hold と No-Go の扱い（日次・再開が「○」でも記録は必須）:
 
 ## 6. データ利用側との契約（案）
 
+詳細は [19 canonical schema運用ルールとデータ利用側の入力契約](./19-jquants-consumer-contract.md) に移した（Issue #10）。以下は要約。
+
 - canonical schema は version を持ち、破壊的変更は禁止（追加のみ、変更時は新バージョン）。
 - 利用側は (dataset, schema_version, 期間, 欠損日リスト) を入力契約とし、欠損・未取得日は明示する。
 - Yahoo/自前データへの暗黙フォールバックは禁止。必要なら明示オプションのみ。
