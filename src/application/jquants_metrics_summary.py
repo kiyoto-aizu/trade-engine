@@ -34,7 +34,8 @@ COLUMNS = (
     "not_evaluated",
     "evaluation_complete",
     "is_latest",
-    "consecutive_failed",
+    "consecutive_failed_same_date",
+    "consecutive_failed_dataset",
     "request_count",
     "retry_count",
     "rate_limit_429_count",
@@ -73,7 +74,7 @@ def summarize_run(
     date = metrics.get("date")
     status = metrics.get("status")
     total = safe_number(durations.get("total"))
-    wait = safe_number(metrics.get("wait_seconds")) or 0.0
+    wait = safe_number(metrics.get("wait_seconds"))
     return {
         "dataset": dataset if dataset in DATASETS else "",
         "date": date if isinstance(date, str) and _DATE.match(date) else "",
@@ -93,7 +94,7 @@ def summarize_run(
         "conversion_seconds": _number(durations.get("conversion")),
         "canonical_validation_seconds": _number(durations.get("canonical_validation")),
         "total_seconds": _number(durations.get("total")),
-        "active_seconds": "" if total is None else round(max(total - wait, 0.0), 3),
+        "active_seconds": "" if total is None or wait is None else round(max(total - wait, 0.0), 3),
         "raw_size_bytes": _number(metrics.get("raw_size_bytes")),
         "canonical_size_bytes": _number(metrics.get("canonical_size_bytes")),
     }
@@ -124,9 +125,18 @@ def _mark_latest_and_streaks(entries: list[tuple[tuple[str, str], dict[str, Any]
         streak = 0
         for row in attempts:
             streak = streak + 1 if row["status"] == "FAILED" else 0
-            row["consecutive_failed"] = streak
+            row["consecutive_failed_same_date"] = streak
             row["is_latest"] = False
         attempts[-1]["is_latest"] = True
+    # Backfill goes back in dates, so the dataset-wide streak follows the file-name timestamp.
+    by_dataset: dict[str, list[dict[str, Any]]] = {}
+    for (dataset, _), row in entries:
+        by_dataset.setdefault(dataset, []).append(row)
+    for runs in by_dataset.values():
+        streak = 0
+        for row in sorted(runs, key=lambda r: str(r.get("file", ""))):
+            streak = streak + 1 if row["status"] == "FAILED" else 0
+            row["consecutive_failed_dataset"] = streak
 
 
 def summarize_directory(

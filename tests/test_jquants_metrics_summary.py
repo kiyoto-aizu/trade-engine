@@ -78,8 +78,35 @@ def test_latest_attempt_and_consecutive_failures(tmp_path):
     write_run(tmp_path, "daily", "2026-10-22", "3.json", status="COMPLETE")
     write_run(tmp_path, "daily", "2026-10-22", "4.json", status="FAILED")
     rows = summarize_directory(tmp_path, LIMITS)
-    assert [r["consecutive_failed"] for r in rows] == [1, 2, 0, 1]
+    assert [r["consecutive_failed_same_date"] for r in rows] == [1, 2, 0, 1]
     assert [r["is_latest"] for r in rows] == [False, False, False, True]
+
+
+def test_dataset_wide_streak_spans_dates_in_timestamp_order(tmp_path):
+    for stamp, day in (("1.json", "2026-10-20"), ("2.json", "2026-10-19"), ("3.json", "2026-10-18")):
+        write_run(tmp_path, "daily", day, stamp, status="FAILED")
+    rows = summarize_directory(tmp_path, LIMITS)
+    assert sorted(r["consecutive_failed_dataset"] for r in rows) == [1, 2, 3]
+    assert all(r["consecutive_failed_same_date"] == 1 for r in rows)
+
+
+def test_broken_content_cannot_steal_latest_and_new_columns(tmp_path):
+    write_run(tmp_path, "daily", "2026-10-22", "1.json", status="FAILED")
+    directory = tmp_path / "daily" / "date=2026-10-22"
+    (directory / "2.json").write_text("{", encoding="utf-8")
+    rows = summarize_directory(tmp_path, LIMITS)
+    assert [r["is_latest"] for r in rows] == [False, True]
+    assert rows[1]["partial_verdict"] == "No-Go"
+
+
+def test_setup_reason_active_seconds_and_evaluation_complete(tmp_path):
+    write_run(tmp_path, "daily", "2026-10-22", "a.json", wait_seconds=2.0)
+    write_run(tmp_path, "daily", "2026-10-23", "b.json", wait_seconds="未計測")
+    row_a, row_b = summarize_directory(tmp_path, None)
+    assert row_a["setup_reasons"] == "ELAPSED_LIMIT_UNSET" and row_a["reasons"] == ""
+    assert row_a["active_seconds"] == 3.0
+    assert row_a["evaluation_complete"] is False
+    assert row_b["active_seconds"] == ""
 
 
 def test_csv_columns_and_excel_friendly_encoding(tmp_path):
@@ -104,3 +131,9 @@ def test_entrypoint_exit_codes(tmp_path):
     assert main(["--metrics-dir", str(tmp_path / "none"), "--output", str(output)]) == 4
     with pytest.raises(SystemExit):
         main(args + ["--daily-elapsed-limit", "nan"])
+    for bad in ("inf", "0", "-5"):
+        with pytest.raises(SystemExit):
+            main(args + ["--minute-elapsed-limit", bad])
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert main(["--metrics-dir", str(empty), "--output", str(output), "--fail-on-no-go"]) == 0
