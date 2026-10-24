@@ -299,8 +299,14 @@ class JQuantsSingleDayIngestion:
         payload = {
             "dataset": summary.dataset,
             "date": summary.date,
-            "status": summary.status,
             **summary.execution_metrics,
+            "status": summary.status,
+            # Enumerated codes and counts only; never symbol codes or record values.
+            "error_category": summary.error_category,
+            "warnings": sorted(set(summary.warnings)),
+            "symbol_count": summary.symbol_count,
+            "unknown_field_count": int(summary.quality.get("unknown_field_count", 0) or 0),
+            "raw_source": summary.raw_source,
         }
         temporary = path.with_suffix(".tmp")
         try:
