@@ -41,6 +41,7 @@ JQUANTS_MAY_IMPORT_SHARED = ("src.config",)
 # 接続層を追加するときは、そのモジュールのパス（ROOTからの相対）をここへ1つだけ加える（レビュー対象）。
 CONNECTION_LAYER_ALLOWED: set[str] = set()
 DYNAMIC_IMPORT_NAMES = {"import_module", "__import__"}
+MARKET_DATA_PACKAGE = ["src", "infrastructure", "market_data"]
 
 
 def _is_jquants(path: Path) -> bool:
@@ -51,18 +52,25 @@ def _source_files() -> list[Path]:
     return [path for directory in SCAN_DIRS for path in directory.rglob("*.py")]
 
 
-def _imported_modules(path: Path) -> set[str]:
+def _package_of(path: Path) -> list[str]:
+    try:
+        return list(path.resolve().relative_to(ROOT).parent.parts)
+    except ValueError:
+        return []
+
+
+def _imported_modules(path: Path, package: list[str] | None = None) -> set[str]:
+    # 相対importは、ファイルの置き場所から絶対名に直してから判定する。
+    package = _package_of(path) if package is None else package
     modules: set[str] = set()
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8-sig"))):
         if isinstance(node, ast.Import):
             modules.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
-            base = node.module or ""
-            if base:
-                modules.add(base)
+            anchor = package[:len(package) - (node.level - 1)] if node.level else []
+            base = ".".join(anchor + (node.module.split(".") if node.module else []))
             modules.update(f"{base}.{alias.name}" if base else alias.name for alias in node.names)
     return modules
-
 
 def _dynamic_imports(path: Path) -> list[str]:
     found = []
@@ -85,15 +93,15 @@ def _is_allowed_shared(module: str) -> bool:
     return "jquants" in module or module.startswith(JQUANTS_MAY_IMPORT_SHARED)
 
 
-def _jquants_side_violations(path: Path) -> list[str]:
-    violations = [f"{path.name} -> {module}" for module in sorted(_imported_modules(path))
+def _jquants_side_violations(path: Path, package: list[str] | None = None) -> list[str]:
+    violations = [f"{path.name} -> {module}" for module in sorted(_imported_modules(path, package))
                   if _is_forbidden(module) or not _is_allowed_shared(module)]
     violations += [f"{path.name} -> {name}() dynamic import" for name in _dynamic_imports(path)]
     return violations
 
 
-def _other_side_violations(path: Path) -> list[str]:
-    violations = [f"{path.name} -> {module}" for module in sorted(_imported_modules(path))
+def _other_side_violations(path: Path, package: list[str] | None = None) -> list[str]:
+    violations = [f"{path.name} -> {module}" for module in sorted(_imported_modules(path, package))
                   if "jquants" in module]
     violations += [f"{path.name} -> {name}() dynamic import" for name in _dynamic_imports(path)]
     return violations
@@ -165,6 +173,9 @@ def test_connection_layer_does_not_import_other_data_sources():
 @pytest.mark.parametrize("source", [
     "from src.infrastructure.market_data.yahoo_finance_client import X\n",
     "from . import yahoo_helper\n",
+    "from .get_daily_closes import X\n",
+    "from .index_daily_bar_fallback import X\n",
+    "from ..persistence import some_repository\n",
     "import importlib\nimportlib.import_module('x')\n",
     "from src.application.backtest_usecase import Y\n",
     "from src.infrastructure.persistence.some_repository import Z\n",
@@ -172,23 +183,27 @@ def test_connection_layer_does_not_import_other_data_sources():
 def test_guard_detects_jquants_side_violations(tmp_path, source):
     sample = tmp_path / "jquants_sample.py"
     sample.write_text(source, encoding="utf-8")
-    assert _jquants_side_violations(sample)
+    assert _jquants_side_violations(sample, MARKET_DATA_PACKAGE)
 
 
 def test_guard_allows_jquants_side_imports(tmp_path):
     sample = tmp_path / "jquants_sample.py"
     sample.write_text("from src.config import config\n"
-                      "from src.infrastructure.market_data.jquants_raw_store import X\n",
+                      "from src.infrastructure.market_data.jquants_raw_store import X\n"
+                      "from src.infrastructure.market_data import jquants_raw_store\n"
+                      "from .jquants_raw_store import Y\n"
+                      "from . import jquants_raw_store as z\n",
                       encoding="utf-8")
-    assert not _jquants_side_violations(sample)
+    assert not _jquants_side_violations(sample, MARKET_DATA_PACKAGE)
 
 
 @pytest.mark.parametrize("source", [
     "from src.infrastructure.market_data.jquants_canonical_store import X\n",
     "from src.infrastructure.market_data import jquants_raw_store\n",
+    "from . import jquants_raw_store\n",
     "import importlib\nimportlib.import_module('x')\n",
 ])
 def test_guard_detects_other_side_violations(tmp_path, source):
     sample = tmp_path / "backtest_sample.py"
     sample.write_text(source, encoding="utf-8")
-    assert _other_side_violations(sample)
+    assert _other_side_violations(sample, MARKET_DATA_PACKAGE)
