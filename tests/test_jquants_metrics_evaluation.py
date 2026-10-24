@@ -105,3 +105,39 @@ def test_stage_breakdown_includes_other():
 
 def test_worst_verdict_wins():
     assert verdict(metrics(status="ATTENTION", rate_limit_429_count=10, retry_count=10)) == NO_GO
+
+
+def test_new_fields_are_evaluated_and_leave_not_evaluated():
+    clean = evaluate_metrics(
+        metrics(error_category=None, warnings=[], symbol_count=5, unknown_field_count=0,
+                raw_source="fetch"), LIMITS)
+    assert clean.verdict == GO
+    assert set(clean.not_evaluated) == {"DISK_SPACE"}
+
+
+def test_warnings_unknown_fields_and_symbol_count_raise_hold():
+    base = dict(warnings=[], symbol_count=5, unknown_field_count=0, raw_source="fetch")
+    assert verdict(metrics(**{**base, "warnings": ["EMPTY_RESULT_MEANING_UNKNOWN"]})) == HOLD
+    assert verdict(metrics(**{**base, "unknown_field_count": 2})) == HOLD
+    assert verdict(metrics(**{**base, "symbol_count": 0})) == HOLD
+    assert verdict(metrics(**{**base, "warnings": ["bad value 88880"]})) == HOLD
+
+
+def test_error_category_and_raw_source():
+    base = dict(warnings=[], symbol_count=5, unknown_field_count=0)
+    failed = evaluate_metrics(
+        metrics(**base, status="FAILED", error_category="RATE_LIMITED", raw_source="fetch"), LIMITS)
+    assert failed.verdict == NO_GO and "ERROR_CATEGORY_RATE_LIMITED" in failed.reasons
+    assert verdict(metrics(**base, error_category="free text 88880", raw_source="fetch")) == HOLD
+    assert verdict(metrics(**base, raw_source="existing", request_count=0,
+                           retry_count=0)) == GO
+    zero = evaluate_metrics(metrics(**base, raw_source="fetch", request_count=0), LIMITS)
+    assert zero.verdict == HOLD and "FETCH_WITHOUT_REQUESTS" in zero.reasons
+    assert verdict(metrics(**base, raw_source="bogus")) == HOLD
+
+
+def test_429_is_excluded_from_other_retries():
+    m = metrics(retry_count=2, rate_limit_429_count=2)
+    result = evaluate_metrics(m, LIMITS)
+    assert "OTHER_RETRIES_ELEVATED" not in result.reasons
+    assert "RATE_LIMIT_429_SEEN" in result.reasons

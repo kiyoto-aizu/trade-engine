@@ -56,14 +56,16 @@ Hold と No-Go の扱い（日次・再開が「○」でも記録は必須）:
   429 は1回でも当日停止にする。理由は、429 が API 枠の枯渇を直接示し、継続すると日次の枠を食うため。No-Go は当日停止。
 - ATTENTION（Hold）は次の日付の処理を止めないが、人間の確認対象として台帳に残す。
 - 「以降の日付も停止」は、補填が日付を遡る場合も「その補填ジョブの残り全日付」を指す。
-- `evaluation_complete` が False の Go は、補填の開始条件にしない（#16 完了までは常に False）。
+- `evaluation_complete` が False の Go は、補填の開始条件にしない（Issue #16 で WARNINGS / UNKNOWN_FIELDS / SYMBOL_COUNT を評価対象にしたが、DISK_SPACE が未評価のため現状は常に False。旧形式の JSON では上記3項目も未評価のまま）。
 
 契約境界の定数更新手順: 403（契約範囲外）で補填が終了したら、①公式の契約範囲を確認、②範囲定数を更新、
 ③当該日を台帳に「契約範囲外」と記録、の順に行う。定数の所在は実装時に決める（判断待ち）。
 
 「429 再試行枯渇」と「PARTIAL」は、現状の metrics JSON（status は COMPLETE/ATTENTION/FAILED のみ）では区別できない。
-旧世代を保持した PARTIAL は FAILED でなく ATTENTION（Hold）になるため、区別できるよう metrics JSON に
-`error_category` と実行モード（`raw_source`）を追加する（別Issueで対応）。
+旧世代を保持した PARTIAL は FAILED でなく ATTENTION（Hold）になる。Issue #16 で metrics JSON に
+`error_category`・`warnings`（列挙コードのみ）・`symbol_count`・`unknown_field_count`・実行モード（`raw_source`: fetch/existing/none）を
+追加し、判定（`ERROR_CATEGORY_*` / `WARNINGS_PRESENT` / `UNKNOWN_FIELDS_SEEN` / `SYMBOL_COUNT_ZERO` / `FETCH_WITHOUT_REQUESTS`）と
+集計CSVの列に反映した。コード以外の文字列は値として採用しない。
 
 補填の1日あたり予算（初期案）: 最大N日分/実行時間上限。Nは実測の所要時間から決める（判断待ち）。
 
@@ -157,11 +159,11 @@ Hold と No-Go の扱い（日次・再開が「○」でも記録は必須）:
 - 実行基盤（Windowsタスクスケジューラ等）、通知方法、全体ロック/停止フラグの方式。
 - 営業日カレンダーの出どころ、休場日の空と未公開の空の区別、日次の実行時刻。
 - 契約境界の定数の所在。
-- 補填の有効化は #16 完了後（それまで `evaluation_complete` は常に False のため補填は開始できない）。
+- 補填の有効化は DISK_SPACE の評価方法が決まるまで見送り（それまで `evaluation_complete` は常に False のため補填は開始できない）。
 - 「補填由来の日付」の判定方法（台帳にジョブ種別を持つか、日次の対象窓より古い日付とみなすか）。
 - 確認済みの No-Go を `--fail-on-no-go` から外す手段（`--since`、確認済み日付の除外リスト、当日実行のみ等）。通知方法と合わせて決める。
-- metrics JSON への項目追加（`error_category`・警告・銘柄数・`raw_source`。Issue #16）。
 - 429の連続回数・dataset別の件数閾値（実測前の暫定値のまま運用する範囲。追跡先: #12 / #16）。
+- （対応済み: metrics JSON への項目追加。Issue #16）
 - 停止フラグの解除手順、補填完了の定義、過去日のデータ訂正の有無。
 - ディスク基準のチェック時点（実行前）と、初回（サイズ不明）の扱い。
 
