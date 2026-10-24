@@ -353,6 +353,8 @@ JQUANTS_REQUEST_INTERVAL_SECONDS = _non_negative_env(
     "JQUANTS_REQUEST_INTERVAL_SECONDS", "1.2", float
 )
 JQUANTS_429_WAIT_SECONDS = _non_negative_env("JQUANTS_429_WAIT_SECONDS", "120", float)
+# 1実行（1クライアント）内の429累計がこの回数に達したら、残りの取得を全て打ち切る
+JQUANTS_MAX_429_PER_RUN = _non_negative_env("JQUANTS_MAX_429_PER_RUN", "3", int)
 JQUANTS_RETRY_BASE_SECONDS = _non_negative_env("JQUANTS_RETRY_BASE_SECONDS", "1", float)
 JQUANTS_RETRY_MAX_SECONDS = _non_negative_env("JQUANTS_RETRY_MAX_SECONDS", "30", float)
 JQUANTS_RAW_DIRECTORY = Path(
@@ -372,6 +374,8 @@ if JQUANTS_TIMEOUT_SECONDS <= 0:
     raise ValueError("JQUANTS_TIMEOUT_SECONDSは正数を指定してください。")
 if JQUANTS_MAX_ATTEMPTS <= 0:
     raise ValueError("JQUANTS_MAX_ATTEMPTSは正数を指定してください。")
+if JQUANTS_MAX_429_PER_RUN <= 0:
+    raise ValueError("JQUANTS_MAX_429_PER_RUNは正数を指定してください。")
 
 # 全価格帯で板の売買代金・売買高が取れなかった銘柄を、結果保存前に再取得する
 FILTER_BOARD_RETRY_ENABLED = os.getenv("FILTER_BOARD_RETRY_ENABLED", "true").strip().lower() in ("1", "true", "yes")
