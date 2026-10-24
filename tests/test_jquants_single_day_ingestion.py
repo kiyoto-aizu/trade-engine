@@ -18,7 +18,7 @@ from src.infrastructure.market_data.jquants_canonical_store import (
 from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStore
 from src.infrastructure.market_data.jquants_raw_store import JQuantsRawValidationError
 from src.infrastructure.market_data.jquants_v2_client import (
-    JQuantsPage, JQuantsPageMetadata, JQuantsTransportError,
+    JQuantsPage, JQuantsPageMetadata, JQuantsRateLimitAbortError, JQuantsTransportError,
 )
 
 DAY = "2026-10-20"
@@ -347,6 +347,53 @@ def failing_pages(first_page=False):
     if first_page:
         yield [row(code="22220")]
     raise JQuantsTransportError("SECRET_EXCEPTION_BODY")
+
+
+def aborting_pages():
+    yield [row(code="22220")]
+    raise JQuantsRateLimitAbortError("cap reached")
+
+
+def test_429_abort_is_failed_partial_keeps_previous_and_recovers_with_refresh(stores, tmp_path):
+    old = run(stores, Client([[row()]]))
+    metrics_dir = tmp_path / "metrics"
+    aborted = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: Client(aborting_pages()), metrics_directory=metrics_dir
+    ).run(dataset="daily", date=DAY, refresh=True)
+    assert aborted.status == "FAILED" and aborted.exit_code == 3
+    assert aborted.raw_state == "PARTIAL"
+    assert aborted.error_category == "RATE_LIMIT_ABORTED"
+    assert aborted.execution_metrics["rate_limit_aborted"] is True
+    assert aborted.execution_metrics["abort_reason"] == "RATE_LIMIT_429_CAP"
+    assert stores[1].current_manifest("daily", DAY)["generation_id"] == old.canonical_generation_id
+    assert aborted.raw_generation_id == old.raw_generation_id
+    assert len(stores[0].list_incomplete_datasets()) == 1
+
+    saved = json.loads(next(metrics_dir.rglob("*.json")).read_text(encoding="utf-8"))
+    assert saved["rate_limit_aborted"] is True and saved["status"] == "FAILED"
+    from src.application.jquants_metrics_evaluation import evaluate_metrics
+    evaluation = evaluate_metrics(saved)
+    assert evaluation.verdict == "No-Go" and "RATE_LIMIT_ABORTED" in evaluation.reasons
+
+    recovered = run(stores, Client([[row(code="22220")]]), refresh=True)
+    assert recovered.status == "COMPLETE" and recovered.exit_code == 0
+    assert stores[0].list_incomplete_datasets() == []
+
+
+def test_cli_429_abort_exit_code_and_alert(stores, monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(cli, "JQuantsRawStore", lambda: stores[0])
+    monkeypatch.setattr(cli, "JQuantsCanonicalStore", lambda path: stores[1])
+    monkeypatch.setattr(cli.config, "JQUANTS_EXECUTION_METRICS_DIRECTORY", tmp_path / "metrics")
+    original = cli.JQuantsSingleDayIngestion
+    monkeypatch.setattr(cli, "JQuantsSingleDayIngestion",
+                        lambda raw, canonical, **kwargs: original(
+                            raw, canonical, client_factory=lambda: Client(aborting_pages()), **kwargs
+                        ))
+    code = cli.main(["--dataset", "daily", "--date", DAY, "--refresh"])
+    output = capsys.readouterr()
+    assert code == 3
+    assert "ALERT" in output.err and "22220" not in output.out + output.err
+    assert json.loads(output.out)["error_category"] == "RATE_LIMIT_ABORTED"
 
 
 @pytest.mark.parametrize("first_page", [False, True])

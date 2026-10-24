@@ -3,6 +3,7 @@
 import argparse
 import json
 import sqlite3
+import sys
 
 from src.config import config
 from src.application.jquants_single_day_ingestion import JQuantsSingleDayIngestion
@@ -48,6 +49,12 @@ def main(argv: list[str] | None = None) -> int:
                           "error_category": "INITIALIZATION_ERROR"}))
         return 1
     print(json.dumps(summary.as_dict(), sort_keys=True))
+    if summary.error_category == "RATE_LIMIT_ABORTED":
+        print(
+            "ALERT: 429 cumulative limit reached; run aborted. "
+            "Investigate rate-limit settings/plan before --refresh.",
+            file=sys.stderr,
+        )
     return summary.exit_code
 
 

@@ -38,7 +38,7 @@
 | 401 | 停止（フラグ保持） | 停止（フラグ保持） | 停止（フラグ保持） | 全ジョブ停止。人間判断で再開 |
 | 403（契約範囲内の日付） | 停止（フラグ保持） | 停止（フラグ保持）。ただし補填由来の日付は補填のみ停止 | 補填のみ停止（フラグ保持） | 補填の403は境界の可能性があるため、台帳に「403要確認」と記録し、人間が範囲内外を確認するまで再開対象から外す（再開ジョブ経由の全停止を防ぐ） |
 | 403（契約範囲外の日付） | - | - | 補填を終了 | 契約境界に到達した扱い。確認後、境界定数を更新する（下記） |
-| 429（metrics上で1回以上） | ○（Hold） | ○（Hold） | 当日停止（Hold） | 3回以上は No-Go。補填は1回でも当日停止 |
+| 429（metrics上で1回以上） | ○（Hold） | ○（Hold） | 当日停止（Hold） | 3回以上は No-Go。補填は1回でも当日停止。1実行内の429累計が `JQUANTS_MAX_429_PER_RUN`（既定3）に達した時点で、その実行の残りの取得を全て打ち切る（待機を続けない）。打ち切りは FAILED（raw は PARTIAL/FAILED、旧世代と CURRENT 保持、`--refresh` で回復）、`error_category=RATE_LIMIT_ABORTED`、metrics の `rate_limit_aborted=true` / `abort_reason=RATE_LIMIT_429_CAP`、評価理由 `RATE_LIMIT_ABORTED`（No-Go）、CLI 終了コード 3 + stderr に ALERT 1行で通知する。429 は調査対象であり、原因確認前に `--refresh` で再実行しない |
 | 429以外のリトライ ≥10 | ○（No-Go） | ○（No-Go） | 当日停止（No-Go） | 3–9回は Hold |
 | 所要時間が上限超 | ○（No-Go） | ○（No-Go） | 当日停止（No-Go） | 70–100%は Hold |
 | FAILED 1回 | ○（再開対象） | ○ | ○（再開対象） | 再開手順（§3）で再実行 |
@@ -63,7 +63,7 @@ Hold と No-Go の扱い（日次・再開が「○」でも記録は必須）:
 
 「429 再試行枯渇」と「PARTIAL」は、現状の metrics JSON（status は COMPLETE/ATTENTION/FAILED のみ）では区別できない。
 旧世代を保持した PARTIAL は FAILED でなく ATTENTION（Hold）になるため、区別できるよう metrics JSON に
-`error_category` と実行モード（`raw_source`）を追加する（別Issueで対応）。
+`error_category` と実行モード（`raw_source`）を追加する（別Issueで対応）。なお 429 打ち切り（#17）に限り、`error_category=RATE_LIMIT_ABORTED` と `rate_limit_aborted` / `abort_reason` は実装済みで、「再試行枯渇」と区別できる。
 
 補填の1日あたり予算（初期案）: 最大N日分/実行時間上限。Nは実測の所要時間から決める（判断待ち）。
 
