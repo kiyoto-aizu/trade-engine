@@ -131,7 +131,10 @@ float64はAPI数値のIEEE 754倍精度表現であり、十進固定小数の�
 実行メトリクスJSONにはリクエスト数、ページ数、HTTPステータス別件数、リトライ数、
 429件数、待機秒数、取得/raw検証/変換/canonical検証/合計時間、raw/canonicalサイズ、
 ピークメモリ、項目ごとの出現件数/null件数を記録する。
-ピークメモリはPython標準`tracemalloc`によるPythonメモリ計測で、計測できない場合は`未計測`とする。
+ピークメモリは既定で計測しない（`未計測`）。tracemallocは分足（約49万行）で実行時間を大きく
+悪化させ、所要時間の比較可能性を損なうため、`--measure-peak-memory`（または
+`measure_peak_memory=True`）を指定した場合のみ、Python標準`tracemalloc`によるPythonメモリを計測する。
+計測有効時の所要時間は無効時と比較しない。
 APIキー、認証ヘッダー、raw本文、ページキー、株価レコード、銘柄コードは含めない。
 
 同日のdaily/minute canonicalが両方公開済みの場合のみ、日足出来高>0の銘柄数、分足銘柄数、
@@ -156,6 +159,12 @@ canonical IDはdataset、日付、raw世代/hash、schema版、transformer版の
 地方取引所単独上場銘柄・PTS等まで含む「日本の全市場」や実際のデータ網羅性は説明・保証しない。
 変換コードを変更したら`TRANSFORMER_VERSION`、schemaを変更したら`SCHEMA_VERSION`を更新する。
 旧世代は削除せず、CURRENTを読むことで有効版を特定する（全generationsをglobしない）。
+`TRANSFORMER_VERSION`を2→3に上げた理由は、manifestに`noncanonical_fields`/`field_observations`を追加し、
+確認済み非canonical項目（`ExRT`/`MktCap`）を品質違反から除外する判定変更を行ったためである。
+Parquet内容は変わらないが、同一IDのまま旧manifest（観測項目なし）を再利用すると新メトリクスが欠落し、
+品質判定の意味も世代間で混在するため、版を上げて別IDにする。
+この変更で既存canonicalは変更・削除されない。旧v2世代のファイルとCURRENTはそのまま残り、
+次回の実行（`--canonical-only`を含む）で新しいv3世代が通信なしに作られ、検証後にCURRENTが切り替わる。
 
 canonicalの試行状態と公開状態は別である。`VALIDATED`はCURRENT切替直前に記録するため、
 それだけで公開済みとは判定しない。検証済みCURRENTが指す世代が確定版である。
