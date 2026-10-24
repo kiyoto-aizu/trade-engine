@@ -175,7 +175,7 @@ def main() -> None:
     parser.add_argument(
         "--report-dir",
         type=Path,
-        default=Path(__file__).resolve().parents[2] / "analysis" / "minute_bar_backfill_quality",
+        default=Path(__file__).resolve().parents[2] / "data" / "analysis" / "minute_bar_backfill_quality",
     )
     configure_logging()
     args = parser.parse_args()

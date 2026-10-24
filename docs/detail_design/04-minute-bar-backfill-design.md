@@ -31,7 +31,7 @@
 | 分足データ | 出力 | `data/minute_bars_parquet/symbol=<銘柄>/date=<日付>/data.parquet` | `MINUTE_BAR_PARQUET_DIR`で変更可能 |
 | 日経225の1分足 | 出力 | `data/index_minute_bars_parquet/symbol=^N225/date=<日付>/data.parquet` | `INDEX_MINUTE_BAR_PARQUET_DIR`。本タスクではなく日次分析(引け後)と`run_index_minute_backfill.py`が保存。CAUTION検証用 |
 | 取込結果通知 | 出力 | Slack `analysis` | 対象数、取込本数、所要時間 |
-| 取得品質CSV | 出力 | `analysis/minute_bar_backfill_quality/` | 銘柄・日ごとのYahoo取得本数と状態。`data/`外 |
+| 取得品質CSV | 出力 | `data/analysis/minute_bar_backfill_quality/` | 銘柄・日ごとのYahoo取得本数と状態 |
 | 当日分足(日次取得) | 出力 | 上記と同じ`data/minute_bars_parquet/` | 日次分析(引け後16:30)が当日のフィルタ結果の銘柄を保存。[§11](#11-日次分析での当日分足の保存)参照 |
 
 ## 4. 処理フロー
