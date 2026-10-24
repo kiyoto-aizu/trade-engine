@@ -346,6 +346,7 @@ class JQuantsV2Client:
             if status_code == 429:
                 self.metrics.rate_limit_429_count += 1
                 if self.metrics.rate_limit_429_count >= self._max_429_per_run:
+                    # 応答本文・URLを例外チェーン経由で露出させない
                     raise JQuantsRateLimitAbortError(
                         "J-Quants run aborted: cumulative 429 limit reached "
                         f"({self.metrics.rate_limit_429_count})"

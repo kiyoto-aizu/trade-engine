@@ -279,6 +279,19 @@ def test_cumulative_429_cap_aborts_run_across_pages_without_extra_wait():
     assert client.metrics.wait_seconds < 3 * 120
 
 
+def test_cap_of_three_waits_after_first_two_429_and_aborts_on_third_without_waiting():
+    transport = FakeTransport(*[_response({}, status_code=429) for _ in range(4)])
+    client, clock = _client(transport, max_attempts=4, max_429_per_run=3)
+
+    with pytest.raises(JQuantsRateLimitAbortError):
+        next(client.iter_pages("equities/bars/daily"))
+
+    assert len(transport.calls) == 3
+    assert clock.sleeps.count(120) == 2
+    assert client.metrics.retry_count == 2
+    assert client.metrics.wait_seconds >= 240
+
+
 def test_429_below_cap_still_recovers():
     transport = FakeTransport(_response({}, status_code=429), _response({"data": []}))
     client, clock = _client(transport, max_attempts=4, max_429_per_run=3)
