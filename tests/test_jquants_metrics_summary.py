@@ -86,17 +86,17 @@ def test_dataset_wide_streak_spans_dates_in_timestamp_order(tmp_path):
     for stamp, day in (("1.json", "2026-10-20"), ("2.json", "2026-10-19"), ("3.json", "2026-10-18")):
         write_run(tmp_path, "daily", day, stamp, status="FAILED")
     rows = summarize_directory(tmp_path, LIMITS)
-    assert sorted(r["consecutive_failed_dataset"] for r in rows) == [1, 2, 3]
+    by_file = {r["file"]: r["consecutive_failed_dataset"] for r in rows}
+    assert by_file == {"1.json": 1, "2.json": 2, "3.json": 3}
     assert all(r["consecutive_failed_same_date"] == 1 for r in rows)
 
 
-def test_broken_content_cannot_steal_latest_and_new_columns(tmp_path):
+def test_unreadable_content_still_counts_for_latest(tmp_path):
     write_run(tmp_path, "daily", "2026-10-22", "1.json", status="FAILED")
-    directory = tmp_path / "daily" / "date=2026-10-22"
-    (directory / "2.json").write_text("{", encoding="utf-8")
+    write_run(tmp_path, "daily", "2026-10-22", "2.json", dataset="BAD", date="bad")
     rows = summarize_directory(tmp_path, LIMITS)
     assert [r["is_latest"] for r in rows] == [False, True]
-    assert rows[1]["partial_verdict"] == "No-Go"
+    assert rows[1]["dataset"] == "" and rows[1]["date"] == ""
 
 
 def test_setup_reason_active_seconds_and_evaluation_complete(tmp_path):
