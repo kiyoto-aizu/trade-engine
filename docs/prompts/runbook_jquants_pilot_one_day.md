@@ -121,9 +121,13 @@
 
 実行計測の一覧化（読み取り専用・通信なし・Git管理外の `data/jquants/metrics_summary.csv` に出力）:
 ```powershell
-.\.venv\Scripts\python.exe -m src.entrypoints.summarize_jquants_metrics
+.\.venv\Scripts\python.exe -m src.entrypoints.summarize_jquants_metrics `
+  --daily-elapsed-limit <秒> --minute-elapsed-limit <秒> [--fail-on-no-go]
 ```
-出力は件数・時間・サイズ・判定（Go/Hold/No-Go）のみで、株価レコード・銘柄コード・生値は含まない。
+- 出力は検証済みの数値と列挙コードのみ（株価レコード・銘柄コード・自由文字列は含まない）
+- `partial_verdict` は実装済み項目だけの部分判定。`not_evaluated` 列の項目は評価されていない
+- 所要時間の上限（429待機を除く実質時間）が未指定だと Hold になる
+- `--fail-on-no-go` は、各 dataset×date の最新試行が No-Go のとき終了コード1
 JSONにはリクエスト/ページ数、HTTPステータス別件数、リトライ、
 429、待機時間、処理時間、保存サイズ、ピークメモリ、フィールドごとの件数/null件数を記録し、
 APIキー・認証情報・raw本文・株価レコードは含めない。
@@ -184,9 +188,10 @@ APIキー・認証情報・raw本文・株価レコードは含めない。
 - 優先度: 日次更新（日足→分足）> 再開 > 過去補填。すべて直列で、日足と分足は同時に走らせない
 - ロック取得に失敗したジョブは待機せずスキップして記録する（稼働中の処理を奪わない）
 - 補填は新しい日付から契約境界へ遡り、1日分（dataset×date）を最小単位とする
-- 停止条件: 401/403・契約範囲外は全ジョブ停止。429多発・連続FAILED・ディスク不足・品質検証失敗は補填を当日停止
+- 停止条件: 401と契約範囲内の403は全ジョブ停止（停止状態を保持し、人間が解除）。429・連続FAILED・ディスク不足・品質検証失敗の扱いはジョブ種別ごとに設計書18 §2 の表に従う
+- 同時実行の防止: 実行基盤で「実行中なら新規開始しない」設定にする（別プロセスの重複はAPI枠を倍消費する）
 - 再開手順:
-  1. 未完了データセット（PENDING/RUNNING/PARTIAL/FAILED）を確認し、RUNNINGは稼働中でないことを確認する
+  1. 未完了（PENDING/RUNNING/PARTIAL/FAILED）に加え、要確認（EMPTY_UNKNOWN/EMPTY_HELD）も確認し、RUNNINGは稼働中でないことを確認する
   2. 原因を記録（機密情報なし）する
   3. 同じ `--date` を `--refresh` で再実行する（変換のみ失敗した場合は `--canonical-only`）
   4. 失敗時は旧公開世代のままで、成功扱いにしない

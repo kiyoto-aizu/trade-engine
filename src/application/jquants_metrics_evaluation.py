@@ -1,11 +1,14 @@
-"""Read-only Go/Hold/No-Go evaluation of J-Quants single-day execution metrics.
+"""Read-only partial Go/Hold/No-Go evaluation of J-Quants execution metrics.
 
 Operates on the metrics JSON written by the single-day ingestion. It never
-touches the network and emits only counts, never record values or symbols.
+touches the network and emits only enumerated reason codes. The verdict covers
+only the checks listed in the design (status, HTTP errors, 429, other retries,
+active elapsed time); everything else is reported in ``not_evaluated``.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -13,14 +16,19 @@ GO = "Go"
 HOLD = "Hold"
 NO_GO = "No-Go"
 _RANK = {GO: 0, HOLD: 1, NO_GO: 2}
+VALID_STATUSES = frozenset({"COMPLETE", "ATTENTION", "FAILED"})
+# Items required by the design that metrics JSON cannot yet express.
+BASE_NOT_EVALUATED = ("WARNINGS", "UNKNOWN_FIELDS", "SYMBOL_COUNT", "DISK_SPACE")
 
 
 @dataclass(frozen=True)
 class JQuantsGoThresholds:
-    rate_429_hold: float = 0.01
-    rate_429_no_go: float = 0.05
-    retry_rate_hold: float = 0.05
-    retry_rate_no_go: float = 0.20
+    """Count-based initial values; small daily request counts make ratios unstable."""
+
+    rate_limit_429_hold: int = 1
+    rate_limit_429_no_go: int = 3
+    other_retry_hold: int = 3
+    other_retry_no_go: int = 10
     elapsed_limit_seconds: float | None = None
     elapsed_hold_ratio: float = 0.70
 
@@ -29,10 +37,14 @@ class JQuantsGoThresholds:
 class JQuantsEvaluation:
     verdict: str
     reasons: tuple[str, ...] = field(default_factory=tuple)
+    not_evaluated: tuple[str, ...] = BASE_NOT_EVALUATED
 
 
-def _number(value: Any) -> float | None:
+def safe_number(value: Any) -> float | None:
+    """Finite, non-negative numbers only; everything else is treated as unmeasured."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value) or value < 0:
         return None
     return float(value)
 
@@ -43,6 +55,7 @@ def evaluate_metrics(
     limits = thresholds or JQuantsGoThresholds()
     verdict = GO
     reasons: list[str] = []
+    not_evaluated = list(BASE_NOT_EVALUATED)
 
     def raise_to(level: str, reason: str) -> None:
         nonlocal verdict
@@ -55,50 +68,64 @@ def evaluate_metrics(
         pass
     elif status == "ATTENTION":
         raise_to(HOLD, "STATUS_ATTENTION")
+    elif status == "FAILED":
+        raise_to(NO_GO, "STATUS_FAILED")
     else:
-        raise_to(NO_GO, f"STATUS_{status}")
+        raise_to(NO_GO, "STATUS_INVALID")
 
     statuses = metrics.get("http_status_counts")
     if isinstance(statuses, Mapping):
-        if any(str(code) in {"401", "403"} and count for code, count in statuses.items()):
+        if any(str(code) in {"401", "403"} and safe_number(count) for code, count in statuses.items()):
             raise_to(NO_GO, "AUTH_OR_CONTRACT_ERROR")
 
-    requests = _number(metrics.get("request_count"))
-    if requests:
-        rate_429 = (_number(metrics.get("rate_limit_429_count")) or 0.0) / requests
-        retry_rate = (_number(metrics.get("retry_count")) or 0.0) / requests
-        if rate_429 > limits.rate_429_no_go:
-            raise_to(NO_GO, "RATE_LIMIT_429_HIGH")
-        elif rate_429 > limits.rate_429_hold:
-            raise_to(HOLD, "RATE_LIMIT_429_ELEVATED")
-        if retry_rate > limits.retry_rate_no_go:
-            raise_to(NO_GO, "RETRY_RATE_HIGH")
-        elif retry_rate > limits.retry_rate_hold:
-            raise_to(HOLD, "RETRY_RATE_ELEVATED")
-    elif requests is None:
+    requests = safe_number(metrics.get("request_count"))
+    count_429 = safe_number(metrics.get("rate_limit_429_count"))
+    retries = safe_number(metrics.get("retry_count"))
+    if requests is None or count_429 is None or retries is None:
         raise_to(HOLD, "REQUEST_METRICS_UNMEASURED")
+    elif requests == 0:
+        not_evaluated.append("API_HEALTH")
+        reasons.append("NO_REQUESTS_MADE")
+    else:
+        if count_429 >= limits.rate_limit_429_no_go:
+            raise_to(NO_GO, "RATE_LIMIT_429_HIGH")
+        elif count_429 >= limits.rate_limit_429_hold:
+            raise_to(HOLD, "RATE_LIMIT_429_SEEN")
+        other_retries = max(retries - count_429, 0.0)
+        if other_retries >= limits.other_retry_no_go:
+            raise_to(NO_GO, "OTHER_RETRIES_HIGH")
+        elif other_retries >= limits.other_retry_hold:
+            raise_to(HOLD, "OTHER_RETRIES_ELEVATED")
 
     durations = metrics.get("durations_seconds")
-    total = _number(durations.get("total")) if isinstance(durations, Mapping) else None
-    if limits.elapsed_limit_seconds is not None and total is not None:
-        if total > limits.elapsed_limit_seconds:
+    total = safe_number(durations.get("total")) if isinstance(durations, Mapping) else None
+    if limits.elapsed_limit_seconds is None:
+        raise_to(HOLD, "ELAPSED_LIMIT_UNSET")
+    elif total is None:
+        raise_to(HOLD, "ELAPSED_UNMEASURED")
+    else:
+        # Mandatory 429 waits are operational, not a slowdown of the run itself.
+        active = max(total - (safe_number(metrics.get("wait_seconds")) or 0.0), 0.0)
+        if active > limits.elapsed_limit_seconds:
             raise_to(NO_GO, "ELAPSED_OVER_LIMIT")
-        elif total > limits.elapsed_limit_seconds * limits.elapsed_hold_ratio:
+        elif active > limits.elapsed_limit_seconds * limits.elapsed_hold_ratio:
             raise_to(HOLD, "ELAPSED_NEAR_LIMIT")
 
-    return JQuantsEvaluation(verdict, tuple(reasons))
+    return JQuantsEvaluation(verdict, tuple(reasons), tuple(not_evaluated))
 
 
 def stage_breakdown(metrics: Mapping[str, Any]) -> dict[str, float]:
-    """Return each stage's share of total time to expose bottlenecks."""
+    """Return each stage's share of total time; untracked time is reported as ``other``."""
     durations = metrics.get("durations_seconds")
     if not isinstance(durations, Mapping):
         return {}
-    total = _number(durations.get("total"))
+    total = safe_number(durations.get("total"))
     if not total:
         return {}
-    return {
+    shares = {
         stage: value / total
         for stage, raw in durations.items()
-        if stage != "total" and (value := _number(raw)) is not None
+        if stage != "total" and (value := safe_number(raw)) is not None
     }
+    shares["other"] = max(1.0 - sum(shares.values()), 0.0)
+    return shares

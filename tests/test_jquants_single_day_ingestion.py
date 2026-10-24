@@ -265,6 +265,30 @@ def test_execution_metrics_include_http_client_counters(stores):
     assert result.execution_metrics["wait_seconds"] == 120.2
 
 
+def test_real_metrics_json_is_summarized_with_actual_field_names(stores, tmp_path):
+    from src.application.jquants_metrics_summary import summarize_directory
+
+    client = Client([[row(code="88880")]])
+    client.metrics = type("Metrics", (), {
+        "as_dict": lambda self: {
+            "request_count": 2, "page_count": 1, "status_counts": {"200": 1, "429": 1},
+            "retry_count": 1, "rate_limit_429_count": 1, "wait_seconds": 1.5,
+        }
+    })()
+    metrics_directory = tmp_path / "metrics"
+    JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: client, metrics_directory=metrics_directory
+    ).run(dataset="daily", date=DAY)
+
+    (summary,) = summarize_directory(metrics_directory)
+    assert summary["dataset"] == "daily" and summary["date"] == DAY
+    assert summary["status"] == "COMPLETE"
+    assert summary["request_count"] == 2 and summary["rate_limit_429_count"] == 1
+    assert summary["partial_verdict"] == "Hold"
+    assert "RATE_LIMIT_429_SEEN" in summary["reasons"]
+    assert "88880" not in json.dumps(summary)
+
+
 def test_daily_minute_canonical_comparison_is_informational(stores):
     daily_rows = [
         row(code="123A0", Vo=10),
