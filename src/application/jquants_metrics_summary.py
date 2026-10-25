@@ -14,10 +14,14 @@ from typing import Any, Iterable, Mapping
 
 from src.application.jquants_metrics_evaluation import (
     NO_GO,
+    RAW_SOURCES,
     VALID_STATUSES,
     JQuantsGoThresholds,
     evaluate_metrics,
+    safe_code,
+    safe_codes,
     safe_number,
+    stage_breakdown,
 )
 
 DATASETS = frozenset({"daily", "minute"})
@@ -49,6 +53,12 @@ COLUMNS = (
     "active_seconds",
     "raw_size_bytes",
     "canonical_size_bytes",
+    "error_category",
+    "warnings",
+    "symbol_count",
+    "unknown_field_count",
+    "raw_source",
+    "other_share",
 )
 
 # Reasons caused by missing configuration, not by the quality of the run.
@@ -76,6 +86,8 @@ def summarize_run(
     status = metrics.get("status")
     total = safe_number(durations.get("total"))
     wait = safe_number(metrics.get("wait_seconds"))
+    raw_source = metrics.get("raw_source")
+    shares = stage_breakdown(metrics)
     return {
         "dataset": dataset if dataset in DATASETS else "",
         "date": date if isinstance(date, str) and _DATE.match(date) else "",
@@ -99,6 +111,12 @@ def summarize_run(
         "active_seconds": "" if total is None or wait is None else round(max(total - wait, 0.0), 3),
         "raw_size_bytes": _number(metrics.get("raw_size_bytes")),
         "canonical_size_bytes": _number(metrics.get("canonical_size_bytes")),
+        "error_category": safe_code(metrics.get("error_category")) or "",
+        "warnings": ";".join(safe_codes(metrics.get("warnings")) or []),
+        "symbol_count": _number(metrics.get("symbol_count")),
+        "unknown_field_count": _number(metrics.get("unknown_field_count")),
+        "raw_source": raw_source if raw_source in RAW_SOURCES else "",
+        "other_share": round(shares["other"], 4) if shares else "",
     }
 
 

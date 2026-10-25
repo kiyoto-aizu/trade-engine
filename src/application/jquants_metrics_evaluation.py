@@ -9,6 +9,7 @@ active elapsed time); everything else is reported in ``not_evaluated``.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -19,6 +20,8 @@ _RANK = {GO: 0, HOLD: 1, NO_GO: 2}
 VALID_STATUSES = frozenset({"COMPLETE", "ATTENTION", "FAILED"})
 # Items required by the design that metrics JSON cannot yet express.
 BASE_NOT_EVALUATED = ("WARNINGS", "UNKNOWN_FIELDS", "SYMBOL_COUNT", "DISK_SPACE")
+RAW_SOURCES = frozenset({"fetch", "existing", "none"})
+_CODE = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,52 @@ def safe_number(value: Any) -> float | None:
     return float(value)
 
 
+def safe_code(value: Any) -> str | None:
+    """Enumerated codes only; anything else is dropped so free text never propagates."""
+    return value if isinstance(value, str) and _CODE.fullmatch(value) else None
+
+
+def safe_codes(value: Any) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    return sorted({code for item in value if (code := safe_code(item))})
+
+
+def _evaluate_run_details(metrics, status, not_evaluated, raise_to) -> None:
+    """Warnings, unknown fields, symbol count, error category and raw source."""
+    category = safe_code(metrics.get("error_category"))
+    if category:
+        # A failed run is already No-Go; this keeps the cause visible and flags
+        # a category on a run that claims success.
+        raise_to(NO_GO if status == "FAILED" else HOLD, f"ERROR_CATEGORY_{category}")
+    elif metrics.get("error_category") is not None:
+        raise_to(HOLD, "ERROR_CATEGORY_INVALID")
+
+    warnings = safe_codes(metrics.get("warnings"))
+    if warnings is None:
+        pass
+    else:
+        not_evaluated.remove("WARNINGS")
+        if warnings or len(metrics["warnings"]) != len(warnings):
+            raise_to(HOLD, "WARNINGS_PRESENT")
+
+    unknown = safe_number(metrics.get("unknown_field_count"))
+    if unknown is not None:
+        not_evaluated.remove("UNKNOWN_FIELDS")
+        if unknown > 0:
+            raise_to(HOLD, "UNKNOWN_FIELDS_SEEN")
+
+    symbols = safe_number(metrics.get("symbol_count"))
+    if symbols is not None:
+        not_evaluated.remove("SYMBOL_COUNT")
+        if symbols == 0 and status in {"COMPLETE", "ATTENTION"}:
+            raise_to(HOLD, "SYMBOL_COUNT_ZERO")
+
+    source = metrics.get("raw_source")
+    if source is not None and source not in RAW_SOURCES:
+        raise_to(HOLD, "RAW_SOURCE_INVALID")
+
+
 def evaluate_metrics(
     metrics: Mapping[str, Any], thresholds: JQuantsGoThresholds | None = None
 ) -> JQuantsEvaluation:
@@ -73,6 +122,8 @@ def evaluate_metrics(
     else:
         raise_to(NO_GO, "STATUS_INVALID")
 
+    _evaluate_run_details(metrics, status, not_evaluated, raise_to)
+
     statuses = metrics.get("http_status_counts")
     if metrics.get("rate_limit_aborted") is True:
         raise_to(NO_GO, "RATE_LIMIT_ABORTED")
@@ -88,6 +139,8 @@ def evaluate_metrics(
     elif requests == 0:
         not_evaluated.append("API_HEALTH")
         reasons.append("NO_REQUESTS_MADE")
+        if metrics.get("raw_source") == "fetch":
+            raise_to(HOLD, "FETCH_WITHOUT_REQUESTS")
     else:
         if count_429 >= limits.rate_limit_429_no_go:
             raise_to(NO_GO, "RATE_LIMIT_429_HIGH")

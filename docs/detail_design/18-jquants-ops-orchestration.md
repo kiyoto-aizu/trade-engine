@@ -56,14 +56,23 @@ Hold と No-Go の扱い（日次・再開が「○」でも記録は必須）:
   429 は1回でも当日停止にする。理由は、429 が API 枠の枯渇を直接示し、継続すると日次の枠を食うため。No-Go は当日停止。
 - ATTENTION（Hold）は次の日付の処理を止めないが、人間の確認対象として台帳に残す。
 - 「以降の日付も停止」は、補填が日付を遡る場合も「その補填ジョブの残り全日付」を指す。
-- `evaluation_complete` が False の Go は、補填の開始条件にしない（#16 完了までは常に False）。
+- `evaluation_complete` が False の Go は、補填の開始条件にしない（Issue #16 で WARNINGS / UNKNOWN_FIELDS / SYMBOL_COUNT を評価対象にしたが、DISK_SPACE が未評価のため現状は常に False。旧形式の JSON では上記3項目も未評価のまま）。
 
 契約境界の定数更新手順: 403（契約範囲外）で補填が終了したら、①公式の契約範囲を確認、②範囲定数を更新、
 ③当該日を台帳に「契約範囲外」と記録、の順に行う。定数の所在は実装時に決める（判断待ち）。
 
 「429 再試行枯渇」と「PARTIAL」は、現状の metrics JSON（status は COMPLETE/ATTENTION/FAILED のみ）では区別できない。
-旧世代を保持した PARTIAL は FAILED でなく ATTENTION（Hold）になるため、区別できるよう metrics JSON に
-`error_category` と実行モード（`raw_source`）を追加する（別Issueで対応）。なお 429 打ち切り（#17）に限り、`error_category=RATE_LIMIT_ABORTED` と `rate_limit_aborted` / `abort_reason` は実装済みで、「再試行枯渇」と区別できる。既定設定（上限3 < 1ページの最大試行4）では 429 だけで再試行枯渇（`RATE_LIMITED`）になる経路はなく、必ず打ち切りになる。打ち切りまでの最大待機は「(上限−1)回 × `JQUANTS_429_WAIT_SECONDS`」（既定で約240秒）。
+旧世代を保持した PARTIAL は FAILED でなく ATTENTION（Hold）になる。Issue #16 で metrics JSON に
+`error_category`・`warnings`（列挙コードのみ）・`symbol_count`・`unknown_field_count`・実行モード（`raw_source`: fetch/existing/none）を
+追加し、判定（`ERROR_CATEGORY_*` / `WARNINGS_PRESENT` / `UNKNOWN_FIELDS_SEEN` / `SYMBOL_COUNT_ZERO` / `FETCH_WITHOUT_REQUESTS`）と
+集計CSVの列に反映した。コード以外の文字列は値として採用しない（コードは先頭が英大文字の英大文字・数字・`_` のみ。数字だけの銘柄コード風文字列は不可）。
+書き出し側でも同じ判定を通し、非コードは捨てて `INVALID_WARNING_DROPPED` を記録する。銘柄数・未知フィールド数は「未計測」のとき null とし、未評価のまま残す。
+
+割り切り（暫定）:
+- `error_category` が `RATE_LIMITED` でも status が ATTENTION なら判定は Hold どまり。429 の当日停止は、429 件数の閾値（`RATE_LIMIT_429_HIGH`）側で扱う。
+- 銘柄数0 は Hold（`SYMBOL_COUNT_ZERO`）。「休場日の空」と「未公開の空」の区別が未決のため、補填が休場日を含むと Hold が増え、人の確認対象が増える。Hold は次の日付を止めない。
+
+なお 429 打ち切り（#17）に限り、`error_category=RATE_LIMIT_ABORTED` と `rate_limit_aborted` / `abort_reason` は実装済みで、「再試行枯渇」と区別できる。既定設定（上限3 < 1ページの最大試行4）では 429 だけで再試行枯渇（`RATE_LIMITED`）になる経路はなく、必ず打ち切りになる。打ち切りまでの最大待機は「(上限−1)回 × `JQUANTS_429_WAIT_SECONDS`」（既定で約240秒）。
 
 終了コード（`ingest_jquants_single_day`）: 0=COMPLETE、1=FAILED、2=ATTENTION、3=429 打ち切り（FAILED の一種で調査対象）。呼び出し側（スケジューラ等）は「0以外は失敗」と扱う。3 の通知は取込処理自身が Slack critical へ送る（呼び出し側での別途通知は不要）。再開（§3）は 429 の原因確認後に行い、通知は Slack critical に決定済み。停止フラグは 429 が稀なため当面実装せず、発生時に人間が手動で対応する。
 
@@ -168,11 +177,11 @@ daily は1日分が数秒のため、同じ予算の範囲内で扱う。実測�
 - 実行基盤（Windowsタスクスケジューラ等）、全体ロック/停止フラグの方式。通知方法は 429 打ち切りについて Slack critical に決定済み（停止フラグは当面不要、手動対応）。
 - 営業日カレンダーの出どころ、休場日の空と未公開の空の区別、日次の実行時刻。
 - 契約境界の定数の所在。
-- 補填の有効化は #16 完了後（それまで `evaluation_complete` は常に False のため補填は開始できない）。
+- 補填の有効化は DISK_SPACE の評価方法が決まるまで見送り（追跡先: #24。それまで `evaluation_complete` は常に False のため補填は開始できない）。
 - 「補填由来の日付」の判定方法（台帳にジョブ種別を持つか、日次の対象窓より古い日付とみなすか）。
 - 確認済みの No-Go を `--fail-on-no-go` から外す手段（`--since`、確認済み日付の除外リスト、当日実行のみ等）。通知方法と合わせて決める。
-- metrics JSON への項目追加（`error_category`・警告・銘柄数・`raw_source`。Issue #16）。
-- 429の連続回数・dataset別の件数閾値（実測前の暫定値のまま運用する範囲。追跡先: #12 / #16）。
+- 429の連続回数・dataset別の件数閾値（実測前の暫定値のまま運用する範囲。追跡先: #12。#16 では実測できないため持ち越し）。
+- （対応済み: metrics JSON への項目追加。Issue #16）
 - 停止フラグの解除手順、補填完了の定義、過去日のデータ訂正の有無。
 - ディスク基準のチェック時点（実行前）と、初回（サイズ不明）の扱い。
 

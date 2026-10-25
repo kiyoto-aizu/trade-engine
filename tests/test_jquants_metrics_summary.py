@@ -137,3 +137,31 @@ def test_entrypoint_exit_codes(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
     assert main(["--metrics-dir", str(empty), "--output", str(output), "--fail-on-no-go"]) == 0
+
+
+def test_new_columns_and_other_share(tmp_path):
+    write_run(
+        tmp_path, "daily", "2026-10-22", "a.json",
+        error_category="RATE_LIMITED", warnings=["B_WARN", "A_WARN", "free 88880"],
+        symbol_count=7, unknown_field_count=1, raw_source="fetch",
+        durations_seconds={"acquisition": 4.0, "conversion": 1.0, "total": 10.0},
+    )
+    (row,) = summarize_directory(tmp_path, LIMITS)
+    assert row["error_category"] == "RATE_LIMITED"
+    assert row["warnings"] == "A_WARN;B_WARN"
+    assert row["symbol_count"] == 7 and row["raw_source"] == "fetch"
+    assert row["other_share"] == 0.5
+    assert "88880" not in json.dumps(row)
+
+
+def test_minute_elapsed_limit_is_applied_per_dataset(tmp_path):
+    for dataset in ("daily", "minute"):
+        write_run(tmp_path / "m", dataset, "2026-10-22", "a.json",
+                  durations_seconds={"total": 50.0})
+    output = tmp_path / "out.csv"
+    args = ["--metrics-dir", str(tmp_path / "m"), "--output", str(output),
+            "--daily-elapsed-limit", "1000", "--minute-elapsed-limit", "10"]
+    assert main(args + ["--fail-on-no-go"]) == 3
+    with output.open(encoding="utf-8-sig", newline="") as stream:
+        verdicts = {r["dataset"]: r["partial_verdict"] for r in csv.DictReader(stream)}
+    assert verdicts == {"daily": "Go", "minute": "No-Go"}
