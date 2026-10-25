@@ -12,6 +12,7 @@ from src.infrastructure.market_data.jquants_canonical_store import (
     strict_date,
 )
 from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStore, JQuantsRawStoreError
+from src.infrastructure.notification.slack_notify import notify_critical
 
 
 def _date_argument(value: str) -> str:
@@ -39,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
             JQuantsRawStore(), JQuantsCanonicalStore(config.JQUANTS_CANONICAL_DIRECTORY),
             metrics_directory=config.JQUANTS_EXECUTION_METRICS_DIRECTORY,
             measure_peak_memory=args.measure_peak_memory,
+            notifier=notify_critical,
         )
         summary = usecase.run(
             dataset=args.dataset, date=args.date,

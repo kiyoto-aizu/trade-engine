@@ -38,7 +38,7 @@
 | 401 | 停止（フラグ保持） | 停止（フラグ保持） | 停止（フラグ保持） | 全ジョブ停止。人間判断で再開 |
 | 403（契約範囲内の日付） | 停止（フラグ保持） | 停止（フラグ保持）。ただし補填由来の日付は補填のみ停止 | 補填のみ停止（フラグ保持） | 補填の403は境界の可能性があるため、台帳に「403要確認」と記録し、人間が範囲内外を確認するまで再開対象から外す（再開ジョブ経由の全停止を防ぐ） |
 | 403（契約範囲外の日付） | - | - | 補填を終了 | 契約境界に到達した扱い。確認後、境界定数を更新する（下記） |
-| 429（metrics上で1回以上） | ○（Hold） | ○（Hold） | 当日停止（Hold） | 3回以上は No-Go。補填は1回でも当日停止。1実行内の429累計が `JQUANTS_MAX_429_PER_RUN`（既定3）に達した時点で、その実行の残りの取得を全て打ち切る（待機を続けない）。打ち切りは FAILED（raw は PARTIAL/FAILED、旧世代と CURRENT 保持、`--refresh` で回復）、`error_category=RATE_LIMIT_ABORTED`、metrics の `rate_limit_aborted=true` / `abort_reason=RATE_LIMIT_429_CAP`、評価理由 `RATE_LIMIT_ABORTED`（No-Go）、CLI 終了コード 3 + stderr に ALERT 1行で通知する。429 は調査対象であり、原因確認前に `--refresh` で再実行しない |
+| 429（metrics上で1回以上） | ○（Hold） | ○（Hold） | 当日停止（Hold） | 3回以上は No-Go。補填は1回でも当日停止。1実行内の429累計が `JQUANTS_MAX_429_PER_RUN`（既定3）に達した時点で、その実行の残りの取得を全て打ち切る（待機を続けない）。打ち切りは FAILED（raw は PARTIAL/FAILED、旧世代と CURRENT 保持、`--refresh` で回復）、`error_category=RATE_LIMIT_ABORTED`、metrics の `rate_limit_aborted=true` / `abort_reason=RATE_LIMIT_429_CAP`、評価理由 `RATE_LIMIT_ABORTED`（No-Go）、CLI 終了コード 3 + stderr に ALERT 1行 + Slack critical チャンネル（`SLACK_WEBHOOK_CRITICAL`）へ通知する（本文は dataset・日付・429 回数のみ。送信失敗は warning `SLACK_NOTIFY_FAILED` に残し、結果は変えない）。429 は調査対象であり、原因確認前に `--refresh` で再実行しない |
 | 429以外のリトライ ≥10 | ○（No-Go） | ○（No-Go） | 当日停止（No-Go） | 3–9回は Hold |
 | 所要時間が上限超 | ○（No-Go） | ○（No-Go） | 当日停止（No-Go） | 70–100%は Hold |
 | FAILED 1回 | ○（再開対象） | ○ | ○（再開対象） | 再開手順（§3）で再実行 |
@@ -65,7 +65,7 @@ Hold と No-Go の扱い（日次・再開が「○」でも記録は必須）:
 旧世代を保持した PARTIAL は FAILED でなく ATTENTION（Hold）になるため、区別できるよう metrics JSON に
 `error_category` と実行モード（`raw_source`）を追加する（別Issueで対応）。なお 429 打ち切り（#17）に限り、`error_category=RATE_LIMIT_ABORTED` と `rate_limit_aborted` / `abort_reason` は実装済みで、「再試行枯渇」と区別できる。既定設定（上限3 < 1ページの最大試行4）では 429 だけで再試行枯渇（`RATE_LIMITED`）になる経路はなく、必ず打ち切りになる。打ち切りまでの最大待機は「(上限−1)回 × `JQUANTS_429_WAIT_SECONDS`」（既定で約240秒）。
 
-終了コード（`ingest_jquants_single_day`）: 0=COMPLETE、1=FAILED、2=ATTENTION、3=429 打ち切り（FAILED の一種で調査対象）。呼び出し側は「0以外は失敗」と扱い、3 を通常の FAILED（1）より目立つ通知にする。再開（§3）は 429 の原因確認後に行い、停止フラグでの強制は §9-1 の判断待ち。
+終了コード（`ingest_jquants_single_day`）: 0=COMPLETE、1=FAILED、2=ATTENTION、3=429 打ち切り（FAILED の一種で調査対象）。呼び出し側（スケジューラ等）は「0以外は失敗」と扱う。3 の通知は取込処理自身が Slack critical へ送る（呼び出し側での別途通知は不要）。再開（§3）は 429 の原因確認後に行い、通知は Slack critical に決定済み。停止フラグは 429 が稀なため当面実装せず、発生時に人間が手動で対応する。
 
 補填の1日あたり予算（2026-10-25 固定。人間承認済み）: minute は1日あたり実行時間 2時間まで（実測約170秒/日 → 約40日分）。
 1年分（約245営業日）は約11.6時間で、約6営業日で追いつく。日次更新の枠を圧迫しないこと（公式レート上限は未確認）を前提とする。
@@ -165,7 +165,7 @@ daily は1日分が数秒のため、同じ予算の範囲内で扱う。実測�
 ## 9. 未解決・判断待ち
 
 ### 9-1. 実装前に決める事項
-- 実行基盤（Windowsタスクスケジューラ等）、通知方法、全体ロック/停止フラグの方式。
+- 実行基盤（Windowsタスクスケジューラ等）、全体ロック/停止フラグの方式。通知方法は 429 打ち切りについて Slack critical に決定済み（停止フラグは当面不要、手動対応）。
 - 営業日カレンダーの出どころ、休場日の空と未公開の空の区別、日次の実行時刻。
 - 契約境界の定数の所在。
 - 補填の有効化は #16 完了後（それまで `evaluation_complete` は常に False のため補填は開始できない）。
