@@ -28,7 +28,7 @@ from src.infrastructure.market_data.jquants_raw_store import (
     JQuantsRawStoreError,
 )
 from src.infrastructure.market_data.jquants_v2_client import (
-    JQuantsAPIError, JQuantsPage, JQuantsV2Client,
+    JQuantsAPIError, JQuantsPage, JQuantsRateLimitAbortError, JQuantsV2Client,
 )
 
 
@@ -67,6 +67,8 @@ class JQuantsIngestionSummary:
 
     @property
     def exit_code(self) -> int:
+        if self.error_category == "RATE_LIMIT_ABORTED":
+            return 3
         return {"COMPLETE": 0, "ATTENTION": 2, "FAILED": 1}[self.status]
 
     def as_dict(self) -> dict[str, Any]:
@@ -107,6 +109,8 @@ class JQuantsSingleDayIngestion:
             "http_status_counts": "未計測",
             "retry_count": "未計測",
             "rate_limit_429_count": "未計測",
+            "rate_limit_aborted": False,
+            "abort_reason": None,
             "wait_seconds": "未計測",
             "raw_validation_seconds": 0.0,
             "canonical_conversion_seconds": 0.0,
@@ -259,6 +263,9 @@ class JQuantsSingleDayIngestion:
         except (JQuantsRawStoreError, JQuantsAPIError, JQuantsCanonicalError) as error:
             summary.status = "FAILED"
             summary.error_category = error.category
+            if isinstance(error, JQuantsRateLimitAbortError):
+                telemetry["rate_limit_aborted"] = True
+                telemetry["abort_reason"] = "RATE_LIMIT_429_CAP"
         except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
             summary.status = "FAILED"
             summary.error_category = "STORAGE_OR_FORMAT_ERROR"

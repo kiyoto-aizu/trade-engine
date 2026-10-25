@@ -13,6 +13,7 @@ from src.infrastructure.market_data.jquants_v2_client import (
     JQuantsHTTPError,
     JQuantsPaginationError,
     JQuantsRateLimitError,
+    JQuantsRateLimitAbortError,
     JQuantsRateLimiter,
     JQuantsResponseError,
     JQuantsServerError,
@@ -240,7 +241,7 @@ def test_429_waits_between_bounded_attempts_without_real_waiting():
         _response({}, status_code=429),
         _response({}, status_code=429),
     )
-    client, clock = _client(transport, max_attempts=3)
+    client, clock = _client(transport, max_attempts=3, max_429_per_run=10)
 
     with pytest.raises(JQuantsRateLimitError) as error:
         next(client.iter_pages("equities/bars/daily"))
@@ -254,6 +255,54 @@ def test_429_waits_between_bounded_attempts_without_real_waiting():
     assert client.metrics.rate_limit_429_count == 3
     assert client.metrics.wait_seconds == 240
     assert error.value.category == "RATE_LIMITED"
+
+
+def test_cumulative_429_cap_aborts_run_across_pages_without_extra_wait():
+    page1 = _response({"data": [], "pagination_key": "k1"})
+    transport = FakeTransport(
+        page1,
+        _response({}, status_code=429),
+        _response({}, status_code=429),
+        _response({}, status_code=429),
+    )
+    client, clock = _client(transport, max_attempts=4, max_429_per_run=3)
+    pages = client.iter_pages("equities/bars/daily")
+
+    assert next(pages).metadata.page_number == 1
+    with pytest.raises(JQuantsRateLimitAbortError) as error:
+        next(pages)
+
+    assert error.value.category == "RATE_LIMIT_ABORTED"
+    assert len(transport.calls) == 4
+    assert clock.sleeps.count(120) == 2
+    assert client.metrics.rate_limit_429_count == 3
+    assert client.metrics.wait_seconds < 3 * 120
+
+
+def test_cap_of_three_waits_after_first_two_429_and_aborts_on_third_without_waiting():
+    transport = FakeTransport(*[_response({}, status_code=429) for _ in range(4)])
+    client, clock = _client(transport, max_attempts=4, max_429_per_run=3)
+
+    with pytest.raises(JQuantsRateLimitAbortError):
+        next(client.iter_pages("equities/bars/daily"))
+
+    assert len(transport.calls) == 3
+    assert clock.sleeps.count(120) == 2
+    assert client.metrics.retry_count == 2
+    assert client.metrics.wait_seconds >= 240
+
+
+def test_429_below_cap_still_recovers():
+    transport = FakeTransport(_response({}, status_code=429), _response({"data": []}))
+    client, clock = _client(transport, max_attempts=4, max_429_per_run=3)
+
+    assert next(client.iter_pages("equities/bars/daily")).metadata.row_count == 0
+    assert clock.sleeps.count(120) == 1
+
+
+def test_non_positive_429_cap_is_rejected():
+    with pytest.raises(JQuantsConfigurationError):
+        _client(FakeTransport(), max_429_per_run=0)
 
 
 @pytest.mark.parametrize(

@@ -45,6 +45,12 @@ class JQuantsRateLimitError(JQuantsAPIError):
     category = "RATE_LIMITED"
 
 
+class JQuantsRateLimitAbortError(JQuantsRateLimitError):
+    """1実行内の429累計が上限に達し、残りの取得を打ち切った。"""
+
+    category = "RATE_LIMIT_ABORTED"
+
+
 class JQuantsTransportError(JQuantsAPIError):
     """一時的な通信失敗が試行上限まで継続した。"""
 
@@ -215,6 +221,7 @@ class JQuantsV2Client:
         *,
         timeout_seconds: float | None = None,
         max_attempts: int | None = None,
+        max_429_per_run: int | None = None,
         rate_limiter: JQuantsRateLimiter | None = None,
         sleep: Callable[[float], None] = time.sleep,
         transport: _Transport | None = None,
@@ -236,6 +243,11 @@ class JQuantsV2Client:
             raise JQuantsConfigurationError("J-Quants timeout must be positive")
         if not isinstance(self._max_attempts, int) or self._max_attempts <= 0:
             raise JQuantsConfigurationError("J-Quants max attempts must be positive")
+        self._max_429_per_run = (
+            config.JQUANTS_MAX_429_PER_RUN if max_429_per_run is None else max_429_per_run
+        )
+        if not isinstance(self._max_429_per_run, int) or self._max_429_per_run <= 0:
+            raise JQuantsConfigurationError("J-Quants max 429 per run must be positive")
 
         self._rate_limiter = rate_limiter if rate_limiter is not None else _DEFAULT_RATE_LIMITER
         self._sleep = sleep
@@ -333,6 +345,12 @@ class JQuantsV2Client:
                 break
             if status_code == 429:
                 self.metrics.rate_limit_429_count += 1
+                if self.metrics.rate_limit_429_count >= self._max_429_per_run:
+                    # 応答本文・URLを例外チェーン経由で露出させない
+                    raise JQuantsRateLimitAbortError(
+                        "J-Quants run aborted: cumulative 429 limit reached "
+                        f"({self.metrics.rate_limit_429_count})"
+                    ) from None
                 if attempt < self._max_attempts:
                     self._wait(config.JQUANTS_429_WAIT_SECONDS)
                     self.metrics.retry_count += 1
