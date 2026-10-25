@@ -29,3 +29,5 @@ instance/
 .DS_Store
 .midday_filtering.lock
 .midday_filtering_verify.lock
+
+.coverage

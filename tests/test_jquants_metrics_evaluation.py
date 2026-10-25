@@ -49,6 +49,13 @@ def test_auth_error_is_no_go_and_zero_count_is_not():
     assert verdict(metrics(http_status_counts={"401": 0, "200": 5})) == GO
 
 
+def test_http_400_is_no_go_and_zero_count_is_not():
+    result = evaluate_metrics(metrics(http_status_counts={"400": 1}), LIMITS)
+    assert result.verdict == NO_GO and "HTTP_400_SEEN" in result.reasons
+    assert verdict(metrics(http_status_counts={"400": 0, "200": 5})) == GO
+    assert verdict(metrics(http_status_counts={400: 1})) == NO_GO
+
+
 def test_429_count_boundaries_independent_of_request_count():
     assert verdict(metrics(rate_limit_429_count=0)) == GO
     assert verdict(metrics(request_count=4, rate_limit_429_count=1, retry_count=1)) == HOLD
