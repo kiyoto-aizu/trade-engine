@@ -72,6 +72,7 @@ def _imported_modules(path: Path, package: list[str] | None = None) -> set[str]:
             modules.update(f"{base}.{alias.name}" if base else alias.name for alias in node.names)
     return modules
 
+
 def _dynamic_imports(path: Path) -> list[str]:
     found = []
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8-sig"))):
