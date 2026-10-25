@@ -307,6 +307,15 @@ class JQuantsRawStore:
             ).fetchone()
         return None if row is None else JQuantsDatasetState(row[0])
 
+    def get_state_for(
+        self, *, kind: str, endpoint: str, conditions: Mapping[str, Any]
+    ) -> JQuantsDatasetState | None:
+        """台帳の状態を条件から引く読み取り専用の入口。記録が無ければNone。"""
+        dataset_id = self._dataset_id(
+            kind, self._validate_endpoint(endpoint), self._validate_conditions(conditions)
+        )
+        return self.get_state(dataset_id)
+
     def list_incomplete_datasets(self) -> list[JQuantsIncompleteDataset]:
         states = tuple(
             state.value

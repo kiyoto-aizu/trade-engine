@@ -21,6 +21,7 @@ from src.infrastructure.market_data.jquants_canonical_store import (
     JQuantsCanonicalError,
     JQuantsCanonicalStore,
     JQuantsQualityError,
+    JQuantsStaleSchemaError,
     strict_date,
 )
 from src.infrastructure.market_data.jquants_raw_store import (
@@ -91,6 +92,13 @@ class JQuantsSingleDayIngestion:
         self.metrics_directory = None if metrics_directory is None else Path(metrics_directory)
         self.measure_peak_memory = measure_peak_memory
 
+    def _current_or_none(self, dataset: str, date: str) -> dict[str, Any] | None:
+        """旧版のCURRENTは保持対象の現行世代として扱わない（版を上げた後の作り直しを妨げない）。"""
+        try:
+            return self.canonical_store.current_manifest(dataset, date)
+        except JQuantsStaleSchemaError:
+            return None
+
     def run(
         self, *, dataset: str, date: str, refresh: bool = False, canonical_only: bool = False
     ) -> JQuantsIngestionSummary:
@@ -143,7 +151,7 @@ class JQuantsSingleDayIngestion:
                         telemetry["raw_validation_seconds"] += (
                             perf_counter() - raw_validation_start
                         )
-                    previous = self.canonical_store.current_manifest(dataset, date)
+                    previous = self._current_or_none(dataset, date)
                     if previous is not None:
                         summary.canonical_generation_id = previous["generation_id"]
                         summary.previous_canonical_generation_id = previous["generation_id"]
@@ -235,7 +243,7 @@ class JQuantsSingleDayIngestion:
                     canonical = self.canonical_store.transform(raw, dataset=dataset, target_date=date)
                 except (JQuantsCanonicalError, JQuantsRawStoreError, OSError):
                     # A pointer replacement may have succeeded before an I/O error.
-                    current = self.canonical_store.current_manifest(dataset, date)
+                    current = self._current_or_none(dataset, date)
                     summary.canonical_generation_id = (
                         None if current is None else current["generation_id"]
                     )

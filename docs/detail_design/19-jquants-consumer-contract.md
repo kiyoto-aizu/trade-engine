@@ -1,6 +1,6 @@
 # 詳細設計書 19 J-Quants canonical schema運用ルールとデータ利用側の入力契約
 
-> 状態: 方針は確定（利用側の実装は未着手。実APIは営業日カレンダーを1回だけ取得して確認。6章）
+> 状態: 方針は確定。読み取り層は #18 で実装済み（既存バックテストへの接続は未着手。実APIは営業日カレンダーを1回だけ取得して確認。6章）
 > 最終更新: 2026-10-24
 > 関連: [16 raw・台帳](./16-jquants-raw-ledger.md)、[17 指定日取得とcanonical](./17-jquants-single-day-ingestion.md)、
 > [18 運用オーケストレーション](./18-jquants-ops-orchestration.md) 6章、[公開レポート](../architecture/public-report-publication.md)、Issue #10
@@ -151,18 +151,24 @@ J-Quants canonicalが欠けたときに、Yahoo系や既存の自前Parquetへ�
 
 ### 6-2. 未決・持ち越し
 
-本書の方針に関する判断待ちはない。次は、実装を行う別Issueで確定・確認する。
+本書の方針に関する判断待ちはない。#18 で次を実装済み（2026-10-25）。
+
+| 項目 | 結果（#18） |
+| --- | --- |
+| 接続層の置き場所と実装 | domain `jquants_consumer_contract.py`（規則）、infrastructure `market_data/jquants_canonical_reader.py`（読み取りのみ）、application `jquants_canonical_input.py`（ユースケース）。`backtest_usecase.py` は未変更 |
+| 取得失敗の判定元 | 台帳が FAILED / PARTIAL、または `ATTEMPT.json` が失敗。PENDING / RUNNING は取得中として別扱い |
+| 旧CURRENTの履歴 | `CURRENT_HISTORY.jsonl` に付け替え前に追記（失敗時は旧CURRENTのまま） |
+| 版不一致の別メッセージ | `JQuantsStaleSchemaError`（STALE_SCHEMA）。ハッシュ・出どころ検証後にのみ判定し、壊れたデータと区別 |
+| 契約範囲外による欠落の区別 | 契約範囲外は取得失敗・未公開と別の状態（許可日でも除外不可） |
+| 作り直し後の既存列の一致テスト | `tests/test_jquants_canonical_input.py` |
+| 出どころによる公開側の除外テスト | `report_publication.public_chart_data` は `data_source` の許可リスト（`self_collected` のみ）で判定。記録なし・`jquants`・不明値は除外。`tests/test_report_publication.py` |
+
+残りの持ち越し:
 
 | 項目 | 持ち越し先 | 内容 |
 | --- | --- | --- |
-| 営業日カレンダーの取得・保存 | #19 | 取得・保存方法の設計と実装 |
-| 接続層の置き場所と実装 | #18 | READMEの `market_data/` はYahoo連携の記載のため、J-Quants用の読み取り部品を保存部品の隣と `persistence/` のどちらに置くか。`application/backtest_usecase.py`（1,320行）に規則を足さず、新しい小さな部品に分ける |
-| 取得失敗の判定元 | #18 | 台帳・`ATTEMPT.json` のどの状態を取得失敗とするか（3-1） |
-| 旧CURRENTの履歴 | #18 | 現在のcanonical storeはCURRENTを置き換えるだけで、旧CURRENTを台帳に履歴として残す処理がない（2-1）。付け替えの実装時に追加する |
-| 版不一致の別メッセージ | #18 | 現在の `_verify()` は版の不一致と壊れたデータを同じ「Canonical provenance or file hash mismatch」で報告する。「旧版のため要再作成」と分ける（3-2） |
-| 契約範囲外による欠落の区別 | #18 | 契約プランの範囲外（遅延・保有期間）による欠落を、未公開や取得失敗と見分けられるか |
-| 作り直し後の既存列の一致テスト | #18 | マージの前提条件（2-2） |
-| 出どころによる公開側の除外テスト | #18 | マージの条件（5章） |
+| 営業日カレンダーの取得・保存 | #19 | 取得・保存方法の設計と実装（読み取り層は `BusinessCalendarPort` で受ける） |
+| 既存バックテストへの接続 | 別Issue | 利用側への組み込み |
 | 世代指定で読むモード | 必要になったら別Issue | 再現性を保証したくなった場合（3-1） |
 | dataset別の版管理 | 必要になったら別Issue | 分足だけの列追加などで、無駄な作り直しが問題になった場合（2-2） |
 | 変換ロジックの変更で既存列の値が変わる場合 | 発生時に別途判断 | 2-2 の対象外 |
@@ -176,7 +182,7 @@ J-Quants canonicalが欠けたときに、Yahoo系や既存の自前Parquetへ�
 - import方向: `jquants_*` は許可リスト以外の `src.*` をimportしない。他のモジュールは `jquants_*` をimportしない。相対import・動的importも検出する。接続層の許可リストは、Yahoo系等をimportしないことも検査する。
 - 判定関数の自己テスト（違反を検出できること、許可した共有設定を通すこと）。
 
-読み取り層（#18）の実装時に追加する:
+実装済み（#18、`tests/test_jquants_canonical_input.py` / `tests/test_report_publication.py`）:
 
 - 入力契約・欠損日・世代記録・版の混在検出。
 - 作り直し後の既存列の一致（2-2。マージの前提条件）。
