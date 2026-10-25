@@ -1,5 +1,6 @@
 import csv
 import json
+import sys
 from datetime import date
 
 from src.config import config
@@ -7,6 +8,26 @@ from src.domain.models import MinuteBar
 from src.entrypoints import run_midday_minute_backfill_once as manual_backfill
 from src.infrastructure.market_data.get_intraday_bars import IntradayFetchResult
 from src.infrastructure.persistence.parquet_minute_bar_repository import ParquetMinuteBarRepository
+
+
+def test_main_defaults_report_directory_to_data_analysis(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        manual_backfill,
+        "__file__",
+        str(tmp_path / "src" / "entrypoints" / "run_midday_minute_backfill_once.py"),
+    )
+    monkeypatch.setattr(manual_backfill, "configure_logging", lambda: None)
+    captured = {}
+    monkeypatch.setattr(manual_backfill, "run", lambda *args: captured.setdefault("args", args))
+    monkeypatch.setattr(sys, "argv", [
+        "run_midday_minute_backfill_once",
+        "--start-date", "2026-10-13",
+        "--end-date", "2026-10-13",
+    ])
+
+    manual_backfill.main()
+
+    assert captured["args"][3] == tmp_path / "data" / "analysis" / "minute_bar_backfill_quality"
 
 
 def test_manual_backfill_imports_all_diagnostic_candidates_without_overwriting(tmp_path, monkeypatch):

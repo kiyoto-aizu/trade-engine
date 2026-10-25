@@ -125,6 +125,8 @@ def evaluate_metrics(
     _evaluate_run_details(metrics, status, not_evaluated, raise_to)
 
     statuses = metrics.get("http_status_counts")
+    if metrics.get("rate_limit_aborted") is True:
+        raise_to(NO_GO, "RATE_LIMIT_ABORTED")
     if isinstance(statuses, Mapping):
         if any(str(code) in {"401", "403"} and safe_number(count) for code, count in statuses.items()):
             raise_to(NO_GO, "AUTH_OR_CONTRACT_ERROR")

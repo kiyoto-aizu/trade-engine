@@ -271,7 +271,7 @@ def main(
         )
         quality_report = write_quality_csv(
             quality_report_dir or (
-                Path(__file__).resolve().parents[2] / "analysis" / "minute_bar_backfill_quality"
+                Path(__file__).resolve().parents[2] / "data" / "analysis" / "minute_bar_backfill_quality"
             ),
             now,
             expected_dates,

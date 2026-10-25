@@ -3,6 +3,7 @@
 import argparse
 import json
 import sqlite3
+import sys
 
 from src.config import config
 from src.application.jquants_single_day_ingestion import JQuantsSingleDayIngestion
@@ -11,6 +12,7 @@ from src.infrastructure.market_data.jquants_canonical_store import (
     strict_date,
 )
 from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStore, JQuantsRawStoreError
+from src.infrastructure.notification.slack_notify import notify_critical
 
 
 def _date_argument(value: str) -> str:
@@ -38,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
             JQuantsRawStore(), JQuantsCanonicalStore(config.JQUANTS_CANONICAL_DIRECTORY),
             metrics_directory=config.JQUANTS_EXECUTION_METRICS_DIRECTORY,
             measure_peak_memory=args.measure_peak_memory,
+            notifier=notify_critical,
         )
         summary = usecase.run(
             dataset=args.dataset, date=args.date,
@@ -48,6 +51,12 @@ def main(argv: list[str] | None = None) -> int:
                           "error_category": "INITIALIZATION_ERROR"}))
         return 1
     print(json.dumps(summary.as_dict(), sort_keys=True))
+    if summary.error_category == "RATE_LIMIT_ABORTED":
+        print(
+            "ALERT: 429 cumulative limit reached; run aborted. "
+            "Investigate rate-limit settings/plan before --refresh.",
+            file=sys.stderr,
+        )
     return summary.exit_code
 
 

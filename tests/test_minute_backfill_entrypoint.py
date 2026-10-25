@@ -115,14 +115,19 @@ def test_run_minute_backfill_default_merges_price_band_filter_directories(tmp_pa
     monkeypatch.setattr(run_minute_backfill, "MinuteBarBackfillUseCase", FakeBackfillUseCase)
     monkeypatch.setattr(run_minute_backfill, "format_result_notification", lambda *_args, **_kwargs: "summary")
     monkeypatch.setattr(run_minute_backfill, "notify_analysis", lambda _message: None)
+    monkeypatch.setattr(
+        run_minute_backfill,
+        "__file__",
+        str(tmp_path / "src" / "entrypoints" / "run_minute_backfill.py"),
+    )
 
     with patch("sys.argv", ["run_minute_backfill", "--days", "7"]):
         main(
             now_provider=lambda: datetime(2026, 9, 10, 10, 0),
             output_dir=tmp_path / "minute",
-            quality_report_dir=tmp_path / "analysis",
         )
 
+    assert list((tmp_path / "data" / "analysis" / "minute_bar_backfill_quality").glob("minute_backfill_*.csv"))
     assert captured["calls"] == [
         (["7203", "8306", "9432", "9984"], 7, None),
         (["MID270", "MID450", "MID900"], 7, None),

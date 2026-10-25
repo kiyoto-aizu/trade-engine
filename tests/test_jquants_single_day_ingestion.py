@@ -4,6 +4,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date, timedelta
+from types import SimpleNamespace
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -18,7 +19,7 @@ from src.infrastructure.market_data.jquants_canonical_store import (
 from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStore
 from src.infrastructure.market_data.jquants_raw_store import JQuantsRawValidationError
 from src.infrastructure.market_data.jquants_v2_client import (
-    JQuantsPage, JQuantsPageMetadata, JQuantsTransportError,
+    JQuantsPage, JQuantsPageMetadata, JQuantsRateLimitAbortError, JQuantsTransportError,
 )
 
 DAY = "2026-10-20"
@@ -347,6 +348,99 @@ def failing_pages(first_page=False):
     if first_page:
         yield [row(code="22220")]
     raise JQuantsTransportError("SECRET_EXCEPTION_BODY")
+
+
+def aborting_pages():
+    yield [row(code="22220")]
+    raise JQuantsRateLimitAbortError("cap reached")
+
+
+def test_429_abort_is_failed_partial_keeps_previous_and_recovers_with_refresh(stores, tmp_path):
+    old = run(stores, Client([[row()]]))
+    metrics_dir = tmp_path / "metrics"
+    aborted = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: Client(aborting_pages()), metrics_directory=metrics_dir
+    ).run(dataset="daily", date=DAY, refresh=True)
+    assert aborted.status == "FAILED" and aborted.exit_code == 3
+    assert aborted.raw_state == "PARTIAL"
+    assert aborted.error_category == "RATE_LIMIT_ABORTED"
+    assert aborted.execution_metrics["rate_limit_aborted"] is True
+    assert aborted.execution_metrics["abort_reason"] == "RATE_LIMIT_429_CAP"
+    assert stores[1].current_manifest("daily", DAY)["generation_id"] == old.canonical_generation_id
+    assert aborted.raw_generation_id == old.raw_generation_id
+    assert len(stores[0].list_incomplete_datasets()) == 1
+
+    saved = json.loads(next(metrics_dir.rglob("*.json")).read_text(encoding="utf-8"))
+    assert saved["rate_limit_aborted"] is True and saved["status"] == "FAILED"
+    from src.application.jquants_metrics_evaluation import evaluate_metrics
+    evaluation = evaluate_metrics(saved)
+    assert evaluation.verdict == "No-Go" and "RATE_LIMIT_ABORTED" in evaluation.reasons
+
+    recovered = run(stores, Client([[row(code="22220")]]), refresh=True)
+    assert recovered.status == "COMPLETE" and recovered.exit_code == 0
+    assert stores[0].list_incomplete_datasets() == []
+
+
+def test_429_abort_sends_safe_slack_critical_notification(stores):
+    sent = []
+    client = Client(aborting_pages())
+    client.metrics = SimpleNamespace(as_dict=lambda: {
+        "request_count": 3, "page_count": 1, "status_counts": {"200": 1, "429": 3},
+        "retry_count": 2, "rate_limit_429_count": 3, "wait_seconds": 240.0,
+    })
+    result = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: client, notifier=sent.append
+    ).run(dataset="daily", date=DAY, refresh=True)
+    assert result.exit_code == 3 and len(sent) == 1
+    assert DAY in sent[0] and "daily" in sent[0]
+    assert "22220" not in sent[0] and "SECRET" not in sent[0]
+    assert "429回数=3" in sent[0]
+
+
+def test_slack_false_return_adds_warning_without_changing_result(stores):
+    result = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: Client(aborting_pages()), notifier=lambda _m: False
+    ).run(dataset="daily", date=DAY, refresh=True)
+    assert result.status == "FAILED" and result.exit_code == 3
+    assert "SLACK_NOTIFY_FAILED" in result.warnings
+
+
+def test_slack_failure_does_not_change_abort_result(stores):
+    def broken(_message):
+        raise RuntimeError("SECRET_WEBHOOK")
+    result = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: Client(aborting_pages()), notifier=broken
+    ).run(dataset="daily", date=DAY, refresh=True)
+    assert result.status == "FAILED" and result.exit_code == 3
+    assert "SLACK_NOTIFY_FAILED" in result.warnings
+    assert "SECRET_WEBHOOK" not in json.dumps(result.as_dict())
+
+
+def test_non_429_failure_does_not_notify(stores):
+    sent = []
+    JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: Client(failing_pages()), notifier=sent.append
+    ).run(dataset="daily", date=DAY, refresh=True)
+    assert sent == []
+
+
+def test_cli_429_abort_exit_code_and_alert(stores, monkeypatch, capsys, tmp_path):
+    sent = []
+    monkeypatch.setattr(cli, "notify_critical", lambda message: sent.append(message) or True)
+    monkeypatch.setattr(cli, "JQuantsRawStore", lambda: stores[0])
+    monkeypatch.setattr(cli, "JQuantsCanonicalStore", lambda path: stores[1])
+    monkeypatch.setattr(cli.config, "JQUANTS_EXECUTION_METRICS_DIRECTORY", tmp_path / "metrics")
+    original = cli.JQuantsSingleDayIngestion
+    monkeypatch.setattr(cli, "JQuantsSingleDayIngestion",
+                        lambda raw, canonical, **kwargs: original(
+                            raw, canonical, client_factory=lambda: Client(aborting_pages()), **kwargs
+                        ))
+    code = cli.main(["--dataset", "daily", "--date", DAY, "--refresh"])
+    output = capsys.readouterr()
+    assert code == 3
+    assert "ALERT" in output.err and "22220" not in output.out + output.err
+    assert len(sent) == 1
+    assert json.loads(output.out)["error_category"] == "RATE_LIMIT_ABORTED"
 
 
 @pytest.mark.parametrize("first_page", [False, True])

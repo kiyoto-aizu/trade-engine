@@ -1,8 +1,18 @@
+import json
 import os
+import subprocess
+from datetime import datetime
 
 import pytest
 
-from tests.runtime_guard import RuntimeStateGuard, watch
+from tests import runtime_guard
+from tests.runtime_guard import (
+    RuntimeStateGuard,
+    _executable_summary,
+    collect_python_processes,
+    describe_schedule_overlap,
+    watch,
+)
 
 pytest_plugins = ("pytester",)
 
@@ -83,6 +93,88 @@ def test_watch_fails_the_test_when_production_state_changes(tmp_path):
     with pytest.raises(pytest.fail.Exception, match="本番のデータを書き換えました"):
         with watch(guard, "dummy"):
             (reports / "2026-09-16.json").write_text("{}", encoding="utf-8")
+
+
+def _fail_message(tmp_path, collector):
+    guard, reports, _ = _make_guard(tmp_path)
+    with pytest.raises(pytest.fail.Exception) as raised:
+        with watch(guard, "dummy", process_collector=collector):
+            (reports / "2026-09-16.json").write_text("{}", encoding="utf-8")
+    return str(raised.value)
+
+
+def test_violation_message_has_detection_time_mtime_and_processes(tmp_path):
+    message = _fail_message(tmp_path, lambda: ["PID 123 開始 2026-10-25 09:31:00 python -m src.entrypoints.run_filtering"])
+
+    assert "検出時刻(ローカル)" in message
+    assert "更新日時(ローカル)" in message and "2026-09-16.json" in message
+    assert "定時処理との関係" in message
+    assert "PID 123" in message and "run_filtering" in message
+
+
+def test_violation_message_states_process_info_unavailable_and_still_fails(tmp_path):
+    def broken():
+        raise OSError("denied")
+
+    message = _fail_message(tmp_path, broken)
+
+    assert "取得不可(OSError)" in message
+    assert "本番のデータを書き換えました" in message
+
+
+def test_process_summary_drops_arguments():
+    assert _executable_summary('"C:\\Python\\python.exe" -m src.app --token=SECRET123 KEY=abc') == "python.exe -m src.app"
+    assert _executable_summary("python.exe run.py --token=SECRET123") == "python.exe run.py"
+    assert _executable_summary('"C:\\Program Files\\Python\\python.exe" run.py') == "python.exe run.py"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'python -c "API_KEY=abc123; import os"',
+        "python --opt SECRET123 run.py",
+        "python -X dev SECRET123",
+        "python SECRET123",
+    ],
+)
+def test_process_summary_never_leaks_option_values_or_inline_code(command):
+    summary = _executable_summary(command)
+
+    assert "SECRET123" not in summary and "abc123" not in summary
+    assert summary == "python"
+
+
+def test_schedule_overlap_uses_minute_granularity():
+    assert "取引" in describe_schedule_overlap(datetime(2026, 10, 26, 15, 30, 45))
+    assert "フィルタリング" in describe_schedule_overlap(datetime(2026, 10, 26, 9, 34, 30))
+
+
+def test_schedule_overlap_labels():
+    assert "取引" in describe_schedule_overlap(datetime(2026, 10, 26, 10, 0))
+    assert "時間帯外" in describe_schedule_overlap(datetime(2026, 10, 26, 8, 0))
+    assert "休日" in describe_schedule_overlap(datetime(2026, 10, 25, 10, 0))
+
+
+def test_collect_python_processes_parses_windows_output_without_arguments(monkeypatch):
+    payload = json.dumps(
+        [{"pid": 11, "start": "2026-10-25 09:31:00", "cmd": '"C:\\Python\\python.exe" -m src.app --token=SECRET123'}]
+    )
+    monkeypatch.setattr(runtime_guard.os, "name", "nt")
+    monkeypatch.setattr(
+        runtime_guard.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=payload)
+    )
+
+    assert collect_python_processes() == ["PID 11 開始 2026-10-25 09:31:00 python.exe -m src.app"]
+
+
+def test_collect_python_processes_parses_ps_output_without_arguments(monkeypatch):
+    output = "  22 Sun Oct 25 09:31:00 2026 /usr/bin/python3 run.py --token=SECRET123\n  33 Sun Oct 25 09:32:00 2026 /bin/bash -c x\n"
+    monkeypatch.setattr(runtime_guard.os, "name", "posix")
+    monkeypatch.setattr(
+        runtime_guard.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=output)
+    )
+
+    assert collect_python_processes() == ["PID 22 開始 Sun Oct 25 09:31:00 2026 python3 run.py"]
 
 
 def test_watch_passes_when_production_state_is_untouched(tmp_path):

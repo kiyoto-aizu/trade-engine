@@ -139,6 +139,7 @@
 | `JQUANTS_CANONICAL_DIRECTORY` | str(_repo_root / 'data' / 'jquants' / 'canonical') | 任意 |  |
 | `JQUANTS_LEDGER_DATABASE_FILE` | str(_repo_root / 'data' / 'jquants' / 'ledger.sqlite3') | 任意 |  |
 | `JQUANTS_MAX_ATTEMPTS` | "4" | 任意 |  |
+| `JQUANTS_MAX_429_PER_RUN` | "3" | 任意 | 1実行内の429累計がこの回数に達したら、残りの取得を全て打ち切る(正数)。 |
 | `JQUANTS_RAW_DIRECTORY` | str(_repo_root / 'data' / 'jquants' / 'raw') | 任意 |  |
 | `JQUANTS_REQUEST_INTERVAL_SECONDS` | "1.2" | 任意 |  |
 | `JQUANTS_RETRY_BASE_SECONDS` | "1" | 任意 |  |

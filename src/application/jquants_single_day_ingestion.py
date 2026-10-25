@@ -29,7 +29,7 @@ from src.infrastructure.market_data.jquants_raw_store import (
     JQuantsRawStoreError,
 )
 from src.infrastructure.market_data.jquants_v2_client import (
-    JQuantsAPIError, JQuantsPage, JQuantsV2Client,
+    JQuantsAPIError, JQuantsPage, JQuantsRateLimitAbortError, JQuantsV2Client,
 )
 
 
@@ -68,6 +68,8 @@ class JQuantsIngestionSummary:
 
     @property
     def exit_code(self) -> int:
+        if self.error_category == "RATE_LIMIT_ABORTED":
+            return 3
         return {"COMPLETE": 0, "ATTENTION": 2, "FAILED": 1}[self.status]
 
     def as_dict(self) -> dict[str, Any]:
@@ -80,7 +82,9 @@ class JQuantsSingleDayIngestion:
         *, client_factory: Callable[[], _Client] = JQuantsV2Client,
         metrics_directory: Path | str | None = None,
         measure_peak_memory: bool = False,
+        notifier: Callable[[str], bool] | None = None,
     ) -> None:
+        self.notifier = notifier
         self.raw_store = raw_store
         self.canonical_store = canonical_store
         self.client_factory = client_factory
@@ -108,6 +112,8 @@ class JQuantsSingleDayIngestion:
             "http_status_counts": "未計測",
             "retry_count": "未計測",
             "rate_limit_429_count": "未計測",
+            "rate_limit_aborted": False,
+            "abort_reason": None,
             "wait_seconds": "未計測",
             "raw_validation_seconds": 0.0,
             "canonical_conversion_seconds": 0.0,
@@ -260,6 +266,10 @@ class JQuantsSingleDayIngestion:
         except (JQuantsRawStoreError, JQuantsAPIError, JQuantsCanonicalError) as error:
             summary.status = "FAILED"
             summary.error_category = error.category
+            if isinstance(error, JQuantsRateLimitAbortError):
+                telemetry["rate_limit_aborted"] = True
+                telemetry["abort_reason"] = "RATE_LIMIT_429_CAP"
+                self._notify_rate_limit_abort(summary, telemetry)
         except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
             summary.status = "FAILED"
             summary.error_category = "STORAGE_OR_FORMAT_ERROR"
@@ -304,6 +314,25 @@ class JQuantsSingleDayIngestion:
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             return None
         return value
+
+    def _notify_rate_limit_abort(
+        self, summary: JQuantsIngestionSummary, telemetry: Mapping[str, Any]
+    ) -> None:
+        """通知の失敗で取込結果を変えない。本文はdataset・日付・429回数のみ。"""
+        if self.notifier is None:
+            return
+        message = (
+            "[J-Quants] 429 累計上限で取得を打ち切りました "
+            f"dataset={summary.dataset} date={summary.date} "
+            f"429回数={telemetry.get('rate_limit_429_count')}。"
+            "原因(リミッター設定・プラン上限・別プロセスとの競合)を確認してから --refresh で再実行してください。"
+        )
+        try:
+            sent = self.notifier(message)
+        except Exception:
+            sent = False
+        if not sent:
+            summary.warnings.append("SLACK_NOTIFY_FAILED")
 
     def _write_metrics(self, summary: JQuantsIngestionSummary) -> Path:
         assert self.metrics_directory is not None
