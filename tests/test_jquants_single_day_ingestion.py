@@ -4,6 +4,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date, timedelta
+from types import SimpleNamespace
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -382,12 +383,26 @@ def test_429_abort_is_failed_partial_keeps_previous_and_recovers_with_refresh(st
 
 def test_429_abort_sends_safe_slack_critical_notification(stores):
     sent = []
+    client = Client(aborting_pages())
+    client.metrics = SimpleNamespace(as_dict=lambda: {
+        "request_count": 3, "page_count": 1, "status_counts": {"200": 1, "429": 3},
+        "retry_count": 2, "rate_limit_429_count": 3, "wait_seconds": 240.0,
+    })
     result = JQuantsSingleDayIngestion(
-        *stores, client_factory=lambda: Client(aborting_pages()), notifier=sent.append
+        *stores, client_factory=lambda: client, notifier=sent.append
     ).run(dataset="daily", date=DAY, refresh=True)
     assert result.exit_code == 3 and len(sent) == 1
     assert DAY in sent[0] and "daily" in sent[0]
     assert "22220" not in sent[0] and "SECRET" not in sent[0]
+    assert "429回数=3" in sent[0]
+
+
+def test_slack_false_return_adds_warning_without_changing_result(stores):
+    result = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: Client(aborting_pages()), notifier=lambda _m: False
+    ).run(dataset="daily", date=DAY, refresh=True)
+    assert result.status == "FAILED" and result.exit_code == 3
+    assert "SLACK_NOTIFY_FAILED" in result.warnings
 
 
 def test_slack_failure_does_not_change_abort_result(stores):

@@ -313,8 +313,10 @@ class JQuantsSingleDayIngestion:
             "原因(リミッター設定・プラン上限・別プロセスとの競合)を確認してから --refresh で再実行してください。"
         )
         try:
-            self.notifier(message)
+            sent = self.notifier(message)
         except Exception:
+            sent = False
+        if not sent:
             summary.warnings.append("SLACK_NOTIFY_FAILED")
 
     def _write_metrics(self, summary: JQuantsIngestionSummary) -> Path:
