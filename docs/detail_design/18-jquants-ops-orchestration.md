@@ -65,7 +65,7 @@ Hold と No-Go の扱い（日次・再開が「○」でも記録は必須）:
 旧世代を保持した PARTIAL は FAILED でなく ATTENTION（Hold）になるため、区別できるよう metrics JSON に
 `error_category` と実行モード（`raw_source`）を追加する（別Issueで対応）。なお 429 打ち切り（#17）に限り、`error_category=RATE_LIMIT_ABORTED` と `rate_limit_aborted` / `abort_reason` は実装済みで、「再試行枯渇」と区別できる。既定設定（上限3 < 1ページの最大試行4）では 429 だけで再試行枯渇（`RATE_LIMITED`）になる経路はなく、必ず打ち切りになる。打ち切りまでの最大待機は「(上限−1)回 × `JQUANTS_429_WAIT_SECONDS`」（既定で約240秒）。
 
-終了コード（`ingest_jquants_single_day`）: 0=COMPLETE、1=FAILED、2=ATTENTION、3=429 打ち切り（FAILED の一種で調査対象）。呼び出し側は「0以外は失敗」と扱い、3 を通常の FAILED（1）より目立つ通知にする。再開（§3）は 429 の原因確認後に行い、通知は Slack critical に決定済み。停止フラグは 429 が稀なため当面実装せず、発生時に人間が手動で対応する。
+終了コード（`ingest_jquants_single_day`）: 0=COMPLETE、1=FAILED、2=ATTENTION、3=429 打ち切り（FAILED の一種で調査対象）。呼び出し側（スケジューラ等）は「0以外は失敗」と扱う。3 の通知は取込処理自身が Slack critical へ送る（呼び出し側での別途通知は不要）。再開（§3）は 429 の原因確認後に行い、通知は Slack critical に決定済み。停止フラグは 429 が稀なため当面実装せず、発生時に人間が手動で対応する。
 
 補填の1日あたり予算（2026-10-25 固定。人間承認済み）: minute は1日あたり実行時間 2時間まで（実測約170秒/日 → 約40日分）。
 1年分（約245営業日）は約11.6時間で、約6営業日で追いつく。日次更新の枠を圧迫しないこと（公式レート上限は未確認）を前提とする。
