@@ -380,7 +380,38 @@ def test_429_abort_is_failed_partial_keeps_previous_and_recovers_with_refresh(st
     assert stores[0].list_incomplete_datasets() == []
 
 
+def test_429_abort_sends_safe_slack_critical_notification(stores):
+    sent = []
+    result = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: Client(aborting_pages()), notifier=sent.append
+    ).run(dataset="daily", date=DAY, refresh=True)
+    assert result.exit_code == 3 and len(sent) == 1
+    assert DAY in sent[0] and "daily" in sent[0]
+    assert "22220" not in sent[0] and "SECRET" not in sent[0]
+
+
+def test_slack_failure_does_not_change_abort_result(stores):
+    def broken(_message):
+        raise RuntimeError("SECRET_WEBHOOK")
+    result = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: Client(aborting_pages()), notifier=broken
+    ).run(dataset="daily", date=DAY, refresh=True)
+    assert result.status == "FAILED" and result.exit_code == 3
+    assert "SLACK_NOTIFY_FAILED" in result.warnings
+    assert "SECRET_WEBHOOK" not in json.dumps(result.as_dict())
+
+
+def test_non_429_failure_does_not_notify(stores):
+    sent = []
+    JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: Client(failing_pages()), notifier=sent.append
+    ).run(dataset="daily", date=DAY, refresh=True)
+    assert sent == []
+
+
 def test_cli_429_abort_exit_code_and_alert(stores, monkeypatch, capsys, tmp_path):
+    sent = []
+    monkeypatch.setattr(cli, "notify_critical", lambda message: sent.append(message) or True)
     monkeypatch.setattr(cli, "JQuantsRawStore", lambda: stores[0])
     monkeypatch.setattr(cli, "JQuantsCanonicalStore", lambda path: stores[1])
     monkeypatch.setattr(cli.config, "JQUANTS_EXECUTION_METRICS_DIRECTORY", tmp_path / "metrics")
@@ -393,6 +424,7 @@ def test_cli_429_abort_exit_code_and_alert(stores, monkeypatch, capsys, tmp_path
     output = capsys.readouterr()
     assert code == 3
     assert "ALERT" in output.err and "22220" not in output.out + output.err
+    assert len(sent) == 1
     assert json.loads(output.out)["error_category"] == "RATE_LIMIT_ABORTED"
 
 

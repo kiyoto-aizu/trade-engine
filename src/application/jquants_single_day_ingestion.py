@@ -81,7 +81,9 @@ class JQuantsSingleDayIngestion:
         *, client_factory: Callable[[], _Client] = JQuantsV2Client,
         metrics_directory: Path | str | None = None,
         measure_peak_memory: bool = False,
+        notifier: Callable[[str], bool] | None = None,
     ) -> None:
+        self.notifier = notifier
         self.raw_store = raw_store
         self.canonical_store = canonical_store
         self.client_factory = client_factory
@@ -266,6 +268,7 @@ class JQuantsSingleDayIngestion:
             if isinstance(error, JQuantsRateLimitAbortError):
                 telemetry["rate_limit_aborted"] = True
                 telemetry["abort_reason"] = "RATE_LIMIT_429_CAP"
+                self._notify_rate_limit_abort(summary, telemetry)
         except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
             summary.status = "FAILED"
             summary.error_category = "STORAGE_OR_FORMAT_ERROR"
@@ -296,6 +299,23 @@ class JQuantsSingleDayIngestion:
             if self.metrics_directory is not None:
                 summary.metrics_file = str(self._write_metrics(summary))
         return summary
+
+    def _notify_rate_limit_abort(
+        self, summary: JQuantsIngestionSummary, telemetry: Mapping[str, Any]
+    ) -> None:
+        """通知の失敗で取込結果を変えない。本文はdataset・日付・429回数のみ。"""
+        if self.notifier is None:
+            return
+        message = (
+            "[J-Quants] 429 累計上限で取得を打ち切りました "
+            f"dataset={summary.dataset} date={summary.date} "
+            f"429回数={telemetry.get('rate_limit_429_count')}。"
+            "原因(リミッター設定・プラン上限・別プロセスとの競合)を確認してから --refresh で再実行してください。"
+        )
+        try:
+            self.notifier(message)
+        except Exception:
+            summary.warnings.append("SLACK_NOTIFY_FAILED")
 
     def _write_metrics(self, summary: JQuantsIngestionSummary) -> Path:
         assert self.metrics_directory is not None
