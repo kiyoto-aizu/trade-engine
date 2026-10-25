@@ -53,6 +53,7 @@ def test_http_400_is_no_go_and_zero_count_is_not():
     result = evaluate_metrics(metrics(http_status_counts={"400": 1}), LIMITS)
     assert result.verdict == NO_GO and "HTTP_400_SEEN" in result.reasons
     assert verdict(metrics(http_status_counts={"400": 0, "200": 5})) == GO
+    assert verdict(metrics(http_status_counts={400: 1})) == NO_GO
 
 
 def test_429_count_boundaries_independent_of_request_count():

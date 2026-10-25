@@ -14,6 +14,7 @@ TODAY = date(2026, 10, 25)
 
 def test_measured_boundaries_daily():
     assert is_within_contract("daily", date(2021, 10, 25), TODAY)
+    assert not is_within_contract("daily", date(2021, 10, 24), TODAY)
     assert not is_within_contract("daily", date(2021, 10, 22), TODAY)
 
 

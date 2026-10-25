@@ -130,7 +130,7 @@ def evaluate_metrics(
     if isinstance(statuses, Mapping):
         if any(str(code) in {"401", "403"} and safe_number(count) for code, count in statuses.items()):
             raise_to(NO_GO, "AUTH_OR_CONTRACT_ERROR")
-        if safe_number(statuses.get("400")):
+        if any(str(code) == "400" and safe_number(count) for code, count in statuses.items()):
             raise_to(NO_GO, "HTTP_400_SEEN")
 
     requests = safe_number(metrics.get("request_count"))
