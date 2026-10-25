@@ -122,8 +122,9 @@
 実行計測の一覧化（読み取り専用・通信なし・Git管理外の `data/jquants/metrics_summary.csv` に出力）:
 ```powershell
 .\.venv\Scripts\python.exe -m src.entrypoints.summarize_jquants_metrics `
-  --daily-elapsed-limit <秒> --minute-elapsed-limit <秒> [--fail-on-no-go]
+  --daily-elapsed-limit 60 --minute-elapsed-limit 600 [--fail-on-no-go]
 ```
+- 上限は設計書18 §4 の固定値（daily 60秒、minute 600秒。実測4回を根拠に、2026-10-25 に人間承認）。実行が10回程度たまったら見直す
 - 出力は検証済みの数値と列挙コードのみ（株価レコード・銘柄コード・自由文字列は含まない）
 - `partial_verdict` は実装済み項目だけの部分判定。`not_evaluated` 列の項目は評価されていない
 - 所要時間の上限（wall-clock の total。429待機などの待ちも含む）が未指定だと Hold になる。参考として `active_seconds` 列（total − wait_seconds）を出す
