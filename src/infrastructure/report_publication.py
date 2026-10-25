@@ -68,11 +68,17 @@ def public_chart_data(chart_dir: Path | None, trade_date: date) -> str | None:
         data = json.loads(text)
     except (OSError, ValueError):
         return None
+    if isinstance(data, dict):
+        source = data.get("data_source")
+        if source is None:
+            logger.warning("分足診断JSONを公開から除外: data_source なし")
+            return None
+        if not isinstance(source, str) or source not in ALLOWED_CHART_DATA_SOURCES:
+            logger.warning("分足診断JSONを公開から除外: data_source が許可リスト外")
+            return None
     if (
         not isinstance(data, dict)
         or set(data) - _CHART_DATA_KEYS
-        or not isinstance(data.get("data_source"), str)
-        or data["data_source"] not in ALLOWED_CHART_DATA_SOURCES
         or data.get("date") != trade_date.isoformat()
         or not isinstance(data.get("symbols"), list)
     ):

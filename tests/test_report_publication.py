@@ -166,6 +166,36 @@ def test_public_chart_data_allows_only_listed_data_sources(tmp_path):
     assert report_publication.public_chart_data(tmp_path, day) is not None
 
 
+def test_public_chart_data_logs_exclusion_reason_without_sensitive_values(tmp_path, caplog):
+    day = date(2026, 10, 6)
+    base = {
+        "version": 2, "date": "2026-10-06", "market_regime": None, "index": None,
+        "symbols": [{"code": "7203", "price": 1234}],
+    }
+    path = tmp_path / report_publication.CHART_DATA_NAME
+
+    def run(data):
+        caplog.clear()
+        path.write_text(json.dumps(data), encoding="utf-8")
+        with caplog.at_level("WARNING", logger=report_publication.logger.name):
+            assert report_publication.public_chart_data(tmp_path, day) is None
+        return [record.getMessage() for record in caplog.records]
+
+    missing = run(base)
+    assert len(missing) == 1 and "data_source なし" in missing[0]
+    unlisted = run({**base, "data_source": "secret-token-xyz"})
+    assert len(unlisted) == 1 and "許可リスト外" in unlisted[0]
+    for message in missing + unlisted:
+        assert "7203" not in message and "1234" not in message
+        assert "secret-token-xyz" not in message
+
+    caplog.clear()
+    path.write_text(json.dumps({**base, "data_source": "self_collected"}), encoding="utf-8")
+    with caplog.at_level("WARNING", logger=report_publication.logger.name):
+        assert report_publication.public_chart_data(tmp_path, day) is not None
+    assert caplog.records == []
+
+
 def test_push_writes_chart_data_under_data_charts(monkeypatch, tmp_path):
     work = tmp_path / "work"
     work.mkdir()
