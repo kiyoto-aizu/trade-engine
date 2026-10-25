@@ -90,10 +90,11 @@ def test_collect_recent_symbols_merges_latest_midday_diagnostic_selections(tmp_p
         midday_diagnostic_dirs=tuple(diagnostic_dirs),
     )
 
-    assert symbols == ["3996", "7203", "8306", "9432", "9984"]
+    expected = sorted({"3996", "7203", "8306", "9432", "9984"} | {f"{i:04d}" for i in range(50)})
+    assert symbols == expected
 
 
-def test_collect_recent_symbols_uses_latest_diagnostic_and_ignores_old_dates(tmp_path):
+def test_collect_recent_symbols_merges_same_day_diagnostics_and_ignores_old_dates(tmp_path):
     diagnostic_dir = tmp_path / "midday" / "450" / "diagnostics"
     diagnostic_dir.mkdir(parents=True)
     for filename, symbols in (
@@ -113,7 +114,7 @@ def test_collect_recent_symbols_uses_latest_diagnostic_and_ignores_old_dates(tmp
         midday_diagnostic_dirs=(diagnostic_dir,),
     )
 
-    assert symbols == ["NEW"]
+    assert symbols == ["NEW", "OLD"]
 
 
 def test_collect_recent_symbols_applies_inclusive_seven_day_cutoff_to_diagnostics(tmp_path):

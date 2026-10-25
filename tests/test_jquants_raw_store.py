@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import sqlite3
 import subprocess
@@ -529,6 +529,7 @@ store.capture(Client(), kind="daily", endpoint="equities/bars/daily",
             stop_point,
         ],
         cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "ALLOW_MISSING_ENV": "1"},
         check=False,
         timeout=20,
     )
@@ -769,6 +770,7 @@ store._release_dataset_lock(handle)
             str(ready_file),
         ],
         cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "ALLOW_MISSING_ENV": "1"},
     )
     try:
         deadline = time.monotonic() + 10
