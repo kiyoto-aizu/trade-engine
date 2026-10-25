@@ -40,6 +40,7 @@
 | J-Quants V2取得クライアント | 後続取得処理から利用 | [15 J-Quants V2取得クライアント](./detail_design/15-jquants-v2-client.md) | 4章 | 一部未反映 |
 | J-Quants raw・取得台帳 | 後続取得処理から利用 | [16 J-Quants raw・取得台帳・確定](./detail_design/16-jquants-raw-ledger.md) | 4章 | 一部未反映 |
 | J-Quants 指定日の全銘柄取得・canonical | `ingest_jquants_single_day.py` | [17 指定日取得とcanonical](./detail_design/17-jquants-single-day-ingestion.md) | 4章 | 一部未反映 |
+| J-Quants canonical schema運用・利用側の入力契約 | （方針と静的検査のみ） | [19 利用側の契約](./detail_design/19-jquants-consumer-contract.md) | なし | 一部未反映 |
 | 日次タスク確認 | `run_daily_task_check.py` | [14 診断・保守](./detail_design/14-diagnostics-and-maintenance-design.md) | 4章 | 現行 |
 | 日次タスク計画 | `run_daily_task_plan.py` | [14 診断・保守](./detail_design/14-diagnostics-and-maintenance-design.md) | 4章 | 現行 |
 | フィルタリング | `run_filtering.py` | [02 フィルタリング](./detail_design/02-filtering-design.md) | 4章 | 現行 |
