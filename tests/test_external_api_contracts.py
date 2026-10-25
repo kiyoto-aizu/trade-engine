@@ -394,7 +394,19 @@ def test_monthly_analysis_helpers_skip_corrupt_files_and_parse_legacy_values(tmp
         'market_regime': None,
         'market_failure_reason': None,
         'log_error_count': 0,
-        'log_error_summaries': [],
+        'log_error_recorded': False,
+        'log_errors': {
+            'recorded': False,
+            'count': 0,
+            'board_timeout': {
+                'count': 0,
+                'recovered': 0,
+                'final_failure': 0,
+                'unrecorded': 0,
+                'symbols': {'recovered': [], 'final_failure': [], 'unrecorded': []},
+            },
+            'other_errors': {'count': 0, 'groups': []},
+        },
         'position_count': None,
         'skip_counts': {},
         'skip_evaluations': {

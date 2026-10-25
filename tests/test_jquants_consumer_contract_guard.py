@@ -37,7 +37,7 @@ EXPECTED_TRANSFORMER_VERSION = "3"
 FORBIDDEN_FOR_JQUANTS = ("yahoo", "yfinance", "backtest", "report_publication",
                          "parquet_minute_bar_repository")
 # jquants側が読んでよい、名前にjquantsを含まない共有モジュール（接頭辞）。
-JQUANTS_MAY_IMPORT_SHARED = ("src.config",)
+JQUANTS_MAY_IMPORT_SHARED = ("src.config", "src.infrastructure.notification.slack_notify")
 # 接続層を追加するときは、そのモジュールのパス（ROOTからの相対）をここへ1つだけ加える（レビュー対象）。
 CONNECTION_LAYER_ALLOWED: set[str] = set()
 DYNAMIC_IMPORT_NAMES = {"import_module", "__import__"}
