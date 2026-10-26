@@ -139,6 +139,16 @@ def test_entrypoint_exit_codes(tmp_path):
     assert main(["--metrics-dir", str(empty), "--output", str(output), "--fail-on-no-go"]) == 0
 
 
+def test_entrypoint_defaults_follow_configured_metrics_directory(tmp_path, monkeypatch):
+    from src.entrypoints import summarize_jquants_metrics as cli
+
+    metrics = tmp_path / "jquants" / "metrics"
+    write_run(metrics, "daily", "2026-10-22", "a.json", status="COMPLETE")
+    monkeypatch.setattr(cli.config, "JQUANTS_EXECUTION_METRICS_DIRECTORY", metrics)
+    assert main([]) == 0
+    assert (tmp_path / "jquants" / "metrics_summary.csv").exists()
+
+
 def test_new_columns_and_other_share(tmp_path):
     write_run(
         tmp_path, "daily", "2026-10-22", "a.json",
