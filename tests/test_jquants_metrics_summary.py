@@ -148,6 +148,11 @@ def test_entrypoint_defaults_follow_configured_metrics_directory(tmp_path, monke
     assert main([]) == 0
     assert (tmp_path / "jquants" / "metrics_summary.csv").exists()
 
+    other = tmp_path / "other" / "metrics"
+    write_run(other, "daily", "2026-10-22", "a.json", status="COMPLETE")
+    assert main(["--metrics-dir", str(other)]) == 0
+    assert not (tmp_path / "other" / "metrics_summary.csv").exists()
+
 
 def test_new_columns_and_other_share(tmp_path):
     write_run(

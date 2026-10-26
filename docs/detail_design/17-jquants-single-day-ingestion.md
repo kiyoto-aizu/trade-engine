@@ -215,7 +215,7 @@ raw/APIは既存の分類を引き継ぎ、低層保存・形式エラーは`STO
 | `JQUANTS_CANONICAL_DIRECTORY` | canonicalルート | `data/jquants/canonical` |
 | `JQUANTS_RAW_DIRECTORY` | 既存rawルート | `data/jquants/raw` |
 | `JQUANTS_LEDGER_DATABASE_FILE` | 既存raw台帳 | `data/jquants/ledger.sqlite3` |
-| `JQUANTS_EXECUTION_METRICS_DIRECTORY` | 実行メトリクス出力先 | `data/jquants/metrics`（固定） |
+| `JQUANTS_EXECUTION_METRICS_DIRECTORY` | 実行メトリクス出力先 | 既定 `data/jquants/metrics`（環境変数で変更可） |
 
 Windowsで`zoneinfo`が`Asia/Tokyo`を解決できるよう、`requirements.txt`に`tzdata`を追加する。
 その他の設定詳細は[環境変数リファレンス](../reference/config-reference.md)。

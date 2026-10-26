@@ -30,7 +30,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--metrics-dir", default=None,
                         help="Default: config.JQUANTS_EXECUTION_METRICS_DIRECTORY")
     parser.add_argument("--output", default=None,
-                        help="Default: metrics_summary.csv next to the metrics directory")
+                        help="Default: metrics_summary.csv in the parent of "
+                             "config.JQUANTS_EXECUTION_METRICS_DIRECTORY")
     parser.add_argument("--daily-elapsed-limit", type=_positive_finite, default=None,
                         help="Wall-clock seconds allowed for a daily run")
     parser.add_argument("--minute-elapsed-limit", type=_positive_finite, default=None,
