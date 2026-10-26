@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.metrics_dir is None:
         args.metrics_dir = str(config.JQUANTS_EXECUTION_METRICS_DIRECTORY)
     if args.output is None:
-        args.output = str(Path(args.metrics_dir).parent / "metrics_summary.csv")
+        args.output = str(config.JQUANTS_EXECUTION_METRICS_DIRECTORY.parent / "metrics_summary.csv")
     if not Path(args.metrics_dir).is_dir():
         print(f"metrics directory not found: {args.metrics_dir}")
         return EXIT_MISSING_METRICS
