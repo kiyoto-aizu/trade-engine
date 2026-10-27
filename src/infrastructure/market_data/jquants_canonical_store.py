@@ -28,6 +28,7 @@ _COMMON = ("O", "H", "L", "C", "Vo", "Va")
 _ADJUSTED = ("AdjFactor", "AdjO", "AdjH", "AdjL", "AdjC", "AdjVo")
 CONFIRMED_NON_CANONICAL_FIELDS = frozenset({"ExRT", "MktCap"})
 PARQUET_FILENAME = "part-00000.parquet"
+CURRENT_HISTORY_FILENAME = "CURRENT_HISTORY.jsonl"
 _JST = ZoneInfo("Asia/Tokyo")
 
 
@@ -53,6 +54,16 @@ def strict_date(value: str) -> date:
 
 class JQuantsCanonicalError(Exception):
     category = "CANONICAL_ERROR"
+
+
+class JQuantsStaleSchemaError(JQuantsCanonicalError):
+    """The generation is intact but was built with another schema version."""
+
+    category = "STALE_SCHEMA"
+
+    def __init__(self, message: str, schema_version: str | None = None) -> None:
+        super().__init__(message)
+        self.schema_version = schema_version
 
 
 class JQuantsQualityError(JQuantsCanonicalError):
@@ -96,6 +107,25 @@ def _hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _record_current_switch(partition: Path, new_generation: str) -> None:
+    """CURRENTを別世代へ付け替えるとき、旧CURRENTを追記専用の履歴に残す。"""
+    try:
+        previous = (partition / "CURRENT").read_text(encoding="ascii").strip()
+    except FileNotFoundError:
+        return
+    if previous == new_generation:
+        return
+    entry = _json_bytes({
+        "previous_generation_id": previous,
+        "new_generation_id": new_generation,
+        "switched_at_utc": datetime.now(timezone.utc).isoformat(),
+    })
+    with (partition / CURRENT_HISTORY_FILENAME).open("ab") as history:
+        history.write(entry + b"\n")
+        history.flush()
+        os.fsync(history.fileno())
+
+
 class JQuantsCanonicalStore:
     """Call under raw_store.ingestion_lock for this dataset/date."""
 
@@ -121,6 +151,14 @@ class JQuantsCanonicalStore:
             return None
         return self._verify(partition, generation, dataset, target_date)
 
+    def read_attempt(self, dataset: str, target_date: str) -> dict[str, Any] | None:
+        """当日の ATTEMPT.json（直近の変換試行）を読む。無ければNone。"""
+        path = self._partition(dataset, target_date) / "ATTEMPT.json"
+        try:
+            return json.loads(path.read_text(encoding="ascii"))
+        except FileNotFoundError:
+            return None
+
     def _verify(
         self, partition: Path, generation: str, dataset: str, target_date: str
     ) -> dict[str, Any]:
@@ -137,11 +175,15 @@ class JQuantsCanonicalStore:
             hashlib.sha256(_json_bytes(identity)).hexdigest() != generation
             or manifest["generation_id"] != generation
             or manifest["dataset"] != dataset or manifest["date"] != target_date
-            or manifest["schema_version"] != SCHEMA_VERSION
             or manifest["parquet_sha256"] != _hash_file(parquet)
             or manifest["size_bytes"] != parquet.stat().st_size
         ):
             raise JQuantsCanonicalError("Canonical provenance or file hash mismatch")
+        if manifest["schema_version"] != SCHEMA_VERSION:
+            raise JQuantsStaleSchemaError(
+                "Canonical generation was built with another schema version; rebuild required",
+                manifest["schema_version"],
+            )
         reader = pq.ParquetFile(parquet)
         if (
             reader.metadata.num_rows != manifest["row_count"]
@@ -198,6 +240,7 @@ class JQuantsCanonicalStore:
             # All validation precedes the only visibility-changing operation.
             _atomic_write(attempt, _json_bytes({**identity, "state": "VALIDATED",
                                               "generation_id": generation}))
+            _record_current_switch(partition, generation)
             _atomic_write(partition / "CURRENT", generation.encode("ascii"))
             return result
         except (

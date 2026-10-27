@@ -47,7 +47,12 @@ class PublicationResult:
 
 _CHART_NAME = re.compile(r"intraday_trade_diagnostics(_detail_[0-9A-Z]{4,5})?\.png")
 CHART_DATA_NAME = "intraday_chart_data.json"
-_CHART_DATA_KEYS = frozenset({"version", "date", "market_regime", "index", "symbols"})
+_CHART_DATA_KEYS = frozenset(
+    {"version", "data_source", "date", "market_regime", "index", "symbols"}
+)
+# 公開してよい出どころの許可一覧。J-Quants由来は所有者の承認なしに加えない。
+# 出どころの記録が無いデータは、一覧に無いものと同じく公開しない。
+ALLOWED_CHART_DATA_SOURCES = frozenset({"self_collected"})
 _CHART_DATA_MAX_BYTES = 500_000
 
 
@@ -63,6 +68,14 @@ def public_chart_data(chart_dir: Path | None, trade_date: date) -> str | None:
         data = json.loads(text)
     except (OSError, ValueError):
         return None
+    if isinstance(data, dict):
+        source = data.get("data_source")
+        if source is None:
+            logger.warning("分足診断JSONを公開から除外: data_source なし")
+            return None
+        if not isinstance(source, str) or source not in ALLOWED_CHART_DATA_SOURCES:
+            logger.warning("分足診断JSONを公開から除外: data_source が許可リスト外")
+            return None
     if (
         not isinstance(data, dict)
         or set(data) - _CHART_DATA_KEYS

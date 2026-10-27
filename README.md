@@ -68,7 +68,7 @@ src/
 ├── entrypoints/       スクリーニング等の起動処理
 ├── infrastructure/
 │   ├── kabu/           kabuステーションAPI連携
-│   ├── market_data/    Yahoo Finance連携
+│   ├── market_data/    Yahoo Finance連携、J-Quants保存・canonical読み取り
 │   ├── notification/   Slack通知
 │   └── persistence/    JSON永続化
 ├── screening/          スクリーニング実行ラッパー

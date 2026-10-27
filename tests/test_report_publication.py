@@ -121,7 +121,10 @@ def test_push_copies_only_given_charts(monkeypatch, tmp_path):
 
 def test_public_chart_data_accepts_only_valid_data_for_the_date(tmp_path):
     day = date(2026, 10, 6)
-    good = {"version": 1, "date": "2026-10-06", "market_regime": None, "index": None, "symbols": []}
+    good = {
+        "version": 1, "data_source": "self_collected", "date": "2026-10-06",
+        "market_regime": None, "index": None, "symbols": [],
+    }
     path = tmp_path / report_publication.CHART_DATA_NAME
 
     assert report_publication.public_chart_data(None, day) is None
@@ -140,6 +143,57 @@ def test_public_chart_data_accepts_only_valid_data_for_the_date(tmp_path):
 
     path.write_text("not json", encoding="utf-8")
     assert report_publication.public_chart_data(tmp_path, day) is None
+
+
+def test_public_chart_data_allows_only_listed_data_sources(tmp_path):
+    day = date(2026, 10, 6)
+    good = {
+        "version": 2, "data_source": "self_collected", "date": "2026-10-06",
+        "market_regime": None, "index": None, "symbols": [],
+    }
+    path = tmp_path / report_publication.CHART_DATA_NAME
+
+    assert report_publication.ALLOWED_CHART_DATA_SOURCES == frozenset({"self_collected"})
+    for source in ("jquants", "yahoo", "unknown", "", None, ["self_collected"], 1):
+        path.write_text(json.dumps({**good, "data_source": source}), encoding="utf-8")
+        assert report_publication.public_chart_data(tmp_path, day) is None
+
+    unrecorded = {key: value for key, value in good.items() if key != "data_source"}
+    path.write_text(json.dumps(unrecorded), encoding="utf-8")
+    assert report_publication.public_chart_data(tmp_path, day) is None
+
+    path.write_text(json.dumps(good), encoding="utf-8")
+    assert report_publication.public_chart_data(tmp_path, day) is not None
+
+
+def test_public_chart_data_logs_exclusion_reason_without_sensitive_values(tmp_path, caplog):
+    day = date(2026, 10, 6)
+    base = {
+        "version": 2, "date": "2026-10-06", "market_regime": None, "index": None,
+        "symbols": [{"code": "7203", "price": 1234}],
+    }
+    path = tmp_path / report_publication.CHART_DATA_NAME
+
+    def run(data):
+        caplog.clear()
+        path.write_text(json.dumps(data), encoding="utf-8")
+        with caplog.at_level("WARNING", logger=report_publication.logger.name):
+            assert report_publication.public_chart_data(tmp_path, day) is None
+        return [record.getMessage() for record in caplog.records]
+
+    missing = run(base)
+    assert len(missing) == 1 and "data_source なし" in missing[0]
+    unlisted = run({**base, "data_source": "secret-token-xyz"})
+    assert len(unlisted) == 1 and "許可リスト外" in unlisted[0]
+    for message in missing + unlisted:
+        assert "7203" not in message and "1234" not in message
+        assert "secret-token-xyz" not in message
+
+    caplog.clear()
+    path.write_text(json.dumps({**base, "data_source": "self_collected"}), encoding="utf-8")
+    with caplog.at_level("WARNING", logger=report_publication.logger.name):
+        assert report_publication.public_chart_data(tmp_path, day) is not None
+    assert caplog.records == []
 
 
 def test_push_writes_chart_data_under_data_charts(monkeypatch, tmp_path):

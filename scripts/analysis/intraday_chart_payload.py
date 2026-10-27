@@ -16,6 +16,8 @@ from scripts.analysis import entry_condition
 from scripts.analysis import plot_intraday_trade_diagnostics as analysis
 
 PAYLOAD_VERSION = 2
+# 元データの出どころ。公開側は許可一覧にある値だけを通す（J-Quants由来は付けない）。
+SELF_COLLECTED_DATA_SOURCE = "self_collected"
 CONDITION_DETAILS_ENV = "TRADE_REPORT_PUBLISH_CONDITION_DETAILS"
 _UNSAFE_LABEL_CHARACTERS = frozenset("\\/:@")
 _MAX_LABEL_LENGTH = 40
@@ -341,6 +343,7 @@ def build_chart_payload(report: dict, *, details: bool | None = None) -> dict:
     symbols.sort(key=lambda row: order[row["result"]])
     return {
         "version": PAYLOAD_VERSION,
+        "data_source": SELF_COLLECTED_DATA_SOURCE,
         "date": report["date"],
         "market_regime": report.get("market_regime") or None,
         "index": _index_payload(report),

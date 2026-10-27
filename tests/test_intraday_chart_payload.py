@@ -156,7 +156,9 @@ def test_payload_is_json_serializable_and_has_only_allowed_keys(tmp_path):
     text = path.read_text(encoding="utf-8")
     data = json.loads(text)
 
-    assert set(data) == {"version", "date", "market_regime", "index", "symbols"}
+    assert set(data) == {
+        "version", "date", "market_regime", "index", "symbols", "data_source",
+    }
     assert "paper-1" not in text and "order_id" not in text
 
 
