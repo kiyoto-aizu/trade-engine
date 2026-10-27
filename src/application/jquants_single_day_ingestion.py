@@ -24,6 +24,7 @@ from src.infrastructure.market_data.jquants_canonical_store import (
     JQuantsStaleSchemaError,
     strict_date,
 )
+from src.infrastructure.market_data.jquants_disk_space import measure_volume
 from src.infrastructure.market_data.jquants_raw_store import (
     JQuantsDatasetState,
     JQuantsRawStore,
@@ -84,8 +85,10 @@ class JQuantsSingleDayIngestion:
         metrics_directory: Path | str | None = None,
         measure_peak_memory: bool = False,
         notifier: Callable[[str], bool] | None = None,
+        volume_probe: Callable[[Path | str], tuple[int, int]] = measure_volume,
     ) -> None:
         self.notifier = notifier
+        self.volume_probe = volume_probe
         self.raw_store = raw_store
         self.canonical_store = canonical_store
         self.client_factory = client_factory
@@ -128,6 +131,7 @@ class JQuantsSingleDayIngestion:
             "canonical_validation_seconds": 0.0,
             "field_observations": {},
             "canonical_comparison": {"status": "NOT_CHECKED"},
+            **self._measure_disk_space(),
         }
         try:
             with self.raw_store.ingestion_lock(
@@ -308,6 +312,19 @@ class JQuantsSingleDayIngestion:
             if self.metrics_directory is not None:
                 summary.metrics_file = str(self._write_metrics(summary))
         return summary
+
+    def _measure_disk_space(self) -> dict[str, Any]:
+        """Free space before the run (doc 18 §4-2 #5). Numbers only; unmeasured on failure."""
+        try:
+            raw_free, raw_device = self.volume_probe(self.raw_store.raw_directory)
+            canonical_free, canonical_device = self.volume_probe(self.canonical_store.directory)
+        except (OSError, AttributeError):
+            return {}
+        return {
+            "disk_free_bytes_raw": raw_free,
+            "disk_free_bytes_canonical": canonical_free,
+            "disk_same_volume": raw_device == canonical_device,
+        }
 
     @staticmethod
     def _enumerated_warnings(warnings: list[str]) -> list[str]:

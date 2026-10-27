@@ -122,6 +122,59 @@ def test_new_fields_are_evaluated_and_leave_not_evaluated():
     assert set(clean.not_evaluated) == {"DISK_SPACE"}
 
 
+GB = 1000**3
+
+
+def disk(**overrides):
+    base = dict(dataset="minute", raw_size_bytes=65_000_000, canonical_size_bytes=8_000_000,
+                disk_free_bytes_raw=100 * GB, disk_free_bytes_canonical=100 * GB,
+                disk_same_volume=True)
+    base.update(overrides)
+    return metrics(error_category=None, warnings=[], symbol_count=5, unknown_field_count=0,
+                   raw_source="fetch", **base)
+
+
+def test_disk_space_ok_makes_evaluation_complete():
+    result = evaluate_metrics(disk(), LIMITS)
+    assert result.verdict == GO and result.not_evaluated == ()
+
+
+def test_disk_space_same_volume_boundaries_use_combined_size():
+    need = 73_000_000
+    assert verdict(disk(disk_free_bytes_raw=need * 3, disk_free_bytes_canonical=need * 3)) == GO
+    low = evaluate_metrics(disk(disk_free_bytes_raw=need * 3 - 1, disk_free_bytes_canonical=need * 3 - 1), LIMITS)
+    assert low.verdict == HOLD and "DISK_SPACE_LOW" in low.reasons
+    assert verdict(disk(disk_free_bytes_raw=need * 1.5, disk_free_bytes_canonical=need * 1.5)) == HOLD
+    critical = evaluate_metrics(disk(disk_free_bytes_raw=need * 1.5 - 1, disk_free_bytes_canonical=need * 1.5 - 1), LIMITS)
+    assert critical.verdict == NO_GO and "DISK_SPACE_CRITICAL" in critical.reasons
+
+
+def test_disk_space_separate_volumes_judged_each_and_worst_wins():
+    separate = dict(disk_same_volume=False)
+    assert verdict(disk(**separate)) == GO
+    assert verdict(disk(**separate, disk_free_bytes_canonical=8_000_000 * 2)) == HOLD
+    assert verdict(disk(**separate, disk_free_bytes_raw=65_000_000 * 1.4)) == NO_GO
+
+
+def test_disk_space_uses_dataset_defaults_when_size_unknown():
+    failed = disk(raw_size_bytes=0, canonical_size_bytes=0, disk_free_bytes_raw=100_000_000,
+                  disk_free_bytes_canonical=100_000_000)
+    assert verdict(failed) == NO_GO
+    assert verdict({**failed, "dataset": "daily"}) == GO
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("disk_free_bytes_raw", -1), ("disk_free_bytes_raw", True), ("disk_free_bytes_canonical", "未計測"),
+    ("disk_same_volume", "yes"), ("dataset", "weekly"),
+])
+def test_disk_space_missing_or_invalid_stays_not_evaluated(field, bad):
+    assert "DISK_SPACE" in evaluate_metrics(disk(**{field: bad}), LIMITS).not_evaluated
+
+
+def test_legacy_metrics_without_disk_fields_stay_not_evaluated():
+    assert "DISK_SPACE" in evaluate_metrics(metrics(dataset="daily"), LIMITS).not_evaluated
+
+
 def test_warnings_unknown_fields_and_symbol_count_raise_hold():
     base = dict(warnings=[], symbol_count=5, unknown_field_count=0, raw_source="fetch")
     assert verdict(metrics(**{**base, "warnings": ["EMPTY_RESULT_MEANING_UNKNOWN"]})) == HOLD
