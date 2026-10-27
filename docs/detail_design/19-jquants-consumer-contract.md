@@ -167,12 +167,25 @@ J-Quants canonicalが欠けたときに、Yahoo系や既存の自前Parquetへ�
 
 | 項目 | 持ち越し先 | 内容 |
 | --- | --- | --- |
-| 営業日カレンダーの取得・保存 | #19 | 取得・保存方法の設計と実装（読み取り層は `BusinessCalendarPort` で受ける） |
+| 営業日カレンダーの取得・保存 | #19（実装済み。6-3） | 取得・保存の実装。読み取り層は `BusinessCalendarPort` で受ける |
+| 休場日の台帳への自動記録（18章 §3-6） | 別Issue | カレンダーの区分0・3の日を台帳へ記録する処理 |
 | 既存バックテストへの接続 | 別Issue | 利用側への組み込み |
 | 分足グラフ等へJ-Quantsを接続するときの公開側の条件 | 接続するPR | (1) データ源が混ざったら `self_collected` を付けない（元データの出どころから決める。現在は `intraday_chart_payload.py` が固定文字列を付ける）。(2) PNG（`public_chart_files`）も JSON と同じ許可リストで止める（現在は許可リストの対象外） |
 | 世代指定で読むモード | 必要になったら別Issue | 再現性を保証したくなった場合（3-1） |
 | dataset別の版管理 | 必要になったら別Issue | 分足だけの列追加などで、無駄な作り直しが問題になった場合（2-2） |
 | 変換ロジックの変更で既存列の値が変わる場合 | 発生時に別途判断 | 2-2 の対象外 |
+
+### 6-3. 営業日カレンダーの取得・保存（#19）
+
+| 項目 | 内容 |
+| --- | --- |
+| 構成 | domain `jquants_business_calendar.py`（検証）、infrastructure `market_data/jquants_calendar_store.py`（保存・読み出し・`BusinessCalendarPort` 実装）、application `jquants_calendar_ingestion.py`、entrypoint `ingest_jquants_calendar.py` |
+| 取得 | `markets/calendar` を `from`/`to` で取得（既存の `JQuantsV2Client`）。実API接続は `--allow-network` を付けたときだけ。出力は件数・区分別件数・期間のみで、キー・生応答は出さない |
+| 保存 | `data/jquants/calendar/calendar.json`（`JQUANTS_CALENDAR_DIRECTORY` で変更可、Git管理外）。日付→区分のみ。生応答は保存しない。sha256付きで、一時ファイルから `os.replace` で原子的に置き換える |
+| 検証 | 期間内の全暦日が揃うこと。重複日・期間外の日・日付形式不正・区分が0〜3以外は失敗し、保存済みの内容は変えない |
+| 再取得 | 保存済みの日と区分が異なる場合は失敗し、`--refresh` を明示したときだけ上書きする。同じ内容の再実行は変更なし |
+| 読み出し | `categories(start, end)` は保存済みの日だけを返す。未保存の日は含めず、`business_days_from_calendar` が「期間を覆わない」として失敗させる。保存ファイルが壊れていれば失敗 |
+| 範囲外 | 契約範囲外の期間も、カレンダー自体はAPIの応答に従う（失敗は失敗として報告） |
 
 ## 7. テスト観点
 
