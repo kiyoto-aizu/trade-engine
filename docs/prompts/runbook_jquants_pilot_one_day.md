@@ -116,10 +116,10 @@
 
 ---
 
-実行計測JSONは `data/jquants/metrics/<dataset>/date=<date>/` に実行ごとに保存される。
+実行計測JSONは `data/jquants/metrics/<dataset>/date=<date>/`（既定。`JQUANTS_EXECUTION_METRICS_DIRECTORY` で変更可）に実行ごとに保存される。
 この保存先はGit管理外。
 
-実行計測の一覧化（読み取り専用・通信なし・Git管理外の `data/jquants/metrics_summary.csv` に出力）:
+実行計測の一覧化（読み取り専用・通信なし・Git管理外の `data/jquants/metrics_summary.csv`（既定。metrics ディレクトリを変えた場合はその親）に出力）:
 ```powershell
 .\.venv\Scripts\python.exe -m src.entrypoints.summarize_jquants_metrics `
   --daily-elapsed-limit 60 --minute-elapsed-limit 600 [--fail-on-no-go]

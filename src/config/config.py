@@ -363,7 +363,12 @@ JQUANTS_RAW_DIRECTORY = Path(
 JQUANTS_CANONICAL_DIRECTORY = Path(
     os.getenv("JQUANTS_CANONICAL_DIRECTORY", str(_repo_root / "data" / "jquants" / "canonical"))
 )
-JQUANTS_EXECUTION_METRICS_DIRECTORY = _repo_root / "data" / "jquants" / "metrics"
+JQUANTS_EXECUTION_METRICS_DIRECTORY = Path(
+    os.getenv(
+        "JQUANTS_EXECUTION_METRICS_DIRECTORY",
+        str(_repo_root / "data" / "jquants" / "metrics"),
+    )
+)
 JQUANTS_LEDGER_DATABASE_FILE = Path(
     os.getenv(
         "JQUANTS_LEDGER_DATABASE_FILE",

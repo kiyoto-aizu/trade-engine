@@ -138,6 +138,7 @@
 | `JQUANTS_API_KEY` | (非表示) | 任意 | J-Quants API V2。接続先はAPIキーの誤送信を避けるため固定する。 |
 | `JQUANTS_CANONICAL_DIRECTORY` | str(_repo_root / 'data' / 'jquants' / 'canonical') | 任意 |  |
 | `JQUANTS_LEDGER_DATABASE_FILE` | str(_repo_root / 'data' / 'jquants' / 'ledger.sqlite3') | 任意 |  |
+| `JQUANTS_EXECUTION_METRICS_DIRECTORY` | str(_repo_root / 'data' / 'jquants' / 'metrics') | 任意 |  |
 | `JQUANTS_MAX_ATTEMPTS` | "4" | 任意 |  |
 | `JQUANTS_MAX_429_PER_RUN` | "3" | 任意 | 1実行内の429累計がこの回数に達したら、残りの取得を全て打ち切る(正数)。 |
 | `JQUANTS_RAW_DIRECTORY` | str(_repo_root / 'data' / 'jquants' / 'raw') | 任意 |  |
@@ -174,4 +175,4 @@
 | `TRADING_PROGRESS_REPORT_2_HOUR` | "14" | 任意 |  |
 | `TRADING_PROGRESS_REPORT_2_MINUTE` | "0" | 任意 |  |
 
-説明欄が空の項目: 70件。
+説明欄が空の項目: 71件。
