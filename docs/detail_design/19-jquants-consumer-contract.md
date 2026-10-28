@@ -181,8 +181,9 @@ J-Quants canonicalが欠けたときに、Yahoo系や既存の自前Parquetへ�
 | --- | --- |
 | 構成 | domain `jquants_business_calendar.py`（検証）、infrastructure `market_data/jquants_calendar_store.py`（保存・読み出し・`BusinessCalendarPort` 実装）、application `jquants_calendar_ingestion.py`、entrypoint `ingest_jquants_calendar.py` |
 | 取得 | `markets/calendar` を `from`/`to` で取得（既存の `JQuantsV2Client`）。実API接続は `--allow-network` を付けたときだけ。出力は件数・区分別件数・期間のみで、キー・生応答は出さない |
-| 保存 | `data/jquants/calendar/calendar.json`（`JQUANTS_CALENDAR_DIRECTORY` で変更可、Git管理外）。日付→区分のみ。生応答は保存しない。sha256付きで、一時ファイルから `os.replace` で原子的に置き換える |
-| 検証 | 期間内の全暦日が揃うこと。重複日・期間外の日・日付形式不正・区分が0〜3以外は失敗し、保存済みの内容は変えない |
+| 保存 | `data/jquants/calendar/calendar.json`（`JQUANTS_CALENDAR_DIRECTORY` で変更可、Git管理外）。日付→区分のみ。生応答は保存しない。sha256（壊れの検出用で改ざん防止ではない）付きで、一意名の一時ファイルから `os.replace` で原子的に置き換える。ロックはないため同時に複数実行しない前提 |
+| 検証 | 開始日 > 終了日は通信前に失敗。期間内の全暦日が揃うこと。重複日・期間外の日・日付形式不正・区分が0〜3以外は失敗し、保存済みの内容は変えない。読み出し時も同じ基準（標準形の日付、整数の区分）で検証する |
+| 実API確認 | 項目名（`Date` / `HolDiv`）と区分値は2026年1月分の確認結果と公式資料に基づく前提で、この実装での実API確認は未実施（明示許可後に1回行う） |
 | 再取得 | 保存済みの日と区分が異なる場合は失敗し、`--refresh` を明示したときだけ上書きする。同じ内容の再実行は変更なし |
 | 読み出し | `categories(start, end)` は保存済みの日だけを返す。未保存の日は含めず、`business_days_from_calendar` が「期間を覆わない」として失敗させる。保存ファイルが壊れていれば失敗 |
 | 範囲外 | 契約範囲外の期間も、カレンダー自体はAPIの応答に従う（失敗は失敗として報告） |

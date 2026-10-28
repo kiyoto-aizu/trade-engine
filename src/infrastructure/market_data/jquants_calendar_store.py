@@ -1,4 +1,4 @@
-"""J-Quants 営業日カレンダーの保存と読み出し（入出力のみ）。BusinessCalendarPort を満たす。
+﻿"""J-Quants 営業日カレンダーの保存と読み出し（入出力のみ）。BusinessCalendarPort を満たす。
 
 保存するのは日付と区分だけで、API応答の生データは保存しない。
 """
@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import uuid
 from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
@@ -39,11 +40,13 @@ class JQuantsCalendarStore:
             if payload["sha256"] != _digest(raw):
                 raise BusinessCalendarError("calendar file hash mismatch")
             result = {date.fromisoformat(k): v for k, v in raw.items()}
+            if any(d.isoformat() != k for d, k in zip(result, raw)):
+                raise BusinessCalendarError("calendar file has a non-standard date")
         except BusinessCalendarError:
             raise
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             raise BusinessCalendarError("calendar file is unreadable") from None
-        if any(v not in VALID_CATEGORIES or isinstance(v, bool) for v in result.values()):
+        if any(type(v) is not int or v not in VALID_CATEGORIES for v in result.values()):
             raise BusinessCalendarError("calendar file has an unknown category")
         return result
 
@@ -51,16 +54,16 @@ class JQuantsCalendarStore:
         raw = {d.isoformat(): c for d, c in sorted(categories.items())}
         payload = {
             "format_version": FORMAT_VERSION,
-            "start": min(raw) if raw else None,
-            "end": max(raw) if raw else None,
-            "count": len(raw),
             "sha256": _digest(raw),
             "categories": raw,
         }
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_name(self._path.name + ".tmp")
-        tmp.write_text(json.dumps(payload, indent=1, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, self._path)
+        tmp = self._path.with_name(f"{self._path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(json.dumps(payload, indent=1, sort_keys=True), encoding="utf-8")
+            os.replace(tmp, self._path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def categories(self, start: date, end: date) -> Mapping[date, int | None]:
         """保存済みの日付だけを返す。未保存の日は含めない（読み取り側が失敗させる）。"""

@@ -38,7 +38,47 @@ def test_ingest_saves_and_serves_port(tmp_path):
     assert summary.fetched == 6 and summary.by_category == {0: 3, 3: 1, 1: 1, 2: 1}
     cats = store.categories(START, END)
     assert business_days_from_calendar(cats, START, END) == {date(2026, 1, 5), date(2026, 1, 6)}
-    assert isinstance(store, object) and BusinessCalendarPort  # Port is structural
+
+
+def _use_port(port: BusinessCalendarPort) -> dict:
+    return dict(port.categories(START, END))
+
+
+def test_store_satisfies_port(tmp_path):
+    store = JQuantsCalendarStore(tmp_path)
+    JQuantsCalendarIngestion(FakeClient(JAN), store).run(START, END)
+    assert _use_port(store)[date(2026, 1, 5)] == 1
+
+
+def test_reversed_period_fails_before_network(tmp_path):
+    client = FakeClient(JAN)
+    with pytest.raises(BusinessCalendarError):
+        JQuantsCalendarIngestion(client, JQuantsCalendarStore(tmp_path)).run(END, START)
+    assert client.calls == []
+
+
+def test_same_content_does_not_rewrite(tmp_path):
+    store = JQuantsCalendarStore(tmp_path)
+    JQuantsCalendarIngestion(FakeClient(JAN), store).run(START, END)
+    path = tmp_path / "calendar.json"
+    path.touch()
+    old = path.stat().st_mtime_ns
+    JQuantsCalendarIngestion(FakeClient(JAN), store).run(START, END)
+    assert path.stat().st_mtime_ns == old
+    assert [p.name for p in tmp_path.iterdir()] == ["calendar.json"]
+
+
+def test_load_rejects_non_standard_values(tmp_path):
+    from src.infrastructure.market_data import jquants_calendar_store as m
+
+    for cats in ({"20260105": 1}, {"2026-01-05": 1.0}):
+        path = tmp_path / "calendar.json"
+        path.write_text(
+            __import__("json").dumps(
+                {"format_version": 1, "sha256": m._digest(cats), "categories": cats}),
+            encoding="utf-8")
+        with pytest.raises(BusinessCalendarError):
+            JQuantsCalendarStore(tmp_path).load()
 
 
 def test_unsaved_period_is_not_covered(tmp_path):
@@ -112,3 +152,27 @@ def test_entrypoint_requires_allow_network(capsys):
     from src.entrypoints.ingest_jquants_calendar import main
     assert main(["--from", "2026-01-01", "--to", "2026-01-31"]) == 2
     assert "SKIPPED" in capsys.readouterr().out
+
+
+def test_entrypoint_success_and_failure_output(tmp_path, monkeypatch, capsys):
+    from src.entrypoints import ingest_jquants_calendar as ep
+
+    monkeypatch.setattr(ep.config, "JQUANTS_CALENDAR_DIRECTORY", tmp_path)
+    holder = {}
+
+    class Client(FakeClient):
+        def __init__(self):
+            super().__init__(holder["rows"])
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(ep, "JQuantsV2Client", Client)
+    args = ["--from", "2026-01-01", "--to", "2026-01-06", "--allow-network"]
+    holder["rows"] = JAN
+    assert ep.main(args) == 0
+    out = capsys.readouterr().out
+    assert '"status": "COMPLETE"' in out and "HolDiv" not in out and "Date" not in out
+    holder["rows"] = JAN[:-1]
+    assert ep.main(args) == 1
+    assert '"error_category": "BusinessCalendarError"' in capsys.readouterr().out

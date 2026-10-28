@@ -49,6 +49,8 @@ class JQuantsCalendarIngestion:
         self._store = store
 
     def run(self, start: date, end: date, *, refresh: bool = False) -> CalendarIngestionSummary:
+        if start > end:
+            raise BusinessCalendarError("start must not be after end")
         rows: list[Mapping[str, Any]] = []
         for page in self._client.iter_pages(
             ENDPOINT, {"from": start.isoformat(), "to": end.isoformat()}
@@ -62,7 +64,9 @@ class JQuantsCalendarIngestion:
                 f"stored calendar differs for {len(changed)} days (first "
                 f"{changed[0].isoformat()}); rerun with refresh to overwrite"
             )
-        self._store.save({**existing, **fetched})
+        merged = {**existing, **fetched}
+        if merged != existing:
+            self._store.save(merged)
         by_category: dict[int, int] = {}
         for category in fetched.values():
             by_category[category] = by_category.get(category, 0) + 1
