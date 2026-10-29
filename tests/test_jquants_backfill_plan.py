@@ -84,7 +84,31 @@ def test_planner_uses_ports_and_output_has_dates_only():
         "targets", "holidays", "completed", "in_progress", "attention",
         "out_of_contract", "holiday_with_ledger"}
     assert all(len(v) == 10 for values in plan.as_dict().values() for v in values)
-    assert "key" not in text.lower()
+    assert text.count("-") == 2 * sum(len(v) for v in plan.as_dict().values())
+
+
+def test_every_day_lands_in_exactly_one_bucket():
+    states = {d(5): "COMPLETE", d(6): "EMPTY_HELD"}
+    plan = plan_backfill("daily", START, END, TODAY, CATS, states.get)
+    buckets = [v for k, v in plan.as_dict().items() if k != "holiday_with_ledger"]
+    assert sum(len(v) for v in buckets) == (END - START).days + 1
+
+
+def test_unknown_category_is_not_dropped_silently(monkeypatch):
+    import src.domain.jquants_backfill_plan as module
+    monkeypatch.setattr(module, "business_days_from_calendar", lambda c, s, e: set())
+    with pytest.raises(ValueError):
+        plan_backfill("daily", START, END, TODAY, {**CATS, d(5): 9}, lambda day: None)
+
+
+def test_minute_contract_boundary():
+    old, recent = date(2024, 1, 4), date(2026, 10, 28)
+    cats = {old: 1, recent: 1}
+    plan = plan_backfill("minute", old, old, TODAY, cats, lambda day: None)
+    assert plan.out_of_contract == (old,)
+    plan = plan_backfill("minute", recent, recent, TODAY, cats, lambda day: None)
+    assert plan.targets == (recent,)
+
 
 def test_entrypoint_outputs_plan_and_failure(tmp_path, monkeypatch, capsys):
     from src.entrypoints import list_jquants_backfill as ep

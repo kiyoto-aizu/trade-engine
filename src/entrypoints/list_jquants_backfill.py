@@ -53,8 +53,13 @@ def main(argv: list[str] | None = None) -> int:
             ValueError) as exc:
         print(json.dumps({"status": "FAILED", "error_category": type(exc).__name__}))
         return 1
-    print(json.dumps({"status": "COMPLETE", "dataset": args.dataset, **plan.as_dict()},
-                     sort_keys=True))
+    body = plan.as_dict()
+    output = {
+        "status": "COMPLETE", "dataset": args.dataset, **body,
+        "summary": {name: len(days) for name, days in body.items()},
+        "warnings": ["holiday_with_ledger"] if body["holiday_with_ledger"] else [],
+    }
+    print(json.dumps(output, sort_keys=True))
     return 0
 
 

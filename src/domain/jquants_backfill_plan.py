@@ -13,7 +13,6 @@ from datetime import date, timedelta
 from src.domain.jquants_consumer_contract import HOLIDAY_CATEGORIES, business_days_from_calendar
 from src.domain.jquants_contract_range import is_within_contract
 
-TARGET_STATES = frozenset({"PENDING", "PARTIAL", "FAILED"})
 IN_PROGRESS_STATES = frozenset({"RUNNING"})
 ATTENTION_STATES = frozenset({"EMPTY_UNKNOWN", "EMPTY_HELD"})
 COMPLETED_STATES = frozenset({"COMPLETE"})
@@ -66,7 +65,8 @@ def plan_backfill(
                 buckets["holidays"].append(day)
                 if state is not None:
                     buckets["holiday_with_ledger"].append(day)
-            continue
+                continue
+            raise ValueError("unclassifiable calendar category")
         if state in COMPLETED_STATES:
             buckets["completed"].append(day)
         elif state in IN_PROGRESS_STATES:
