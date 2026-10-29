@@ -363,6 +363,9 @@ JQUANTS_RAW_DIRECTORY = Path(
 JQUANTS_CANONICAL_DIRECTORY = Path(
     os.getenv("JQUANTS_CANONICAL_DIRECTORY", str(_repo_root / "data" / "jquants" / "canonical"))
 )
+JQUANTS_CALENDAR_DIRECTORY = Path(
+    os.getenv("JQUANTS_CALENDAR_DIRECTORY", str(_repo_root / "data" / "jquants" / "calendar"))
+)
 JQUANTS_EXECUTION_METRICS_DIRECTORY = Path(
     os.getenv(
         "JQUANTS_EXECUTION_METRICS_DIRECTORY",
