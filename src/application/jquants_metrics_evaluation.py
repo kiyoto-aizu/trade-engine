@@ -13,6 +13,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from src.domain.jquants_disk_space import (
+    DEFAULT_RUN_BYTES,
+    DiskVerdict,
+    VolumeNeed,
+    judge_volumes,
+)
 GO = "Go"
 HOLD = "Hold"
 NO_GO = "No-Go"
@@ -98,6 +104,29 @@ def _evaluate_run_details(metrics, status, not_evaluated, raise_to) -> None:
         raise_to(HOLD, "RAW_SOURCE_INVALID")
 
 
+def _evaluate_disk_space(metrics, not_evaluated, raise_to) -> None:
+    """Pre-run free space vs. the run's own raw+canonical size (doc 18 §4-1)."""
+    free_raw = safe_number(metrics.get("disk_free_bytes_raw"))
+    free_canonical = safe_number(metrics.get("disk_free_bytes_canonical"))
+    same_volume = metrics.get("disk_same_volume")
+    dataset = metrics.get("dataset")
+    defaults = DEFAULT_RUN_BYTES.get(dataset) if isinstance(dataset, str) else None
+    if free_raw is None or free_canonical is None or not isinstance(same_volume, bool) or defaults is None:
+        return
+    raw_need = safe_number(metrics.get("raw_size_bytes")) or defaults["raw"]
+    canonical_need = safe_number(metrics.get("canonical_size_bytes")) or defaults["canonical"]
+    if same_volume:
+        volumes = [VolumeNeed(int(min(free_raw, free_canonical)), int(raw_need + canonical_need))]
+    else:
+        volumes = [VolumeNeed(int(free_raw), int(raw_need)), VolumeNeed(int(free_canonical), int(canonical_need))]
+    not_evaluated.remove("DISK_SPACE")
+    verdict = judge_volumes(volumes)
+    if verdict is DiskVerdict.STOP:
+        raise_to(NO_GO, "DISK_SPACE_CRITICAL")
+    elif verdict is DiskVerdict.HOLD:
+        raise_to(HOLD, "DISK_SPACE_LOW")
+
+
 def evaluate_metrics(
     metrics: Mapping[str, Any], thresholds: JQuantsGoThresholds | None = None
 ) -> JQuantsEvaluation:
@@ -123,6 +152,7 @@ def evaluate_metrics(
         raise_to(NO_GO, "STATUS_INVALID")
 
     _evaluate_run_details(metrics, status, not_evaluated, raise_to)
+    _evaluate_disk_space(metrics, not_evaluated, raise_to)
 
     statuses = metrics.get("http_status_counts")
     if metrics.get("rate_limit_aborted") is True:

@@ -53,6 +53,9 @@ COLUMNS = (
     "active_seconds",
     "raw_size_bytes",
     "canonical_size_bytes",
+    "disk_free_bytes_raw",
+    "disk_free_bytes_canonical",
+    "disk_same_volume",
     "error_category",
     "warnings",
     "symbol_count",
@@ -87,6 +90,7 @@ def summarize_run(
     total = safe_number(durations.get("total"))
     wait = safe_number(metrics.get("wait_seconds"))
     raw_source = metrics.get("raw_source")
+    same_volume = metrics.get("disk_same_volume")
     shares = stage_breakdown(metrics)
     return {
         "dataset": dataset if dataset in DATASETS else "",
@@ -111,6 +115,9 @@ def summarize_run(
         "active_seconds": "" if total is None or wait is None else round(max(total - wait, 0.0), 3),
         "raw_size_bytes": _number(metrics.get("raw_size_bytes")),
         "canonical_size_bytes": _number(metrics.get("canonical_size_bytes")),
+        "disk_free_bytes_raw": _number(metrics.get("disk_free_bytes_raw")),
+        "disk_free_bytes_canonical": _number(metrics.get("disk_free_bytes_canonical")),
+        "disk_same_volume": same_volume if isinstance(same_volume, bool) else "",
         "error_category": safe_code(metrics.get("error_category")) or "",
         "warnings": ";".join(safe_codes(metrics.get("warnings")) or []),
         "symbol_count": _number(metrics.get("symbol_count")),

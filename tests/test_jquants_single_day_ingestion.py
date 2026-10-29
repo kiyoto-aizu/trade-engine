@@ -1,6 +1,7 @@
 import json
 import os
 import threading
+from pathlib import Path
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date, timedelta
@@ -832,3 +833,58 @@ def test_writer_drops_non_code_warnings_and_marks_unmeasured_counts(stores, tmp_
     assert ingestion._unknown_field_count({}) is None
     assert ingestion._unknown_field_count({"unknown_field_count": "x"}) is None
     assert ingestion._unknown_field_count({"unknown_field_count": 2}) == 2
+
+
+def test_disk_space_is_measured_before_run_and_recorded(stores):
+    probed = []
+
+    def probe(path):
+        probed.append(path)
+        return 123, 7
+
+    client = Client([[row("daily")]], "daily")
+    summary = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: client, volume_probe=probe
+    ).run(dataset="daily", date=DAY)
+    assert probed == [stores[0].raw_directory, stores[1].directory]
+    metrics = summary.execution_metrics
+    assert metrics["disk_free_bytes_raw"] == 123 and metrics["disk_free_bytes_canonical"] == 123
+    assert metrics["disk_same_volume"] is True
+
+
+def test_disk_probe_failure_leaves_metrics_unmeasured(stores):
+    def probe(path):
+        raise OSError("boom")
+
+    client = Client([[row("daily")]], "daily")
+    summary = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: client, volume_probe=probe
+    ).run(dataset="daily", date=DAY)
+    assert summary.status == "COMPLETE"
+    assert "disk_free_bytes_raw" not in summary.execution_metrics
+
+
+def test_disk_same_volume_false_when_devices_differ(stores):
+    devices = {"raw": 1, "canonical": 2}
+
+    def probe(path):
+        return 50, devices["raw"] if Path(path).name == "raw" else devices["canonical"]
+
+    client = Client([[row("daily")]], "daily")
+    summary = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: client, volume_probe=probe
+    ).run(dataset="daily", date=DAY)
+    assert summary.execution_metrics["disk_same_volume"] is False
+
+
+def test_disk_probe_failure_on_canonical_side_only_leaves_unmeasured(stores):
+    def probe(path):
+        if Path(path).name == "canonical":
+            raise OSError("boom")
+        return 50, 1
+
+    client = Client([[row("daily")]], "daily")
+    summary = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: client, volume_probe=probe
+    ).run(dataset="daily", date=DAY)
+    assert not any(key.startswith("disk_") for key in summary.execution_metrics)
