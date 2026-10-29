@@ -378,6 +378,12 @@ JQUANTS_LEDGER_DATABASE_FILE = Path(
         str(_repo_root / "data" / "jquants" / "ledger.sqlite3"),
     )
 )
+JQUANTS_BACKFILL_STATE_DIRECTORY = Path(
+    os.getenv(
+        "JQUANTS_BACKFILL_STATE_DIRECTORY",
+        str(_repo_root / "data" / "jquants" / "backfill_state"),
+    )
+)
 if JQUANTS_TIMEOUT_SECONDS <= 0:
     raise ValueError("JQUANTS_TIMEOUT_SECONDSは正数を指定してください。")
 if JQUANTS_MAX_ATTEMPTS <= 0:

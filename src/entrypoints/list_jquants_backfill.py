@@ -12,6 +12,7 @@ from src.config import config
 from src.domain.jquants_business_calendar import BusinessCalendarError
 from src.domain.jquants_consumer_contract import ConsumerContractError
 from src.infrastructure.market_data.jquants_calendar_store import JQuantsCalendarStore
+from src.infrastructure.market_data.jquants_raw_ledger_state import RawStoreLedgerState
 from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStore, JQuantsRawStoreError
 
 
@@ -25,17 +26,6 @@ def _date_argument(value: str) -> date:
     return parsed
 
 
-class _RawStoreLedger:
-    def __init__(self, raw_store: JQuantsRawStore) -> None:
-        self._raw_store = raw_store
-
-    def state(self, dataset: str, target_date: date) -> str | None:
-        state = self._raw_store.get_state_for(
-            kind=dataset, endpoint=f"equities/bars/{dataset}",
-            conditions={"date": target_date.isoformat()},
-        )
-        return None if state is None else state.value
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="List J-Quants backfill targets (no network)")
@@ -46,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         planner = JQuantsBackfillPlanner(
             JQuantsCalendarStore(config.JQUANTS_CALENDAR_DIRECTORY),
-            _RawStoreLedger(JQuantsRawStore()),
+            RawStoreLedgerState(JQuantsRawStore()),
         )
         plan = planner.plan(args.dataset, args.start, args.end, date.today())
     except (BusinessCalendarError, ConsumerContractError, JQuantsRawStoreError, OSError,
