@@ -1,11 +1,13 @@
 import json
-from datetime import date
+import re
+from datetime import date, timedelta
 
 import pytest
 
 from src.application.jquants_backfill_planner import JQuantsBackfillPlanner
 from src.domain.jquants_backfill_plan import plan_backfill
 from src.domain.jquants_consumer_contract import ConsumerContractError
+from src.domain.jquants_contract_range import calculate_earliest_available_date
 
 TODAY = date(2026, 10, 29)
 START, END = date(2026, 1, 1), date(2026, 1, 7)
@@ -83,8 +85,9 @@ def test_planner_uses_ports_and_output_has_dates_only():
     assert set(plan.as_dict()) == {
         "targets", "holidays", "completed", "in_progress", "attention",
         "out_of_contract", "holiday_with_ledger"}
-    assert all(len(v) == 10 for values in plan.as_dict().values() for v in values)
-    assert text.count("-") == 2 * sum(len(v) for v in plan.as_dict().values())
+    assert all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", v)
+               for values in plan.as_dict().values() for v in values)
+    assert json.loads(text) == plan.as_dict()
 
 
 def test_every_day_lands_in_exactly_one_bucket():
@@ -102,11 +105,13 @@ def test_unknown_category_is_not_dropped_silently(monkeypatch):
 
 
 def test_minute_contract_boundary():
-    old, recent = date(2024, 1, 4), date(2026, 10, 28)
-    cats = {old: 1, recent: 1}
-    plan = plan_backfill("minute", old, old, TODAY, cats, lambda day: None)
-    assert plan.out_of_contract == (old,)
-    plan = plan_backfill("minute", recent, recent, TODAY, cats, lambda day: None)
+    first = calculate_earliest_available_date("minute", TODAY)
+    before = first - timedelta(days=1)
+    cats = {first: 1, before: 1}
+    plan = plan_backfill("minute", before, first, TODAY, cats, lambda day: None)
+    assert plan.out_of_contract == (before,) and plan.targets == (first,)
+    recent = date(2026, 10, 28)
+    plan = plan_backfill("minute", recent, recent, TODAY, {recent: 1}, lambda day: None)
     assert plan.targets == (recent,)
 
 
