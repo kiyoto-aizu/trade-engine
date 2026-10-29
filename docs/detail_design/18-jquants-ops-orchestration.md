@@ -26,6 +26,15 @@
 日足/分足、日次/補填、手動パイロットが別プロセスで重なると同一APIキーへのリクエストが倍増し429の原因になる。
 実行基盤で「実行中なら新規開始しない」設定にするか、全体ロック（APIキー単位）を置く。方式は判断待ち（§9）。
 
+### 1-2. 日次更新ジョブの実装範囲（Issue #36）
+`python -m src.entrypoints.run_jquants_daily [--date YYYY-MM-DD] [--publish-after HH:MM]`（実装: domain `jquants_daily_plan.py` / `jquants_daily_stop_policy.py`、application `jquants_daily_job.py`）。
+- 対象日: 営業日カレンダー（区分1・2）の実行日のみ。休場（0・3）は HOLIDAY、`--publish-after` 前の営業日は NOT_PUBLISHED として区別してスキップする。カレンダーに無い日は営業日扱いにせず失敗（終了コード1）。公開予定時刻は未決（§9）のため既定は未指定（時刻では判定せず、空結果は取込側の EMPTY_UNKNOWN で Hold）。
+- 実行順: 日足 → 分足。各取込後に metrics を評価（Go/Hold/No-Go）して結果に記録する。
+- 停止条件（§2 日次の列）: 401/403=停止（フラグ保持が必要と通知。フラグ自体は未実装）、400・品質検証失敗=その dataset のみ停止、連続 FAILED 3回（metrics から数える。ロック失敗は数えない）=当日の残りを停止、その他の FAILED=再開対象で継続、429 打ち切り・ATTENTION=継続。
+- ロック取得失敗（`error_category=DATASET_ALREADY_RUNNING`）は待機せずスキップして結果に記録し、終了コード2。
+- 終了コード: 0 / 2（ATTENTION・ロックスキップ）/ 1（失敗・停止）/ 3（429 打ち切り）。
+- 未実装: 停止フラグの永続化、同一原因の当日停止3営業日連続の判定、全体ロック、スケジューラ登録、過去補填。
+
 ## 2. 停止・減速条件（API枠制御）
 
 動作はジョブ種別ごとに定める。
