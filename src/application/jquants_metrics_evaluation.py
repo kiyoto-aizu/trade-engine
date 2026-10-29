@@ -109,7 +109,8 @@ def _evaluate_disk_space(metrics, not_evaluated, raise_to) -> None:
     free_raw = safe_number(metrics.get("disk_free_bytes_raw"))
     free_canonical = safe_number(metrics.get("disk_free_bytes_canonical"))
     same_volume = metrics.get("disk_same_volume")
-    defaults = DEFAULT_RUN_BYTES.get(metrics.get("dataset"))
+    dataset = metrics.get("dataset")
+    defaults = DEFAULT_RUN_BYTES.get(dataset) if isinstance(dataset, str) else None
     if free_raw is None or free_canonical is None or not isinstance(same_volume, bool) or defaults is None:
         return
     raw_need = safe_number(metrics.get("raw_size_bytes")) or defaults["raw"]

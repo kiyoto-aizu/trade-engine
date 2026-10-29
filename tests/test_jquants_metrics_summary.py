@@ -118,6 +118,17 @@ def test_csv_columns_and_excel_friendly_encoding(tmp_path):
         assert list(csv.DictReader(stream).fieldnames) == list(COLUMNS)
 
 
+def test_disk_columns_carry_values_and_reject_invalid(tmp_path):
+    write_run(tmp_path, "daily", "2026-10-22", "a.json", disk_free_bytes_raw=900,
+              disk_free_bytes_canonical=800, disk_same_volume=False)
+    write_run(tmp_path, "daily", "2026-10-23", "b.json", disk_free_bytes_raw=-1,
+              disk_same_volume="yes")
+    row_a, row_b = summarize_directory(tmp_path, LIMITS)
+    assert (row_a["disk_free_bytes_raw"], row_a["disk_free_bytes_canonical"],
+            row_a["disk_same_volume"]) == (900, 800, False)
+    assert (row_b["disk_free_bytes_raw"], row_b["disk_same_volume"]) == ("", "")
+
+
 def test_entrypoint_exit_codes(tmp_path):
     import pytest
     write_run(tmp_path / "m", "daily", "2026-10-22", "a.json", status="FAILED")

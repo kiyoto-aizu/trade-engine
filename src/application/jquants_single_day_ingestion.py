@@ -318,7 +318,7 @@ class JQuantsSingleDayIngestion:
         try:
             raw_free, raw_device = self.volume_probe(self.raw_store.raw_directory)
             canonical_free, canonical_device = self.volume_probe(self.canonical_store.directory)
-        except (OSError, AttributeError):
+        except OSError:
             return {}
         return {
             "disk_free_bytes_raw": raw_free,

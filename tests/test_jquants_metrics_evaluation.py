@@ -165,7 +165,7 @@ def test_disk_space_uses_dataset_defaults_when_size_unknown():
 
 @pytest.mark.parametrize("field,bad", [
     ("disk_free_bytes_raw", -1), ("disk_free_bytes_raw", True), ("disk_free_bytes_canonical", "未計測"),
-    ("disk_same_volume", "yes"), ("dataset", "weekly"),
+    ("disk_same_volume", "yes"), ("dataset", "weekly"), ("dataset", ["daily"]), ("dataset", {}),
 ])
 def test_disk_space_missing_or_invalid_stays_not_evaluated(field, bad):
     assert "DISK_SPACE" in evaluate_metrics(disk(**{field: bad}), LIMITS).not_evaluated

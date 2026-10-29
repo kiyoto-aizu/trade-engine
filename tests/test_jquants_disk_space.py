@@ -26,3 +26,11 @@ def test_backfill_floor():
     assert backfill_may_start(floor + 5, 5)
     assert not backfill_may_start(floor + 4, 5)
     assert not backfill_may_start(floor - 1, 0)
+
+
+def test_measure_volume_walks_up_to_existing_parent(tmp_path):
+    from src.infrastructure.market_data.jquants_disk_space import measure_volume
+
+    free, device = measure_volume(tmp_path / "not" / "yet" / "created")
+    assert free > 0
+    assert (free, device)[1] == measure_volume(tmp_path)[1]
