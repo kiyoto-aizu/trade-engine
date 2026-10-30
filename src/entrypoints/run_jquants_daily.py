@@ -25,6 +25,9 @@ from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStore, JQ
 from src.infrastructure.notification.slack_notify import notify_critical
 
 
+DEFAULT_PUBLISH_AFTER = time(17, 0)
+
+
 def _date_argument(value: str) -> date:
     try:
         parsed = date.fromisoformat(value)
@@ -70,14 +73,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="J-Quants daily update job")
     parser.add_argument("--date", type=_date_argument, default=None, help="Run date (default: today)")
     parser.add_argument(
-        "--publish-after", type=_time_argument, default=None,
+        "--publish-after", type=_time_argument, default=DEFAULT_PUBLISH_AFTER,
         help="Business day before this time is reported as NOT_PUBLISHED and skipped",
     )
     args = parser.parse_args(argv)
     now = datetime.now()
     run_date = args.date or now.date()
     try:
-        result: DailyJobResult = build_job().run(run_date, now.time(), args.publish_after)
+        result: DailyJobResult = build_job().run(
+            run_date, now.time(), args.publish_after if run_date >= now.date() else None
+        )
     except (JQuantsRawStoreError, OSError, ValueError, sqlite3.Error):
         print(json.dumps({"run_date": run_date.isoformat(), "status": "FAILED",
                           "error_category": "INITIALIZATION_ERROR"}))
