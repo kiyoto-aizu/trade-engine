@@ -136,6 +136,8 @@
 | `IS_DEMO` | "true" | 任意 |  |
 | `JQUANTS_429_WAIT_SECONDS` | "120" | 任意 |  |
 | `JQUANTS_API_KEY` | (非表示) | 任意 | J-Quants API V2。接続先はAPIキーの誤送信を避けるため固定する。 |
+| `JQUANTS_BACKFILL_STATE_DIRECTORY` | str(_repo_root / 'data' / 'jquants' / 'backfill_state') | 任意 | 補填停止状態・ロックの保存先。 |
+| `JQUANTS_CALENDAR_DIRECTORY` | str(_repo_root / 'data' / 'jquants' / 'calendar') | 任意 | 営業日カレンダーの保存先。 |
 | `JQUANTS_CANONICAL_DIRECTORY` | str(_repo_root / 'data' / 'jquants' / 'canonical') | 任意 |  |
 | `JQUANTS_LEDGER_DATABASE_FILE` | str(_repo_root / 'data' / 'jquants' / 'ledger.sqlite3') | 任意 |  |
 | `JQUANTS_EXECUTION_METRICS_DIRECTORY` | str(_repo_root / 'data' / 'jquants' / 'metrics') | 任意 |  |
