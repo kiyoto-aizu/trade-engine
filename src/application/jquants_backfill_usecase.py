@@ -52,6 +52,9 @@ class BackfillOutcome(StrEnum):
     STOPPED = "STOPPED"
 
 
+_CAUSE_STOP_REASONS = (StopReason.UNEXPECTED_400_IN_RANGE, StopReason.UNKNOWN_STATUS)
+
+
 _EXIT_CODES = {
     BackfillOutcome.COMPLETED: 0,
     BackfillOutcome.COMPLETED_WITH_REVIEW: 0,
@@ -242,6 +245,14 @@ class JQuantsBackfillUseCase:
                 )
         elif scope in (StopScope.BACKFILL_FLAG, StopScope.ALL_FLAG):
             self._state.set_stop_flag(scope.value, reason.value, day)
+        elif reason in _CAUSE_STOP_REASONS:
+            # 全日で同じ400・未知statusが続く系統的な不具合は、人間の確認を必須にする。
+            self._state.record_cause_stop(dataset, day, reason.value)
+            history = [(d, StopReason(r)) for d, r in self._state.cause_stop_dates(dataset)]
+            if is_repeated_today_stop(history, reason):
+                self._state.set_stop_flag(
+                    StopScope.BACKFILL_FLAG.value, StopReason.REPEATED_REVIEW_STOP.value, day
+                )
 
     def _check_disk(self, sizes: dict[str, int]) -> tuple[DiskVerdict, bool] | None:
         """Return (verdict, floor_ok) before one day's fetch, or None when unmeasurable."""

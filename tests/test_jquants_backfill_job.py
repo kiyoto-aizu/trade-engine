@@ -309,6 +309,34 @@ def test_stop_success_stop_success_stop_does_not_set_flag(tmp_path):
     assert state.stop_flag() is None
 
 
+def test_same_400_on_three_run_days_sets_flag(tmp_path):
+    for offset in range(3):
+        target = START + timedelta(days=offset)
+        run_day = TODAY - timedelta(days=2 - offset)
+        ingestion = FakeIngestion({target.isoformat(): {"status": "FAILED", "category": "CLIENT_REQUEST_ERROR"}})
+        usecase, state = _usecase(
+            tmp_path, FakePlanner(_plan(target)), ingestion, today=lambda d=run_day: d,
+        )
+        usecase.run("daily", START, run_day)
+        assert (state.stop_flag() is None) == (offset < 2)
+    assert state.stop_flag()["reason"] == "REPEATED_REVIEW_STOP"
+    assert len(state.review_dates("daily")) == 3
+
+
+def test_400_with_success_between_does_not_set_flag(tmp_path):
+    for offset, fail in enumerate([True, False, True, False, True]):
+        target = START + timedelta(days=offset)
+        run_day = TODAY - timedelta(days=5 - offset)
+        ingestion = FakeIngestion(
+            {target.isoformat(): {"status": "FAILED", "category": "CLIENT_REQUEST_ERROR"}} if fail else None
+        )
+        usecase, state = _usecase(
+            tmp_path, FakePlanner(_plan(target)), ingestion, today=lambda d=run_day: d,
+        )
+        usecase.run("daily", START, run_day)
+    assert state.stop_flag() is None
+
+
 def test_unknown_status_goes_to_review(tmp_path):
     ingestion = FakeIngestion({START.isoformat(): {"status": "???"}})
     usecase, state = _usecase(tmp_path, FakePlanner(_plan(START)), ingestion)

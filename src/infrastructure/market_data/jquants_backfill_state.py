@@ -54,7 +54,9 @@ class JQuantsBackfillStateStore:
             if not isinstance(state, dict):
                 raise ValueError
             merged = {**_empty_state(), **state}
-            if not isinstance(merged["today_stops"], dict):
+            if not isinstance(merged["today_stops"], dict) or not isinstance(
+                merged["cause_stops"], dict
+            ):
                 raise ValueError
             return merged
         except (OSError, ValueError):
@@ -104,11 +106,26 @@ class JQuantsBackfillStateStore:
             state["today_stops"][dataset] = stops[-10:]
         self.save(state)
 
+    def record_cause_stop(self, dataset: str, day: date, reason: str) -> None:
+        state = self.load()
+        stops = state["cause_stops"].setdefault(dataset, [])
+        if not any(i["date"] == day.isoformat() for i in stops):
+            stops.append({"date": day.isoformat(), "reason": reason})
+            state["cause_stops"][dataset] = stops[-10:]
+        self.save(state)
+
+    def cause_stop_dates(self, dataset: str) -> list[tuple[date, str]]:
+        return [
+            (date.fromisoformat(item["date"]), item["reason"])
+            for item in self.load()["cause_stops"].get(dataset, [])
+        ]
+
     def reset_today_stops(self, dataset: str) -> None:
         """成功した走行日が挟まったら「連続」を途切れさせる（設計書18 §2-1、dataset別）。"""
         state = self.load()
-        if state["today_stops"].get(dataset):
+        if state["today_stops"].get(dataset) or state["cause_stops"].get(dataset):
             state["today_stops"][dataset] = []
+            state["cause_stops"][dataset] = []
             self.save(state)
 
     def is_stopped_today(self, dataset: str, day: date) -> bool:
@@ -139,7 +156,9 @@ class JQuantsBackfillStateStore:
 
 
 def _empty_state() -> dict[str, Any]:
-    return {"stop_flag": None, "today_stops": {}, "failed_streak": {}, "review": {}}
+    return {
+        "stop_flag": None, "today_stops": {}, "cause_stops": {}, "failed_streak": {}, "review": {},
+    }
 
 
 def _now() -> str:
