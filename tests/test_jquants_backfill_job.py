@@ -260,6 +260,18 @@ def test_stop_days_separated_by_success_do_not_set_flag(tmp_path):
     assert state.stop_flag() is None
 
 
+def test_stop_success_stop_success_stop_does_not_set_flag(tmp_path):
+    stop = {START.isoformat(): {"status": "FAILED", "category": "RATE_LIMIT_ABORTED"}}
+    for offset, fail in enumerate([True, False, True, False, True]):
+        ingestion = FakeIngestion(stop if fail else None)
+        usecase, state = _usecase(
+            tmp_path, FakePlanner(_plan(START)), ingestion,
+            today=lambda o=offset: TODAY - timedelta(days=5 - o),
+        )
+        usecase.run("daily", START, TODAY - timedelta(days=5 - offset))
+    assert state.stop_flag() is None
+
+
 def test_unknown_status_goes_to_review(tmp_path):
     ingestion = FakeIngestion({START.isoformat(): {"status": "???"}})
     usecase, state = _usecase(tmp_path, FakePlanner(_plan(START)), ingestion)
