@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import date
+from enum import StrEnum
 
 CONTRACT_YEARS: dict[str, int] = {
     "daily": 5,
@@ -40,12 +41,19 @@ def sort_backfill_dates(dataset: str, dates: list[date], today: date) -> list[da
     return sorted(d for d in dates if is_within_contract(dataset, d, today))
 
 
-def classify_client_request_error(dataset: str, target_date: date, today: date) -> str:
+class ClientRequestErrorKind(StrEnum):
+    UNEXPECTED_400_IN_RANGE = "UNEXPECTED_400_IN_RANGE"
+    OUT_OF_CONTRACT_RANGE = "OUT_OF_CONTRACT_RANGE"
+
+
+def classify_client_request_error(
+    dataset: str, target_date: date, today: date
+) -> ClientRequestErrorKind:
     """HTTP 400 の原因分類。
 
     範囲内の 400 は実装不具合・想定外、範囲外の 400 は判定漏れ（境界到達）。
     未来日の 400 も範囲外に分類されるため、日付ずれが原因のときは区別して調べる。
     """
     if is_within_contract(dataset, target_date, today):
-        return "UNEXPECTED_400_IN_RANGE"
-    return "OUT_OF_CONTRACT_RANGE"
+        return ClientRequestErrorKind.UNEXPECTED_400_IN_RANGE
+    return ClientRequestErrorKind.OUT_OF_CONTRACT_RANGE
