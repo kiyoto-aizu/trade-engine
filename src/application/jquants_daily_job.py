@@ -9,12 +9,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import date, time
+import sqlite3
+from datetime import date, datetime, time
 from typing import Any, Protocol
 
 from src.application.jquants_canonical_input import BusinessCalendarPort
 from src.domain.jquants_daily_plan import DailyDecision, plan_daily
 from src.domain.jquants_daily_stop_policy import StopAction, decide_stop
+from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStoreError
 
 DATASET_ORDER = ("daily", "minute")  # 日足 → 分足（同時に走らせない）
 _EXIT_SEVERITY = {0: 0, 2: 1, 1: 2, 3: 3}
@@ -92,17 +94,18 @@ class JQuantsDailyJob:
     def __init__(
         self,
         calendar: BusinessCalendarPort,
-        ingestion: SingleDayIngestionPort,
+        ingestion_factory: Callable[[], SingleDayIngestionPort],
         history: FailureHistoryPort,
         verify: Verifier | None = None,
     ) -> None:
         self._calendar = calendar
-        self._ingestion = ingestion
+        self._ingestion_factory = ingestion_factory
+        self._ingestion: SingleDayIngestionPort | None = None
         self._history = history
         self._verify = verify
 
     def run(
-        self, run_date: date, now: time, publish_after: time | None = None
+        self, run_date: date, now: datetime, publish_after: time | None = None
     ) -> DailyJobResult:
         categories: Mapping[date, int | None] = self._calendar.categories(run_date, run_date)
         plan = plan_daily(run_date, now, categories, publish_after)
@@ -122,9 +125,21 @@ class JQuantsDailyJob:
                 blocked = outcome.stop_action
         return result
 
+    def _ingest(self) -> SingleDayIngestionPort:
+        # 休場日・未公開では RawStore 等を作らない（初期化失敗を避ける）
+        if self._ingestion is None:
+            self._ingestion = self._ingestion_factory()
+        return self._ingestion
+
     def _run_dataset(self, dataset: str, target: date) -> DatasetOutcome:
         prior_failed = self._history.consecutive_failed(dataset)
-        summary = self._ingestion.run(dataset=dataset, date=target.isoformat())
+        try:
+            summary = self._ingest().run(dataset=dataset, date=target.isoformat())
+        except (JQuantsRawStoreError, OSError, ValueError, sqlite3.Error):
+            return DatasetOutcome(
+                dataset, ran=True, status="FAILED", error_category="STORAGE_OR_FORMAT_ERROR",
+                exit_code=1, stop_action=StopAction.CONTINUE, reason="UNEXPECTED_ERROR",
+            )
         decision = decide_stop(summary.status, summary.error_category, prior_failed)
         verdict, reasons = (None, ())
         if self._verify is not None and decision.action is not StopAction.SKIP_LOCKED:

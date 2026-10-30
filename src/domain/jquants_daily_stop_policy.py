@@ -10,7 +10,8 @@ from enum import StrEnum
 
 CONSECUTIVE_FAILED_LIMIT = 3
 
-LOCKED_CATEGORY = "DATASET_ALREADY_RUNNING"
+LOCKED_CATEGORY = "DATASET_ALREADY_RUNNING"  # raw_store のロック例外のカテゴリと一致させる
+RATE_LIMIT_ABORTED = "RATE_LIMIT_ABORTED"
 HALT_CATEGORIES = {
     "AUTH_ERROR": "HTTP_401",
     "PERMISSION_OR_CONTRACT_ERROR": "HTTP_403_IN_RANGE",
@@ -41,6 +42,8 @@ def decide_stop(status: str, error_category: str | None, prior_consecutive_faile
         return StopDecision(StopAction.SKIP_LOCKED, LOCKED_CATEGORY)
     if status != "FAILED":
         return StopDecision(StopAction.CONTINUE)
+    if error_category == RATE_LIMIT_ABORTED:
+        return StopDecision(StopAction.STOP_TODAY, RATE_LIMIT_ABORTED)
     if error_category in HALT_CATEGORIES:
         return StopDecision(StopAction.HALT_FLAG, HALT_CATEGORIES[error_category])
     if error_category in JOB_STOP_CATEGORIES:

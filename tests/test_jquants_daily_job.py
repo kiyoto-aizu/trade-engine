@@ -1,4 +1,5 @@
-from datetime import date, time
+import json
+from datetime import date, datetime, time
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,10 @@ from src.infrastructure.market_data.jquants_metrics_failure_history import (
 from src.infrastructure.market_data.jquants_raw_store import JQuantsDatasetAlreadyRunningError
 
 DAY = date(2026, 10, 30)
+
+
+def at(hour, day=DAY):
+    return datetime.combine(day, time(hour))
 
 
 class Calendar:
@@ -49,10 +54,10 @@ class History:
 def job(results=None, categories=None, counts=None, verify=None):
     ingestion = Ingestion(results or {})
     cats = {DAY: 1} if categories is None else categories
-    return JQuantsDailyJob(Calendar(cats), ingestion, History(counts), verify), ingestion
+    return JQuantsDailyJob(Calendar(cats), lambda: ingestion, History(counts), verify), ingestion
 
 
-def run(j, now=time(18, 0), publish_after=None):
+def run(j, now=at(18), publish_after=None):
     return j.run(DAY, now, publish_after)
 
 
@@ -63,15 +68,21 @@ def run(j, now=time(18, 0), publish_after=None):
 )
 def test_plan_distinguishes_business_day_holiday_and_missing(category, decision):
     categories = {} if category is None else {DAY: category}
-    assert plan_daily(DAY, time(18), categories).decision is decision
+    assert plan_daily(DAY, at(18), categories).decision is decision
 
 
 def test_not_published_is_distinct_from_holiday():
-    before = plan_daily(DAY, time(9), {DAY: 1}, time(17))
-    after = plan_daily(DAY, time(17), {DAY: 1}, time(17))
+    before = plan_daily(DAY, at(9), {DAY: 1}, time(17))
+    after = plan_daily(DAY, at(17), {DAY: 1}, time(17))
     assert before.decision is DailyDecision.NOT_PUBLISHED and before.target_date is None
     assert after.decision is DailyDecision.TARGET and after.target_date == DAY
-    assert plan_daily(DAY, time(9), {DAY: 0}, time(17)).decision is DailyDecision.HOLIDAY
+    assert plan_daily(DAY, at(9), {DAY: 0}, time(17)).decision is DailyDecision.HOLIDAY
+
+
+def test_past_date_is_not_judged_by_time_of_day():
+    yesterday = date(2026, 10, 29)
+    plan = plan_daily(yesterday, at(9), {yesterday: 1}, time(17))
+    assert plan.decision is DailyDecision.TARGET
 
 
 @pytest.mark.parametrize("categories", [{DAY: 0}, {DAY: 3}, {}])
@@ -84,7 +95,7 @@ def test_non_target_days_do_not_ingest(categories):
 
 def test_not_published_does_not_ingest():
     j, ingestion = job()
-    result = run(j, now=time(9), publish_after=time(17))
+    result = run(j, now=at(9), publish_after=time(17))
     assert ingestion.calls == [] and result.decision is DailyDecision.NOT_PUBLISHED
     assert result.exit_code == 0
 
@@ -135,10 +146,35 @@ def test_third_consecutive_failure_stops_the_rest_of_the_day():
     assert not result.halt_flag_required
 
 
-def test_429_abort_is_failed_and_exit_code_3_without_halting():
+def test_429_abort_skips_minute_and_keeps_exit_code_3():
     j, ingestion = job({"daily": ("FAILED", "RATE_LIMIT_ABORTED")})
     result = run(j)
-    assert len(ingestion.calls) == 2 and result.exit_code == 3
+    assert [c[0] for c in ingestion.calls] == ["daily"]
+    assert result.outcomes[0].stop_action is StopAction.STOP_TODAY
+    assert result.outcomes[1].ran is False
+    assert result.exit_code == 3 and not result.halt_flag_required
+
+
+def test_unexpected_error_in_minute_keeps_daily_result():
+    class Boom(Ingestion):
+        def run(self, *, dataset, date):
+            if dataset == "minute":
+                raise ValueError("x")
+            return super().run(dataset=dataset, date=date)
+
+    j = JQuantsDailyJob(Calendar({DAY: 1}), lambda: Boom({}), History())
+    result = run(j)
+    assert result.outcomes[0].status == "COMPLETE"
+    assert result.outcomes[1].error_category == "STORAGE_OR_FORMAT_ERROR"
+    assert result.exit_code == 1
+
+
+def test_ingestion_is_not_built_on_holiday():
+    def factory():
+        raise AssertionError("must not be built")
+
+    j = JQuantsDailyJob(Calendar({DAY: 0}), factory, History())
+    assert run(j).exit_code == 0
 
 
 def test_attention_continues_and_exits_2():
@@ -185,3 +221,14 @@ def test_failure_history_counts_across_dates_and_ignores_lock(tmp_path):
     assert history.consecutive_failed("minute") == 0
     write_metrics(tmp_path, "daily", "2026-10-30", "20261030T0", "ATTENTION")
     assert history.consecutive_failed("daily") == 0
+
+
+def test_entrypoint_output_has_only_codes_and_dates(monkeypatch, capsys):
+    from src.entrypoints import run_jquants_daily as cli
+
+    j, _ = job({"daily": ("ATTENTION", None)})
+    monkeypatch.setattr(cli, "build_job", lambda: j)
+    code = cli.main(["--date", "2026-10-30", "--publish-after", "00:00"])
+    output = json.loads(capsys.readouterr().out)
+    assert code == 2 and output["decision"] == "TARGET"
+    assert set(output) == {"run_date", "decision", "halt_flag_required", "exit_code", "outcomes"}

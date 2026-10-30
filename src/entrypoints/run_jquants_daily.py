@@ -8,7 +8,7 @@ import argparse
 import json
 import sqlite3
 import sys
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,7 @@ from src.infrastructure.notification.slack_notify import notify_critical
 
 
 DEFAULT_PUBLISH_AFTER = time(17, 0)
+JST = timezone(timedelta(hours=9))
 
 
 def _date_argument(value: str) -> date:
@@ -57,14 +58,17 @@ def _verify(summary: Any) -> tuple[str, tuple[str, ...]]:
     return evaluation.verdict, evaluation.reasons
 
 
-def build_job() -> JQuantsDailyJob:
-    usecase = JQuantsSingleDayIngestion(
+def _ingestion() -> JQuantsSingleDayIngestion:
+    return JQuantsSingleDayIngestion(
         JQuantsRawStore(), JQuantsCanonicalStore(config.JQUANTS_CANONICAL_DIRECTORY),
         metrics_directory=config.JQUANTS_EXECUTION_METRICS_DIRECTORY,
         notifier=notify_critical,
     )
+
+
+def build_job() -> JQuantsDailyJob:
     return JQuantsDailyJob(
-        JQuantsCalendarStore(config.JQUANTS_CALENDAR_DIRECTORY), usecase,
+        JQuantsCalendarStore(config.JQUANTS_CALENDAR_DIRECTORY), _ingestion,
         JQuantsMetricsFailureHistory(config.JQUANTS_EXECUTION_METRICS_DIRECTORY), _verify,
     )
 
@@ -77,12 +81,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Business day before this time is reported as NOT_PUBLISHED and skipped",
     )
     args = parser.parse_args(argv)
-    now = datetime.now()
+    now = datetime.now(JST)
     run_date = args.date or now.date()
     try:
-        result: DailyJobResult = build_job().run(
-            run_date, now.time(), args.publish_after if run_date >= now.date() else None
-        )
+        result: DailyJobResult =         build_job().run(run_date, now, args.publish_after)
     except (JQuantsRawStoreError, OSError, ValueError, sqlite3.Error):
         print(json.dumps({"run_date": run_date.isoformat(), "status": "FAILED",
                           "error_category": "INITIALIZATION_ERROR"}))

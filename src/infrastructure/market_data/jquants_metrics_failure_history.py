@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-LOCKED_CATEGORY = "DATASET_ALREADY_RUNNING"
+from src.domain.jquants_daily_stop_policy import LOCKED_CATEGORY
 
 
 class JQuantsMetricsFailureHistory:
@@ -15,11 +15,16 @@ class JQuantsMetricsFailureHistory:
     def consecutive_failed(self, dataset: str) -> int:
         """ファイル名（時刻）順の末尾から連続する FAILED の数。ロック失敗は無視し、読めないものは FAILED とみなす。"""
         streak = 0
-        for path in sorted(self._directory.glob(f"{dataset}/date=*/*.json"), key=lambda p: p.name):
+        paths = sorted(
+            self._directory.glob(f"{dataset}/date=*/*.json"), key=lambda p: p.name, reverse=True
+        )
+        for path in paths:
             status, category = self._read(path)
             if category == LOCKED_CATEGORY:
                 continue
-            streak = streak + 1 if status == "FAILED" else 0
+            if status != "FAILED":
+                break
+            streak += 1
         return streak
 
     @staticmethod
