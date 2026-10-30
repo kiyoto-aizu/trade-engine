@@ -15,6 +15,7 @@ from src.application.jquants_backfill_usecase import JQuantsBackfillUseCase, jst
 from src.application.jquants_single_day_ingestion import JQuantsSingleDayIngestion
 from src.config import config
 from src.domain.jquants_business_calendar import BusinessCalendarError
+from src.domain.jquants_backfill_policy import DAILY_BUDGET_SECONDS
 from src.domain.jquants_consumer_contract import ConsumerContractError
 from src.domain.jquants_contract_range import calculate_earliest_available_date
 from src.infrastructure.market_data.jquants_backfill_state import (
@@ -53,8 +54,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.max_days is not None and args.max_days <= 0:
         parser.error("--max-days must be positive")
-    if args.budget_seconds is not None and not args.budget_seconds > 0:
-        parser.error("--budget-seconds must be positive")
+    if args.budget_seconds is not None and not 0 < args.budget_seconds <= DAILY_BUDGET_SECONDS:
+        parser.error("--budget-seconds must be positive and at most the daily budget")
     state = JQuantsBackfillStateStore(config.JQUANTS_BACKFILL_STATE_DIRECTORY)
     try:
         if args.clear_stop_flag:

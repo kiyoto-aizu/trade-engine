@@ -235,6 +235,38 @@ def test_out_of_range_400_ends_job_and_excludes_date(tmp_path):
     assert result.reason is StopReason.UNEXPECTED_400_IN_RANGE and state.stop_flag() is None
 
 
+def test_in_range_400_goes_to_review_and_is_not_resent(tmp_path):
+    ingestion = FakeIngestion({START.isoformat(): {"status": "FAILED", "category": "CLIENT_REQUEST_ERROR"}})
+    usecase, state = _usecase(tmp_path, FakePlanner(_plan(START, START + timedelta(days=1))), ingestion)
+    result = usecase.run("daily", START, TODAY)
+    assert result.reason is StopReason.UNEXPECTED_400_IN_RANGE and state.stop_flag() is None
+    assert START in state.review_dates("daily")
+    # 同日の再実行では再送せず、翌日の対象から進む（当日停止ではないため）
+    again = usecase.run("daily", START, TODAY)
+    assert START.isoformat() not in ingestion.calls[1:]
+    assert again.review_excluded == [START]
+
+
+def test_stop_days_separated_by_success_do_not_set_flag(tmp_path):
+    state = JQuantsBackfillStateStore(tmp_path / "state")
+    state.record_today_stop(TODAY - timedelta(days=4), "RATE_LIMITED")
+    state.record_today_stop(TODAY - timedelta(days=3), "RATE_LIMITED")
+    usecase, state = _usecase(tmp_path, FakePlanner(_plan(START)), FakeIngestion())
+    usecase.run("daily", START, TODAY - timedelta(days=2))
+    assert state.today_stop_dates() == []
+    ingestion = FakeIngestion({START.isoformat(): {"status": "FAILED", "category": "RATE_LIMIT_ABORTED"}})
+    usecase, state = _usecase(tmp_path, FakePlanner(_plan(START)), ingestion)
+    usecase.run("daily", START, TODAY)
+    assert state.stop_flag() is None
+
+
+def test_unknown_status_goes_to_review(tmp_path):
+    ingestion = FakeIngestion({START.isoformat(): {"status": "???"}})
+    usecase, state = _usecase(tmp_path, FakePlanner(_plan(START)), ingestion)
+    usecase.run("daily", START, TODAY)
+    assert START in state.review_dates("daily")
+
+
 def test_lock_held_skips_without_waiting(tmp_path):
     ingestion = FakeIngestion()
     usecase, state = _usecase(tmp_path, FakePlanner(_plan(START)), ingestion)

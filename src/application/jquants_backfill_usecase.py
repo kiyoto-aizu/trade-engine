@@ -168,6 +168,8 @@ class JQuantsBackfillUseCase:
                 self._max_days is not None and len(result.processed) >= self._max_days
             ):
                 result.outcome = BackfillOutcome.BUDGET_EXHAUSTED
+                if result.processed:
+                    self._state.reset_today_stops()
                 return result
             disk = self._check_disk(sizes)
             if disk is None:
@@ -209,6 +211,8 @@ class JQuantsBackfillUseCase:
                 return result
             held = held or decision.hold
         result.remaining_targets = 0
+        if result.processed:
+            self._state.reset_today_stops()
         if result.attention or plan.in_progress or result.review_excluded:
             result.outcome = BackfillOutcome.COMPLETED_WITH_REVIEW
         return result
@@ -216,8 +220,12 @@ class JQuantsBackfillUseCase:
     def _record_review(self, dataset: str, day: date, reason: StopReason) -> None:
         if reason is StopReason.PERMISSION_ERROR:
             self._state.mark_review("PERMISSION_403", dataset, day)
-        elif reason is StopReason.OUT_OF_CONTRACT_400:
-            self._state.mark_review("OUT_OF_CONTRACT_400", dataset, day)
+        elif reason in (
+            StopReason.OUT_OF_CONTRACT_400, StopReason.UNEXPECTED_400_IN_RANGE,
+            StopReason.UNKNOWN_STATUS,
+        ):
+            # 同じ日を次回も再送しないよう、400・未知statusも要確認に入れる。
+            self._state.mark_review(reason.value, dataset, day)
 
     def _stop(
         self, result: BackfillResult, day: date, scope: StopScope, reason: StopReason

@@ -15,7 +15,7 @@ from typing import Any
 
 LOCK_FILE = "backfill.lock"
 STATE_FILE = "backfill_state.json"
-REVIEW_KINDS = ("PERMISSION_403", "OUT_OF_CONTRACT_400")
+REVIEW_KINDS = ("PERMISSION_403", "OUT_OF_CONTRACT_400", "UNEXPECTED_400_IN_RANGE", "UNKNOWN_STATUS")
 
 
 class BackfillStateError(Exception):
@@ -93,6 +93,13 @@ class JQuantsBackfillStateStore:
             state["today_stops"].append({"date": day.isoformat(), "reason": reason})
             state["today_stops"] = state["today_stops"][-10:]
         self.save(state)
+
+    def reset_today_stops(self) -> None:
+        """停止しなかった走行日が挟まったら「連続」を途切れさせる（設計書18 §2 の3営業日連続）。"""
+        state = self.load()
+        if state["today_stops"]:
+            state["today_stops"] = []
+            self.save(state)
 
     def is_stopped_today(self, day: date) -> bool:
         return any(d == day for d, _ in self.today_stop_dates())
