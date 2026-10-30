@@ -51,6 +51,8 @@ class JQuantsRawStoreError(Exception):
 class JQuantsDatasetAlreadyRunningError(JQuantsRawStoreError):
     """The dataset is already being captured by another invocation."""
 
+    category = "DATASET_ALREADY_RUNNING"
+
 
 class JQuantsRawValidationError(JQuantsRawStoreError):
     """A captured page or request condition failed validation."""

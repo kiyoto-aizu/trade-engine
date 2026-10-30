@@ -26,6 +26,20 @@
 日足/分足、日次/補填、手動パイロットが別プロセスで重なると同一APIキーへのリクエストが倍増し429の原因になる。
 実行基盤で「実行中なら新規開始しない」設定にするか、全体ロック（APIキー単位）を置く。方式は判断待ち（§9）。
 
+### 1-2. 日次更新ジョブの実装範囲（Issue #36）
+`python -m src.entrypoints.run_jquants_daily [--date YYYY-MM-DD] [--publish-after HH:MM]`（実装: domain `jquants_daily_plan.py` / `jquants_daily_stop_policy.py`、application `jquants_daily_job.py`）。
+- 対象日: 営業日カレンダー（区分1・2）の実行日のみ。休場（0・3）は HOLIDAY、`--publish-after` 前の営業日は NOT_PUBLISHED として区別してスキップする。カレンダーに無い日は営業日扱いにせず失敗（終了コード1）。`--publish-after` の既定は 17:00（日次の実行時刻 17:00 は人間が確定。実測: 日足は16:32以前、分足は16:32〜16:42の間に公開）。当日より前の日付を `--date` で指定した場合は時刻判定しない（時刻は JST。過去日は公開済み、未来日は NOT_PUBLISHED）。未公開時の再試行運用は維持する。
+- 実行順: 日足 → 分足。各取込後に metrics を評価（Go/Hold/No-Go）して結果に記録する。
+- 停止条件（§2 日次の列）: 401/403=停止（フラグ保持が必要と通知。フラグ自体は未実装）、400・品質検証失敗=その dataset のみ停止、連続 FAILED 3回（metrics から数える。ロック失敗は数えない）=当日の残りを停止、その他の FAILED=再開対象で継続、ATTENTION=継続。429 打ち切り（RATE_LIMIT_ABORTED）は、同じ API キーで枠が尽きた直後に続けて取りに行かないよう、当日の残り（分足）をスキップする（2026-10-30 人間決定。終了コードは 3 のまま）。dataset 単位の想定外例外（`STORAGE_OR_FORMAT_ERROR`）は結果に残し、他の dataset の結果は失わない。
+- ロック取得失敗（`error_category=DATASET_ALREADY_RUNNING`）は待機せずスキップして結果に記録し、終了コード2。
+- 終了コード: 0 / 2（ATTENTION・ロックスキップ）/ 1（失敗・停止）/ 3（429 打ち切り）。
+- 未実装: 停止フラグの永続化、同一原因の当日停止3営業日連続の判定、全体ロック、スケジューラ登録、過去補填。
+- 停止の効力は1回の実行の中だけ: 当日停止・dataset のみ停止は、同日の再実行を止めない。STOP_TODAY / STOP_JOB の通知も未実装（通知は 401/403 の stderr 1行と、取込側の 429 通知のみ）。無人実行（スケジューラ導入、#37）の前提条件とし、#37 で扱う（2026-10-30 人間決定）。
+- 営業日カレンダーは `ingest_jquants_calendar` で更新する。日次の前に更新される前提で、未取得の日は CALENDAR_MISSING（終了コード1）になる。更新の主体・時刻は #37 で定める。
+- ロックスキップの metrics 評価（`ERROR_CATEGORY_DATASET_ALREADY_RUNNING` が No-Go になる点）は #37 で扱う。
+- 想定外例外（`STORAGE_OR_FORMAT_ERROR`）は metrics を書かないため、連続 FAILED に数えられず通知もない。同じ例外が毎日続いても当日停止に届かない。#37 で扱う。
+- 連続 FAILED は、手動実行・補填を含む同一 dataset の metrics を日付をまたいで数える（§2 の趣旨どおり）。
+
 ## 2. 停止・減速条件（API枠制御）
 
 動作はジョブ種別ごとに定める。
@@ -39,7 +53,7 @@
 | 403（契約範囲内の日付） | 停止（フラグ保持） | 停止（フラグ保持）。ただし補填由来の日付は補填のみ停止 | 補填のみ停止（フラグ保持） | 権限・契約の異常。補填の403は台帳に「403要確認」と記録し、人間が確認するまで再開対象から外す（再開ジョブ経由の全停止を防ぐ） |
 | 400（契約範囲外の日付） | - | - | 補填を終了（未実装: #24） | 実測(#12)で範囲外は 403 でなく 400。自前判定（§2-2）で事前除外するため通常は発生しない。発生は判定漏れ（境界到達）として、台帳に「契約範囲外」と記録し補填を終了、定数を確認する。metrics 評価は日付を知らないため 400 を一律 No-Go（`HTTP_400_SEEN`）とし、範囲内外の区別は §2-2 の分類で台帳側に残す |
 | 400（契約範囲内の日付） | 当該ジョブのみ停止 | 同左 | 当該ジョブのみ停止 | 実装不具合・想定外（`UNEXPECTED_400_IN_RANGE`）。範囲外と区別して No-Go（metrics 理由 `HTTP_400_SEEN`）。自動リトライしない |
-| 429（metrics上で1回以上） | ○（Hold） | ○（Hold） | 当日停止（Hold） | 3回以上は No-Go。補填は1回でも当日停止。1実行内の429累計が `JQUANTS_MAX_429_PER_RUN`（既定3）に達した時点で、その実行の残りの取得を全て打ち切る（待機を続けない）。打ち切りは FAILED（raw は PARTIAL/FAILED、旧世代と CURRENT 保持、`--refresh` で回復）、`error_category=RATE_LIMIT_ABORTED`、metrics の `rate_limit_aborted=true` / `abort_reason=RATE_LIMIT_429_CAP`、評価理由 `RATE_LIMIT_ABORTED`（No-Go）、CLI 終了コード 3 + stderr に ALERT 1行 + Slack critical チャンネル（`SLACK_WEBHOOK_CRITICAL`）へ通知する（本文は dataset・日付・429 回数のみ。送信失敗は warning `SLACK_NOTIFY_FAILED` に残し、結果は変えない）。429 は調査対象であり、原因確認前に `--refresh` で再実行しない |
+| 429（metrics上で1回以上） | ○（Hold。日次ジョブは 429 打ち切り時に当日の残りをスキップ。§1-2） | ○（Hold） | 当日停止（Hold） | 3回以上は No-Go。補填は1回でも当日停止。1実行内の429累計が `JQUANTS_MAX_429_PER_RUN`（既定3）に達した時点で、その実行の残りの取得を全て打ち切る（待機を続けない）。打ち切りは FAILED（raw は PARTIAL/FAILED、旧世代と CURRENT 保持、`--refresh` で回復）、`error_category=RATE_LIMIT_ABORTED`、metrics の `rate_limit_aborted=true` / `abort_reason=RATE_LIMIT_429_CAP`、評価理由 `RATE_LIMIT_ABORTED`（No-Go）、CLI 終了コード 3 + stderr に ALERT 1行 + Slack critical チャンネル（`SLACK_WEBHOOK_CRITICAL`）へ通知する（本文は dataset・日付・429 回数のみ。送信失敗は warning `SLACK_NOTIFY_FAILED` に残し、結果は変えない）。429 は調査対象であり、原因確認前に `--refresh` で再実行しない |
 | 429以外のリトライ ≥10 | ○（No-Go） | ○（No-Go） | 当日停止（No-Go） | 3–9回は Hold |
 | 所要時間が上限超 | ○（No-Go） | ○（No-Go） | 当日停止（No-Go） | 70–100%は Hold |
 | FAILED 1回 | ○（再開対象） | ○ | ○（再開対象） | 再開手順（§3）で再実行 |
@@ -113,7 +127,7 @@ daily は1日分が数秒のため、同じ予算の範囲内で扱う。実測�
    補填由来の403は「403要確認」として、人間が確認するまで再開対象から外す（§2）。
 
 注意: データ公開前の早い時刻に実行して空の結果が公開された場合（EMPTY_UNKNOWN）は、通常の再実行では取り直されない。
-休場日の正当な空と未公開による空の区別は営業日カレンダー（設計書19 6章）で行う。日次の実行時刻は未決（§9）。
+休場日の正当な空と未公開による空の区別は営業日カレンダー（設計書19 6章）で行う。日次の実行時刻は 17:00 に確定（§1-2）。
 
 ## 4. Go / Hold / No-Go 基準（metrics JSON 基準）
 
@@ -238,7 +252,7 @@ daily は1日分が数秒のため、同じ予算の範囲内で扱う。実測�
 
 ### 9-1. 実装前に決める事項
 - 実行基盤（Windowsタスクスケジューラ等）、全体ロック/停止フラグの方式。通知方法は 429 打ち切りについて Slack critical に決定済み（停止フラグは当面不要、手動対応）。
-- 日次の実行時刻。（営業日カレンダーの出どころと空の区別は決定済み。設計書19 6章）
+- （解決済み）日次の実行時刻は 17:00。営業日カレンダーの出どころと空の区別も決定済み（設計書19 6章）。
 - （対応済み: 契約境界の定数の所在。`domain/jquants_contract_range.py`、Issue #27）
 - 補填の有効化は未実施（DISK_SPACE の判定は組込み済み＝§4-1 実装。残りは補填ジョブへの契約範囲判定・日付またぎ再判定・空き10GB下限の配線。追跡先: #24 の持ち越し項目）。DISK_SPACE を含む metrics が出るまで、旧 metrics 行の `evaluation_complete` は False のまま。
 - 「補填由来の日付」の判定方法（台帳にジョブ種別を持つか、日次の対象窓より古い日付とみなすか）。
