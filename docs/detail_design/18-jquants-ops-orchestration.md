@@ -241,7 +241,7 @@ daily は1日分が数秒のため、同じ予算の範囲内で扱う。実測�
 ## 9. 未解決・判断待ち
 
 ### 9-1. 実装前に決める事項
-- 補填ジョブ本体は Issue #49 で実装（`application/jquants_backfill_usecase.py`、CLI `run_jquants_backfill`。既定は通信なしの dry-run、`--execute` で実API、`--max-days` で試運転）。契約範囲判定、リクエスト直前の JST 再判定、空き10GB下限（`backfill_may_start`）、停止条件（`domain/jquants_backfill_policy.py`）を配線済み。実API試運転は明示許可後のみ。
+- 補填ジョブ本体は Issue #49 で実装（`application/jquants_backfill_usecase.py`、CLI `run_jquants_backfill`。既定は通信なしの dry-run、`--execute` で実API、`--max-days` で試運転、`--budget-seconds` で1日予算を上書き）。Issue #38 の別実装（PR #48）は本実装へ一本化した（未知の結果 status は `UNKNOWN_STATUS` で補填を終了＝安全側。終了コード体系・フラグ方式は人間承認待ち）。契約範囲判定、リクエスト直前の JST 再判定、空き10GB下限（`backfill_may_start`）、停止条件（`domain/jquants_backfill_policy.py`）を配線済み。実API試運転は明示許可後のみ。
 - **補填完了の定義（案）**: 計画の対象（targets）が空で、要確認（空結果）・403/範囲外の要確認・取得中が残らない状態を `COMPLETED`。残る場合は `COMPLETED_WITH_REVIEW`（人間の確認待ち）。1日予算・`--max-days` で止まれば `BUDGET_EXHAUSTED`（次回継続）。
 - **「補填由来の日付」の判定（案）**: 台帳には持たず、補填ジョブが処理した日付として扱う（403・範囲外400は補填ジョブの状態ファイルで管理）。日次ジョブ側の再開（§3）が補填由来の403日付を再実行しないよう、日次配線時に要確認リストを参照する。
 - 補填の1日予算の Hold 縮小率は 50%（初期案）。429 は1件でも当日停止、非429リトライ≥10・所要時間超過も当日停止、リトライ3〜9・所要70%超は Hold（予算縮小）。

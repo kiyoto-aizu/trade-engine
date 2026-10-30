@@ -44,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--from", dest="start", type=_date_argument)
     parser.add_argument("--to", dest="end", type=_date_argument)
     parser.add_argument("--max-days", type=int)
+    parser.add_argument("--budget-seconds", type=float, help="Override the daily time budget")
     parser.add_argument("--execute", action="store_true", help="Fetch from the real API")
     parser.add_argument(
         "--clear-stop-flag", action="store_true",
@@ -52,6 +53,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.max_days is not None and args.max_days <= 0:
         parser.error("--max-days must be positive")
+    if args.budget_seconds is not None and not args.budget_seconds > 0:
+        parser.error("--budget-seconds must be positive")
     state = JQuantsBackfillStateStore(config.JQUANTS_BACKFILL_STATE_DIRECTORY)
     try:
         if args.clear_stop_flag:
@@ -86,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
             planner, ingestion, state,
             raw_directory=raw_store.raw_directory,
             canonical_directory=canonical_store.directory,
+            **({} if args.budget_seconds is None else {"budget_seconds": args.budget_seconds}),
         )
         result = usecase.run(args.dataset, start, end, max_days=args.max_days)
     except (BackfillStateError, BusinessCalendarError, ConsumerContractError,

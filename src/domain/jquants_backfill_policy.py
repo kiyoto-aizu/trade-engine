@@ -42,6 +42,7 @@ class StopReason(StrEnum):
     DISK_SPACE_CRITICAL = "DISK_SPACE_CRITICAL"
     DISK_FLOOR = "DISK_FLOOR"
     REPEATED_TODAY_STOP = "REPEATED_TODAY_STOP"
+    UNKNOWN_STATUS = "UNKNOWN_STATUS"
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,8 @@ class DayDecision:
     hold: bool = False
 
 
+_KNOWN_STATUSES = frozenset({"COMPLETE", "ATTENTION", "FAILED"})
+
 _CATEGORY_RULES: dict[str, tuple[StopScope, StopReason]] = {
     "AUTH_ERROR": (StopScope.ALL_FLAG, StopReason.AUTH_ERROR),
     "PERMISSION_OR_CONTRACT_ERROR": (StopScope.BACKFILL_FLAG, StopReason.PERMISSION_ERROR),
@@ -77,6 +80,8 @@ _CATEGORY_RULES: dict[str, tuple[StopScope, StopReason]] = {
 
 def decide_after_day(obs: DayObservation) -> DayDecision:
     """Apply the doc 18 §2 table to one finished day. The first matching rule wins."""
+    if obs.status not in _KNOWN_STATUSES:
+        return DayDecision(StopScope.END_JOB, StopReason.UNKNOWN_STATUS)
     rule = _CATEGORY_RULES.get(obs.error_category or "")
     if rule is not None:
         return DayDecision(*rule)

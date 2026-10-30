@@ -338,3 +338,58 @@ def test_classify_returns_enum():
     assert classify_client_request_error("daily", date(2020, 1, 1), TODAY) is (
         ClientRequestErrorKind.OUT_OF_CONTRACT_RANGE
     )
+
+
+def test_unknown_status_fails_closed():
+    decision = decide_after_day(obs(status="???"))
+    assert (decision.scope, decision.reason) == (StopScope.END_JOB, StopReason.UNKNOWN_STATUS)
+
+
+def test_policy_and_usecase_do_not_import_network_modules():
+    import ast
+    from pathlib import Path
+
+    from src.application import jquants_backfill_usecase as usecase
+    from src.domain import jquants_backfill_policy as policy
+
+    forbidden = ("requests", "socket", "urllib", "httpx", "jquants_v2_client")
+    for module in (policy, usecase):
+        tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+        names = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+        names |= {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
+        assert not [m for m in names if any(f in m for f in forbidden)], module.__name__
+    assert "src.application" not in {
+        n.module for n in ast.walk(ast.parse(Path(policy.__file__).read_text(encoding="utf-8")))
+        if isinstance(n, ast.ImportFrom)}
+
+
+def test_entrypoint_dry_run_does_not_build_ingestion(monkeypatch, tmp_path, capsys):
+    from src.entrypoints import run_jquants_backfill as entry
+
+    class Planner:
+        def __init__(self, *args):
+            pass
+
+        def plan(self, dataset, start, end, today):
+            return BackfillPlan((date(2026, 10, 1),), (), (), (), (), (), ())
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("must not be constructed in dry-run")
+
+    monkeypatch.setattr(entry.config, "JQUANTS_BACKFILL_STATE_DIRECTORY", tmp_path)
+    monkeypatch.setattr(entry, "JQuantsRawStore", lambda: object())
+    monkeypatch.setattr(entry, "RawStoreLedgerState", lambda store: object())
+    monkeypatch.setattr(entry, "JQuantsBackfillPlanner", Planner)
+    monkeypatch.setattr(entry, "JQuantsSingleDayIngestion", forbidden)
+    monkeypatch.setattr(entry, "JQuantsBackfillUseCase", forbidden)
+    code = entry.main(["--dataset", "daily", "--from", "2026-10-01", "--to", "2026-10-02"])
+    assert code == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "DRY_RUN"
+
+
+@pytest.mark.parametrize("flag, value", [("--budget-seconds", "0"), ("--max-days", "0")])
+def test_entrypoint_rejects_non_positive_limits(flag, value):
+    from src.entrypoints import run_jquants_backfill as entry
+
+    with pytest.raises(SystemExit):
+        entry.main(["--dataset", "daily", flag, value])
