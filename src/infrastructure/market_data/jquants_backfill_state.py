@@ -53,7 +53,10 @@ class JQuantsBackfillStateStore:
             state = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(state, dict):
                 raise ValueError
-            return {**_empty_state(), **state}
+            merged = {**_empty_state(), **state}
+            if not isinstance(merged["today_stops"], dict):
+                raise ValueError
+            return merged
         except (OSError, ValueError):
             # A damaged state must stop the run, not silently reset the stop flags.
             raise BackfillStateError("backfill state is unreadable") from None
@@ -62,8 +65,12 @@ class JQuantsBackfillStateStore:
         self._directory.mkdir(parents=True, exist_ok=True)
         path = self._directory / STATE_FILE
         temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
-        os.replace(temporary, path)
+        try:
+            temporary.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
+            os.replace(temporary, path)
+        except OSError:
+            # 停止が永続化されないまま続行しない。呼び出し側は失敗として終了する。
+            raise BackfillStateError("backfill state is not writable") from None
 
     def stop_flag(self) -> dict[str, str] | None:
         return self.load()["stop_flag"]
@@ -80,29 +87,32 @@ class JQuantsBackfillStateStore:
         self.save(state)
         return had_flag
 
-    def today_stop_dates(self, reason: str | None = None) -> list[tuple[date, str]]:
+    def today_stop_dates(
+        self, dataset: str, reason: str | None = None
+    ) -> list[tuple[date, str]]:
         return [
             (date.fromisoformat(item["date"]), item["reason"])
-            for item in self.load()["today_stops"]
+            for item in self.load()["today_stops"].get(dataset, [])
             if reason is None or item["reason"] == reason
         ]
 
-    def record_today_stop(self, day: date, reason: str) -> None:
+    def record_today_stop(self, dataset: str, day: date, reason: str) -> None:
         state = self.load()
-        if not any(i["date"] == day.isoformat() for i in state["today_stops"]):
-            state["today_stops"].append({"date": day.isoformat(), "reason": reason})
-            state["today_stops"] = state["today_stops"][-10:]
+        stops = state["today_stops"].setdefault(dataset, [])
+        if not any(i["date"] == day.isoformat() for i in stops):
+            stops.append({"date": day.isoformat(), "reason": reason})
+            state["today_stops"][dataset] = stops[-10:]
         self.save(state)
 
-    def reset_today_stops(self) -> None:
-        """停止しなかった走行日が挟まったら「連続」を途切れさせる（設計書18 §2 の3営業日連続）。"""
+    def reset_today_stops(self, dataset: str) -> None:
+        """成功した走行日が挟まったら「連続」を途切れさせる（設計書18 §2-1、dataset別）。"""
         state = self.load()
-        if state["today_stops"]:
-            state["today_stops"] = []
+        if state["today_stops"].get(dataset):
+            state["today_stops"][dataset] = []
             self.save(state)
 
-    def is_stopped_today(self, day: date) -> bool:
-        return any(d == day for d, _ in self.today_stop_dates())
+    def is_stopped_today(self, dataset: str, day: date) -> bool:
+        return any(d == day for d, _ in self.today_stop_dates(dataset))
 
     def failed_streak(self, dataset: str) -> int:
         return int(self.load()["failed_streak"].get(dataset, 0))
@@ -129,7 +139,7 @@ class JQuantsBackfillStateStore:
 
 
 def _empty_state() -> dict[str, Any]:
-    return {"stop_flag": None, "today_stops": [], "failed_streak": {}, "review": {}}
+    return {"stop_flag": None, "today_stops": {}, "failed_streak": {}, "review": {}}
 
 
 def _now() -> str:

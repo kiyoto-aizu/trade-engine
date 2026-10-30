@@ -59,7 +59,9 @@ def main(argv: list[str] | None = None) -> int:
     state = JQuantsBackfillStateStore(config.JQUANTS_BACKFILL_STATE_DIRECTORY)
     try:
         if args.clear_stop_flag:
-            print(json.dumps({"status": "COMPLETE", "cleared": state.clear_stop_flag()}))
+            with state.global_lock():
+                cleared = state.clear_stop_flag()
+            print(json.dumps({"status": "COMPLETE", "cleared": cleared}))
             return 0
         if args.dataset is None:
             parser.error("--dataset is required")

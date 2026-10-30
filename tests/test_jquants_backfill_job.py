@@ -219,12 +219,23 @@ def test_success_resets_failed_streak(tmp_path):
 
 def test_repeated_today_stop_sets_flag(tmp_path):
     state = JQuantsBackfillStateStore(tmp_path / "state")
-    state.record_today_stop(TODAY - timedelta(days=2), "RATE_LIMITED")
-    state.record_today_stop(TODAY - timedelta(days=1), "RATE_LIMITED")
+    state.record_today_stop("daily", TODAY - timedelta(days=2), "RATE_LIMITED")
+    state.record_today_stop("daily", TODAY - timedelta(days=1), "RATE_LIMITED")
     ingestion = FakeIngestion({START.isoformat(): {"status": "FAILED", "category": "RATE_LIMIT_ABORTED"}})
     usecase, state = _usecase(tmp_path, FakePlanner(_plan(START)), ingestion)
     usecase.run("daily", START, TODAY)
     assert state.stop_flag()["reason"] == "REPEATED_TODAY_STOP"
+
+
+def test_today_stop_history_is_per_dataset(tmp_path):
+    state = JQuantsBackfillStateStore(tmp_path / "state")
+    state.record_today_stop("minute", TODAY - timedelta(days=2), "RATE_LIMITED")
+    state.record_today_stop("minute", TODAY - timedelta(days=1), "RATE_LIMITED")
+    ingestion = FakeIngestion({START.isoformat(): {"status": "FAILED", "category": "RATE_LIMIT_ABORTED"}})
+    usecase, state = _usecase(tmp_path, FakePlanner(_plan(START)), ingestion)
+    usecase.run("daily", START, TODAY)
+    assert state.stop_flag() is None
+    assert state.is_stopped_today("daily", TODAY) and not state.is_stopped_today("minute", TODAY)
 
 
 def test_out_of_range_400_ends_job_and_excludes_date(tmp_path):
@@ -233,6 +244,32 @@ def test_out_of_range_400_ends_job_and_excludes_date(tmp_path):
     # START is in range for daily, so this is the unexpected-in-range case.
     result = usecase.run("daily", START, TODAY)
     assert result.reason is StopReason.UNEXPECTED_400_IN_RANGE and state.stop_flag() is None
+
+
+def test_state_write_failure_fails_closed(tmp_path, monkeypatch):
+    state = JQuantsBackfillStateStore(tmp_path / "state")
+    monkeypatch.setattr("os.replace", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    with pytest.raises(BackfillStateError):
+        state.set_stop_flag("BACKFILL_FLAG", "DISK_FLOOR", TODAY)
+
+
+def test_legacy_list_today_stops_fails_closed(tmp_path):
+    state = JQuantsBackfillStateStore(tmp_path)
+    (tmp_path / "backfill_state.json").write_text('{"today_stops": []}', encoding="utf-8")
+    with pytest.raises(BackfillStateError):
+        state.stop_flag()
+
+
+def test_clear_stop_flag_requires_lock(monkeypatch, tmp_path, capsys):
+    from src.entrypoints import run_jquants_backfill as entry
+
+    monkeypatch.setattr(entry.config, "JQUANTS_BACKFILL_STATE_DIRECTORY", tmp_path)
+    state = JQuantsBackfillStateStore(tmp_path)
+    state.set_stop_flag("BACKFILL_FLAG", "DISK_FLOOR", TODAY)
+    with state.global_lock():
+        assert entry.main(["--clear-stop-flag"]) == 1
+    assert state.stop_flag() is not None
+    assert entry.main(["--clear-stop-flag"]) == 0 and state.stop_flag() is None
 
 
 def test_in_range_400_goes_to_review_and_is_not_resent(tmp_path):
@@ -249,11 +286,11 @@ def test_in_range_400_goes_to_review_and_is_not_resent(tmp_path):
 
 def test_stop_days_separated_by_success_do_not_set_flag(tmp_path):
     state = JQuantsBackfillStateStore(tmp_path / "state")
-    state.record_today_stop(TODAY - timedelta(days=4), "RATE_LIMITED")
-    state.record_today_stop(TODAY - timedelta(days=3), "RATE_LIMITED")
+    state.record_today_stop("daily", TODAY - timedelta(days=4), "RATE_LIMITED")
+    state.record_today_stop("daily", TODAY - timedelta(days=3), "RATE_LIMITED")
     usecase, state = _usecase(tmp_path, FakePlanner(_plan(START)), FakeIngestion())
     usecase.run("daily", START, TODAY - timedelta(days=2))
-    assert state.today_stop_dates() == []
+    assert state.today_stop_dates("daily") == []
     ingestion = FakeIngestion({START.isoformat(): {"status": "FAILED", "category": "RATE_LIMIT_ABORTED"}})
     usecase, state = _usecase(tmp_path, FakePlanner(_plan(START)), ingestion)
     usecase.run("daily", START, TODAY)

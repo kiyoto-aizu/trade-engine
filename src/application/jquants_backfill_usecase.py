@@ -131,7 +131,7 @@ class JQuantsBackfillUseCase:
         result = BackfillResult(dataset, BackfillOutcome.COMPLETED)
         try:
             with self._state.global_lock():
-                blocked = self._blocked_outcome(today)
+                blocked = self._blocked_outcome(dataset, today)
                 if blocked is not None:
                     result.outcome = blocked
                     return result
@@ -140,10 +140,10 @@ class JQuantsBackfillUseCase:
             result.outcome = BackfillOutcome.LOCK_SKIPPED
             return result
 
-    def _blocked_outcome(self, today: date) -> BackfillOutcome | None:
+    def _blocked_outcome(self, dataset: str, today: date) -> BackfillOutcome | None:
         if self._state.stop_flag() is not None:
             return BackfillOutcome.BLOCKED_BY_FLAG
-        if self._state.is_stopped_today(today):
+        if self._state.is_stopped_today(dataset, today):
             return BackfillOutcome.STOPPED_TODAY
         return None
 
@@ -169,18 +169,18 @@ class JQuantsBackfillUseCase:
             ):
                 result.outcome = BackfillOutcome.BUDGET_EXHAUSTED
                 if result.processed:
-                    self._state.reset_today_stops()
+                    self._state.reset_today_stops(dataset)
                 return result
             disk = self._check_disk(sizes)
             if disk is None:
-                self._stop(result, now, StopScope.END_JOB, StopReason.DISK_FLOOR)
+                self._stop(result, dataset, now, StopScope.END_JOB, StopReason.DISK_FLOOR)
                 return result
             verdict, floor_ok = disk
             if verdict is DiskVerdict.STOP:
-                self._stop(result, now, StopScope.ALL_FLAG, StopReason.DISK_SPACE_CRITICAL)
+                self._stop(result, dataset, now, StopScope.ALL_FLAG, StopReason.DISK_SPACE_CRITICAL)
                 return result
             if not floor_ok:
-                self._stop(result, now, StopScope.BACKFILL_FLAG, StopReason.DISK_FLOOR)
+                self._stop(result, dataset, now, StopScope.BACKFILL_FLAG, StopReason.DISK_FLOOR)
                 return result
             held = held or verdict is DiskVerdict.HOLD
             summary = self._ingestion.run(dataset=dataset, date=day.isoformat())
@@ -207,12 +207,12 @@ class JQuantsBackfillUseCase:
                 assert decision.reason is not None
                 self._record_review(dataset, day, decision.reason)
                 result.remaining_targets = len(targets) - index - 1
-                self._stop(result, now, decision.scope, decision.reason)
+                self._stop(result, dataset, now, decision.scope, decision.reason)
                 return result
             held = held or decision.hold
         result.remaining_targets = 0
         if result.processed:
-            self._state.reset_today_stops()
+            self._state.reset_today_stops(dataset)
         if result.attention or plan.in_progress or result.review_excluded:
             result.outcome = BackfillOutcome.COMPLETED_WITH_REVIEW
         return result
@@ -228,13 +228,14 @@ class JQuantsBackfillUseCase:
             self._state.mark_review(reason.value, dataset, day)
 
     def _stop(
-        self, result: BackfillResult, day: date, scope: StopScope, reason: StopReason
+        self, result: BackfillResult, dataset: str, day: date, scope: StopScope,
+        reason: StopReason,
     ) -> None:
         result.outcome = BackfillOutcome.STOPPED
         result.reason = reason
         if scope is StopScope.TODAY:
-            self._state.record_today_stop(day, reason.value)
-            history = [(d, StopReason(r)) for d, r in self._state.today_stop_dates()]
+            self._state.record_today_stop(dataset, day, reason.value)
+            history = [(d, StopReason(r)) for d, r in self._state.today_stop_dates(dataset)]
             if is_repeated_today_stop(history, reason):
                 self._state.set_stop_flag(
                     StopScope.BACKFILL_FLAG.value, StopReason.REPEATED_TODAY_STOP.value, day
