@@ -88,6 +88,7 @@ def test_runs_oldest_first_and_completes(tmp_path):
     result = usecase.run("daily", START, TODAY)
     assert ingestion.calls == [d.isoformat() for d in days(3)]
     assert result.outcome is BackfillOutcome.COMPLETED and result.exit_code == 0
+    assert result.stop_flag is None
 
 
 def test_completed_with_review_when_attention_remains(tmp_path):
@@ -167,9 +168,22 @@ def test_flag_stops(tmp_path, category, scope, flag):
     result = usecase.run("daily", START, TODAY)
     assert len(ingestion.calls) == 1 and result.outcome is BackfillOutcome.STOPPED
     assert state.stop_flag()["scope"] == scope
+    assert result.as_dict()["stop_flag"] == state.stop_flag()
     # Next run is blocked until a human clears the flag.
     assert usecase.run("daily", START, TODAY).outcome is BackfillOutcome.BLOCKED_BY_FLAG
     state.clear_stop_flag()
+
+
+def test_blocked_result_includes_existing_stop_flag(tmp_path):
+    usecase, state = _usecase(tmp_path, FakePlanner(_plan(START)), FakeIngestion())
+    state.set_stop_flag("BACKFILL_FLAG", "REPEATED_REVIEW_STOP", TODAY)
+
+    result = usecase.run("daily", START, TODAY)
+
+    assert result.outcome is BackfillOutcome.BLOCKED_BY_FLAG
+    assert result.as_dict()["stop_flag"] == {
+        "scope": "BACKFILL_FLAG", "reason": "REPEATED_REVIEW_STOP", "set_on": TODAY.isoformat(),
+    }
 
 
 def test_403_date_excluded_from_next_run(tmp_path):
@@ -310,6 +324,7 @@ def test_stop_success_stop_success_stop_does_not_set_flag(tmp_path):
 
 
 def test_same_400_on_three_run_days_sets_flag(tmp_path):
+    result = None
     for offset in range(3):
         target = START + timedelta(days=offset)
         run_day = TODAY - timedelta(days=2 - offset)
@@ -317,10 +332,11 @@ def test_same_400_on_three_run_days_sets_flag(tmp_path):
         usecase, state = _usecase(
             tmp_path, FakePlanner(_plan(target)), ingestion, today=lambda d=run_day: d,
         )
-        usecase.run("daily", START, run_day)
+        result = usecase.run("daily", START, run_day)
         assert (state.stop_flag() is None) == (offset < 2)
     assert state.stop_flag()["reason"] == "REPEATED_REVIEW_STOP"
     assert len(state.review_dates("daily")) == 3
+    assert result is not None and result.stop_flag == state.stop_flag()
 
 
 def test_400_with_success_between_does_not_set_flag(tmp_path):
@@ -486,6 +502,8 @@ def test_entrypoint_dry_run_does_not_build_ingestion(monkeypatch, tmp_path, caps
         raise AssertionError("must not be constructed in dry-run")
 
     monkeypatch.setattr(entry.config, "JQUANTS_BACKFILL_STATE_DIRECTORY", tmp_path)
+    state = JQuantsBackfillStateStore(tmp_path)
+    state.set_stop_flag("BACKFILL_FLAG", "REPEATED_REVIEW_STOP", TODAY)
     monkeypatch.setattr(entry, "JQuantsRawStore", lambda: object())
     monkeypatch.setattr(entry, "RawStoreLedgerState", lambda store: object())
     monkeypatch.setattr(entry, "JQuantsBackfillPlanner", Planner)
@@ -493,7 +511,49 @@ def test_entrypoint_dry_run_does_not_build_ingestion(monkeypatch, tmp_path, caps
     monkeypatch.setattr(entry, "JQuantsBackfillUseCase", forbidden)
     code = entry.main(["--dataset", "daily", "--from", "2026-10-01", "--to", "2026-10-02"])
     assert code == 0
-    assert json.loads(capsys.readouterr().out)["status"] == "DRY_RUN"
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "DRY_RUN"
+    assert output["stop_flag"] == {
+        "scope": "BACKFILL_FLAG", "reason": "REPEATED_REVIEW_STOP", "set_on": TODAY.isoformat(),
+    }
+
+
+def test_entrypoint_execute_outputs_stop_flag_without_api(monkeypatch, tmp_path, capsys):
+    from src.application.jquants_backfill_usecase import BackfillOutcome, BackfillResult
+    from src.entrypoints import run_jquants_backfill as entry
+
+    class RawStore:
+        raw_directory = tmp_path / "raw"
+
+    class CanonicalStore:
+        directory = tmp_path / "canonical"
+
+    result = BackfillResult("daily", BackfillOutcome.COMPLETED)
+    result.stop_flag = {
+        "scope": "BACKFILL_FLAG", "reason": "REPEATED_REVIEW_STOP", "set_on": TODAY.isoformat(),
+    }
+
+    class UseCase:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self, *args, **kwargs):
+            return result
+
+    monkeypatch.setattr(entry.config, "JQUANTS_BACKFILL_STATE_DIRECTORY", tmp_path / "state")
+    monkeypatch.setattr(entry, "JQuantsRawStore", RawStore)
+    monkeypatch.setattr(entry, "RawStoreLedgerState", lambda store: object())
+    monkeypatch.setattr(entry, "JQuantsBackfillPlanner", lambda *args: object())
+    monkeypatch.setattr(entry, "JQuantsCanonicalStore", lambda *args: CanonicalStore())
+    monkeypatch.setattr(entry, "JQuantsSingleDayIngestion", lambda *args, **kwargs: object())
+    monkeypatch.setattr(entry, "JQuantsBackfillUseCase", UseCase)
+
+    code = entry.main([
+        "--dataset", "daily", "--from", "2026-10-01", "--to", "2026-10-02", "--execute",
+    ])
+
+    assert code == 0
+    assert json.loads(capsys.readouterr().out)["stop_flag"] == result.stop_flag
 
 
 @pytest.mark.parametrize("flag, value", [("--budget-seconds", "0"), ("--max-days", "0")])

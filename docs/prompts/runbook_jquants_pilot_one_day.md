@@ -213,14 +213,25 @@ APIキー・認証情報・raw本文・株価レコードは含めない。
 | LOCK_SKIPPED | 2 | 別ジョブがロック保持中で待たずにスキップ | ③を確認。稼働中でなければロック削除 |
 
 ### ② 停止フラグと要確認リストの違い
-- 停止フラグ（`stop_flag`）: 補填全体（`ALL_FLAG` は全ジョブ）を止める。解除は人間のみ: 原因確認 → ジョブが動いていないことを確認 → `--clear-stop-flag`。エージェント・スケジューラは解除しない
-- 要確認リスト（`review`）: 日付単位で補填対象から外す（403・範囲内外の400・未知status）。他の日の補填は続く。出力の `review_excluded` に出る。ただし範囲内400・未知statusが同一原因で3走行日連続すると `REPEATED_REVIEW_STOP` で停止フラグが立つ（系統的な不具合。原因を直してから、要確認の日付と併せて解除する）
-- 要確認の解除手順（専用コマンドは未実装・持ち越し）: ①原因（契約範囲の定数・権限・実装不具合）を解消、②ジョブが動いていないこと（③）を確認、③`backfill_state.json` をバックアップ、④該当日付を `review` の該当 dataset の配列から削除、⑤dry-run で対象に戻ったことを確認してから実行。契約範囲外の400は `CONTRACT_YEARS` 更新（設計書18 §2-2）まで解除しない
+- 停止フラグ（`stop_flag`）: 補填全体（`ALL_FLAG` は全ジョブ）を止める。原因確認後、人間が解除する。補填結果の JSON では `stop_flag` に scope・reason・set_on が出る（未設定は `null`）。解除は `--clear-stop-flag` で行い、実行中は失敗する。エージェント・スケジューラは解除しない
+- 要確認リスト（`review`）: 日付単位で補填対象から外す（403・範囲内外の400・未知status）。他の日の補填は続く。補填結果の `review_excluded` に出る。ただし範囲内400・未知statusが同一原因で3走行日連続すると `REPEATED_REVIEW_STOP` で停止フラグが立つ（系統的な不具合。原因を直してから、該当する要確認項目と停止フラグをそれぞれ解除する）
+- 要確認の一覧（通信なし・状態変更なし）:
+  ```powershell
+  .\.venv\Scripts\python.exe -m src.entrypoints.manage_jquants_backfill_review list
+  .\.venv\Scripts\python.exe -m src.entrypoints.manage_jquants_backfill_review list --dataset daily
+  ```
+- 要確認の解除手順: ①原因（契約範囲の定数・権限・実装不具合）を解消、②補填プロセスが動いていないことを確認、③`backfill_state.json` をバックアップ、④該当する dataset・日付・理由コードの1件を解除する:
+  ```powershell
+  .\.venv\Scripts\python.exe -m src.entrypoints.manage_jquants_backfill_review clear `
+    --dataset daily --date 2026-10-28 --reason-code UNKNOWN_STATUS
+  ```
+  解除時は全体ロックを取る。補填がロックを保持している場合は失敗し、状態は変わらない。ロックを自動削除・奪取しない。解除成功時のみ、`backfill_state.json` の `review_clear_audit` に dataset ごとに対象日・操作日（JST）・理由コードを記録する。一覧表示や失敗した解除は記録しない。契約範囲外の400は `CONTRACT_YEARS` 更新（設計書18 §2-2）まで解除しない。解除後は一覧と dry-run で対象から戻ったことを確認する
+- `REPEATED_REVIEW_STOP` が設定されている場合は、原因を解消して要確認項目を確認した後、上記の要確認解除と `--clear-stop-flag` を別々に実行する。要確認解除だけでは停止フラグは解除されない
 
 ### ③ 残った backfill.lock
 - LOCK_SKIPPED が続く場合、補填プロセスが実行中でないこと（タスクスケジューラ／プロセス一覧）を確認する
 - 稼働中でなければ `backfill.lock` を削除する。稼働中のロックは削除しない（API枠を倍消費する）
-- `--clear-stop-flag` はロックを取って解除する。補填の実行中は失敗（終了コード1）するので、実行終了後にやり直す。dry-run はロックを取らない（読み取りのみ）
+- `--clear-stop-flag` と要確認の `clear` はロックを取って変更する。補填の実行中は失敗（終了コード1）し、状態を変更しないので、実行終了後にやり直す。補填の dry-run と要確認の `list` はロックを取らない読み取り専用操作
 
 ### ④ RUNNING が残った日
 強制終了などで台帳が RUNNING のまま残る。稼働中でないことを確認し、同じ `--date` を `--refresh` で再実行する（4-2 の再開手順）。補填ジョブは自動再実行しない。

@@ -79,6 +79,7 @@ class BackfillResult:
     dataset: str
     outcome: BackfillOutcome
     reason: StopReason | None = None
+    stop_flag: dict[str, str] | None = None
     processed: list[date] = field(default_factory=list)
     skipped_out_of_range: list[date] = field(default_factory=list)
     attention: list[date] = field(default_factory=list)
@@ -95,6 +96,7 @@ class BackfillResult:
             "dataset": self.dataset,
             "outcome": self.outcome.value,
             "reason": None if self.reason is None else self.reason.value,
+            "stop_flag": self.stop_flag,
             "processed": [d.isoformat() for d in self.processed],
             "skipped_out_of_range": [d.isoformat() for d in self.skipped_out_of_range],
             "attention": [d.isoformat() for d in self.attention],
@@ -137,10 +139,13 @@ class JQuantsBackfillUseCase:
                 blocked = self._blocked_outcome(dataset, today)
                 if blocked is not None:
                     result.outcome = blocked
-                    return result
-                return self._run_locked(dataset, start, end, today, result)
+                else:
+                    result = self._run_locked(dataset, start, end, today, result)
+                result.stop_flag = self._state.stop_flag()
+                return result
         except BackfillLockedError:
             result.outcome = BackfillOutcome.LOCK_SKIPPED
+            result.stop_flag = self._state.stop_flag()
             return result
 
     def _blocked_outcome(self, dataset: str, today: date) -> BackfillOutcome | None:
