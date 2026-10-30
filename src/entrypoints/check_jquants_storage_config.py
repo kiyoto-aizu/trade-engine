@@ -3,12 +3,11 @@
 import json
 import os
 
-from src.config import config
-from src.config.jquants_storage import inspect_jquants_storage
+from src.jquants_storage import default_jquants_storage_settings, inspect_jquants_storage
 
 
 def main() -> int:
-    audit = inspect_jquants_storage(config, os.environ)
+    audit = inspect_jquants_storage(default_jquants_storage_settings(), os.environ)
     print(json.dumps(audit.as_dict(), sort_keys=True))
     return 0 if audit.is_valid else 1
 

@@ -9,6 +9,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Mapping, Protocol
 
 EXPECTED_OPERATIONAL_DRIVE = "D:"
+_REPOSITORY_ROOT = Path(os.path.abspath(__file__)).parent.parent
 
 
 class JQuantsStorageSettings(Protocol):
@@ -28,6 +29,7 @@ class StorageDestination:
     source: str
     path: str
     drive: str
+    is_absolute: bool
     matches_operational_drive: bool
 
     def as_dict(self) -> dict[str, str | bool]:
@@ -38,6 +40,7 @@ class StorageDestination:
             "source": self.source,
             "path": self.path,
             "drive": self.drive,
+            "is_absolute": self.is_absolute,
             "matches_operational_drive": self.matches_operational_drive,
         }
 
@@ -58,18 +61,46 @@ class JQuantsStorageAudit:
         }
 
 
-def _normalize_destination(value: Path | str) -> tuple[str, str]:
+def _normalize_destination(value: Path | str) -> tuple[str, str, bool]:
     raw_path = os.fspath(value)
     windows_path = PureWindowsPath(raw_path)
-    if windows_path.drive and windows_path.is_absolute():
-        if os.name == "nt":
-            resolved = Path(raw_path).expanduser().resolve()
-            return str(resolved), resolved.drive.upper()
+    if windows_path.drive:
         normalized = ntpath.normpath(raw_path)
-        return normalized, PureWindowsPath(normalized).drive.upper()
+        normalized_windows_path = PureWindowsPath(normalized)
+        return (
+            normalized,
+            normalized_windows_path.drive.upper(),
+            normalized_windows_path.is_absolute(),
+        )
 
-    resolved = Path(raw_path).expanduser().resolve()
-    return str(resolved), resolved.drive.upper()
+    if windows_path.root and os.name == "nt":
+        return ntpath.normpath(raw_path), "", False
+
+    is_absolute = os.path.isabs(raw_path)
+    normalized = os.path.abspath(raw_path)
+    return normalized, PureWindowsPath(normalized).drive.upper(), is_absolute
+
+
+def default_jquants_storage_settings() -> JQuantsStorageSettings:
+    root = _REPOSITORY_ROOT / "data" / "jquants"
+    return _StorageSettings(
+        JQUANTS_RAW_DIRECTORY=root / "raw",
+        JQUANTS_CANONICAL_DIRECTORY=root / "canonical",
+        JQUANTS_LEDGER_DATABASE_FILE=root / "ledger.sqlite3",
+        JQUANTS_EXECUTION_METRICS_DIRECTORY=root / "metrics",
+        JQUANTS_BACKFILL_STATE_DIRECTORY=root / "backfill_state",
+        JQUANTS_CALENDAR_DIRECTORY=root / "calendar",
+    )
+
+
+@dataclass(frozen=True)
+class _StorageSettings:
+    JQUANTS_RAW_DIRECTORY: Path
+    JQUANTS_CANONICAL_DIRECTORY: Path
+    JQUANTS_LEDGER_DATABASE_FILE: Path
+    JQUANTS_EXECUTION_METRICS_DIRECTORY: Path
+    JQUANTS_BACKFILL_STATE_DIRECTORY: Path
+    JQUANTS_CALENDAR_DIRECTORY: Path
 
 
 def inspect_jquants_storage(
@@ -110,18 +141,22 @@ def inspect_jquants_storage(
         ),
     )
     destinations = []
-    for name, setting, value, kind in configured_targets:
-        normalized_path, drive = _normalize_destination(value)
+    for name, setting, default_value, kind in configured_targets:
+        source = "environment" if setting in environ else "default"
+        value = environ.get(setting, os.fspath(default_value))
+        normalized_path, drive, is_absolute = _normalize_destination(value)
         destinations.append(
             StorageDestination(
                 name=name,
                 setting=setting,
                 kind=kind,
-                source="environment" if setting in environ else "default",
+                source=source,
                 path=normalized_path,
                 drive=drive,
+                is_absolute=is_absolute,
                 matches_operational_drive=(
                     drive.casefold() == EXPECTED_OPERATIONAL_DRIVE.casefold()
+                    and is_absolute
                 ),
             )
         )
