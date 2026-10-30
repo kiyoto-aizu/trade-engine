@@ -37,12 +37,14 @@ def plan_daily(
     categories: Mapping[date, int | None],
     publish_after: time | None = None,
 ) -> DailyPlan:
-    """実行日が日次更新の対象かを判定する。時刻判定は実行日が当日のときだけ行う（過去日は公開済み）。"""
+    """実行日が日次更新の対象かを判定する。時刻判定を外すのは過去日だけ。"""
     category = categories.get(run_date)
     if category in HOLIDAY_CATEGORIES:
         return DailyPlan(run_date, DailyDecision.HOLIDAY)
     if category not in BUSINESS_DAY_CATEGORIES:
         return DailyPlan(run_date, DailyDecision.CALENDAR_MISSING)
-    if publish_after is not None and run_date == now.date() and now.time() < publish_after:
+    if publish_after is not None and (
+        run_date > now.date() or (run_date == now.date() and now.time() < publish_after)
+    ):
         return DailyPlan(run_date, DailyDecision.NOT_PUBLISHED)
     return DailyPlan(run_date, DailyDecision.TARGET)

@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     now = datetime.now(JST)
     run_date = args.date or now.date()
     try:
-        result: DailyJobResult =         build_job().run(run_date, now, args.publish_after)
+        result: DailyJobResult = build_job().run(run_date, now, args.publish_after)
     except (JQuantsRawStoreError, OSError, ValueError, sqlite3.Error):
         print(json.dumps({"run_date": run_date.isoformat(), "status": "FAILED",
                           "error_category": "INITIALIZATION_ERROR"}))

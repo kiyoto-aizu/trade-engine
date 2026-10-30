@@ -79,6 +79,12 @@ def test_not_published_is_distinct_from_holiday():
     assert plan_daily(DAY, at(9), {DAY: 0}, time(17)).decision is DailyDecision.HOLIDAY
 
 
+def test_future_date_is_not_published():
+    future = date(2026, 11, 2)
+    plan = plan_daily(future, at(9), {future: 1}, time(17))
+    assert plan.decision is DailyDecision.NOT_PUBLISHED and plan.target_date is None
+
+
 def test_past_date_is_not_judged_by_time_of_day():
     yesterday = date(2026, 10, 29)
     plan = plan_daily(yesterday, at(9), {yesterday: 1}, time(17))

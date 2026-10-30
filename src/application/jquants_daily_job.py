@@ -7,9 +7,9 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-import sqlite3
 from datetime import date, datetime, time
 from typing import Any, Protocol
 
