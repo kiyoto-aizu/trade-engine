@@ -38,9 +38,11 @@ def main(argv: list[str] | None = None) -> int:
     state = JQuantsBackfillStateStore(config.JQUANTS_BACKFILL_STATE_DIRECTORY)
     try:
         if args.command == "list":
+            with state.global_lock():
+                review = state.review_entries(args.dataset)
             print(json.dumps({
                 "status": "COMPLETE",
-                "review": state.review_entries(args.dataset),
+                "review": review,
             }, sort_keys=True))
             return 0
 

@@ -2,7 +2,7 @@
 
 取得そのものは単日取込（ingest_jquants_single_day の usecase）へ委ね、
 ここでは対象日の計画と終了状態に応じた停止条件だけを扱う。他のデータ源へは切り替えない。
-停止フラグの永続化・全体ロック・スケジューラ登録は対象外（結果で必要性を返すだけ）。
+既存の停止状態と全体ロックを参照する。新たな停止フラグの永続化・スケジューラ登録は対象外。
 """
 
 from __future__ import annotations
@@ -14,9 +14,17 @@ from datetime import date, datetime, time
 from typing import Any, Protocol
 
 from src.application.jquants_canonical_input import BusinessCalendarPort
+from src.application.jquants_execution_guard import (
+    JQuantsExecutionBlockedError,
+    JQuantsExecutionGuard,
+)
 from src.domain.jquants_daily_plan import DailyDecision, plan_daily
 from src.domain.jquants_daily_stop_policy import StopAction, decide_stop
 from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStoreError
+from src.infrastructure.market_data.jquants_backfill_state import (
+    BackfillLockedError,
+    JQuantsBackfillStateStore,
+)
 
 DATASET_ORDER = ("daily", "minute")  # 日足 → 分足（同時に走らせない）
 _EXIT_SEVERITY = {0: 0, 2: 1, 1: 2, 3: 3}
@@ -97,12 +105,15 @@ class JQuantsDailyJob:
         ingestion_factory: Callable[[], SingleDayIngestionPort],
         history: FailureHistoryPort,
         verify: Verifier | None = None,
+        *,
+        guard: JQuantsExecutionGuard,
     ) -> None:
         self._calendar = calendar
         self._ingestion_factory = ingestion_factory
         self._ingestion: SingleDayIngestionPort | None = None
         self._history = history
         self._verify = verify
+        self._guard = guard
 
     def run(
         self, run_date: date, now: datetime, publish_after: time | None = None
@@ -112,14 +123,40 @@ class JQuantsDailyJob:
         result = DailyJobResult(run_date, plan.decision)
         if plan.target_date is None:
             return result
+        try:
+            with self._guard.locked() as state:
+                return self._run_locked(result, plan.target_date, state)
+        except JQuantsExecutionBlockedError as exc:
+            reason = exc.reason
+            category = "BLOCKED_BY_FLAG"
+        except BackfillLockedError:
+            reason = "GLOBAL_ALREADY_RUNNING"
+            category = "GLOBAL_ALREADY_RUNNING"
+        result.outcomes = [
+            DatasetOutcome(
+                dataset, ran=False, exit_code=2, error_category=category, reason=reason,
+            )
+            for dataset in DATASET_ORDER
+        ]
+        return result
+
+    def _run_locked(
+        self, result: DailyJobResult, target: date, state: JQuantsBackfillStateStore
+    ) -> DailyJobResult:
         blocked: StopAction | None = None
         for dataset in DATASET_ORDER:
+            if target in state.review_dates(dataset):
+                result.outcomes.append(DatasetOutcome(
+                    dataset, ran=False, exit_code=2, error_category="REVIEW_EXCLUDED",
+                    reason="REVIEW_EXCLUDED",
+                ))
+                continue
             if blocked is not None:
                 result.outcomes.append(
                     DatasetOutcome(dataset, ran=False, stop_action=blocked, reason="STOPPED_EARLIER")
                 )
                 continue
-            outcome = self._run_dataset(dataset, plan.target_date)
+            outcome = self._run_dataset(dataset, target)
             result.outcomes.append(outcome)
             if outcome.stop_action in (StopAction.STOP_TODAY, StopAction.HALT_FLAG):
                 blocked = outcome.stop_action

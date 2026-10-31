@@ -13,10 +13,15 @@ from pathlib import Path
 from typing import Any
 
 from src.application.jquants_daily_job import DailyJobResult, JQuantsDailyJob
+from src.application.jquants_execution_guard import JQuantsExecutionGuard
 from src.application.jquants_metrics_evaluation import evaluate_metrics
 from src.application.jquants_single_day_ingestion import JQuantsSingleDayIngestion
 from src.config import config
 from src.infrastructure.market_data.jquants_calendar_store import JQuantsCalendarStore
+from src.infrastructure.market_data.jquants_backfill_state import (
+    BackfillStateError,
+    JQuantsBackfillStateStore,
+)
 from src.infrastructure.market_data.jquants_canonical_store import JQuantsCanonicalStore
 from src.infrastructure.market_data.jquants_metrics_failure_history import (
     JQuantsMetricsFailureHistory,
@@ -70,6 +75,9 @@ def build_job() -> JQuantsDailyJob:
     return JQuantsDailyJob(
         JQuantsCalendarStore(config.JQUANTS_CALENDAR_DIRECTORY), _ingestion,
         JQuantsMetricsFailureHistory(config.JQUANTS_EXECUTION_METRICS_DIRECTORY), _verify,
+        guard=JQuantsExecutionGuard(
+            JQuantsBackfillStateStore(config.JQUANTS_BACKFILL_STATE_DIRECTORY),
+        ),
     )
 
 
@@ -85,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     run_date = args.date or now.date()
     try:
         result: DailyJobResult = build_job().run(run_date, now, args.publish_after)
-    except (JQuantsRawStoreError, OSError, ValueError, sqlite3.Error):
+    except (BackfillStateError, JQuantsRawStoreError, OSError, ValueError, sqlite3.Error):
         print(json.dumps({"run_date": run_date.isoformat(), "status": "FAILED",
                           "error_category": "INITIALIZATION_ERROR"}))
         return 1

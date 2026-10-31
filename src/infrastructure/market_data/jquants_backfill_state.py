@@ -13,10 +13,13 @@ import os
 from pathlib import Path
 from typing import Any
 
+from src.domain.jquants_backfill_policy import StopReason
+
 LOCK_FILE = "backfill.lock"
 STATE_FILE = "backfill_state.json"
 REVIEW_KINDS = ("PERMISSION_403", "OUT_OF_CONTRACT_400", "UNEXPECTED_400_IN_RANGE", "UNKNOWN_STATUS")
 REVIEW_DATASETS = ("daily", "minute")
+_STOP_REASONS = frozenset(reason.value for reason in StopReason)
 
 
 class BackfillStateError(Exception):
@@ -28,6 +31,8 @@ class BackfillLockedError(BackfillStateError):
 
 
 class JQuantsBackfillStateStore:
+    """Persistent state operations; callers serialize cross-process access with global_lock()."""
+
     def __init__(self, directory: Path | str) -> None:
         self._directory = Path(directory)
 
@@ -48,21 +53,23 @@ class JQuantsBackfillStateStore:
 
     def load(self) -> dict[str, Any]:
         path = self._directory / STATE_FILE
-        if not path.exists():
-            return _empty_state()
         try:
             state = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(state, dict):
+                raise ValueError
+            required_fields = set(_empty_state()) - {"review_clear_audit"}
+            if not required_fields.issubset(state):
                 raise ValueError
             merged = {**_empty_state(), **state}
             if not isinstance(merged["today_stops"], dict) or not isinstance(
                 merged["cause_stops"], dict
             ):
                 raise ValueError
-            _validate_review(merged["review"])
-            _validate_review_clear_audit(merged["review_clear_audit"])
+            _validate_execution_state(merged)
             return merged
-        except (OSError, ValueError):
+        except FileNotFoundError:
+            return _empty_state()
+        except (OSError, ValueError, TypeError):
             # A damaged state must stop the run, not silently reset the stop flags.
             raise BackfillStateError("backfill state is unreadable") from None
 
@@ -206,20 +213,35 @@ def _empty_state() -> dict[str, Any]:
     }
 
 
-def _validate_review(review: Any) -> None:
+def _validate_date(value: Any) -> None:
+    if not isinstance(value, str) or date.fromisoformat(value).isoformat() != value:
+        raise ValueError
+
+
+def _validate_execution_state(state: dict[str, Any]) -> None:
+    flag = state["stop_flag"]
+    if flag is not None:
+        if not isinstance(flag, dict) or set(flag) != {"scope", "reason", "set_on"}:
+            raise ValueError
+        if flag["scope"] not in ("ALL_FLAG", "BACKFILL_FLAG"):
+            raise ValueError
+        if not isinstance(flag["reason"], str) or flag["reason"] not in _STOP_REASONS:
+            raise ValueError
+        _validate_date(flag["set_on"])
+    review = state["review"]
     if not isinstance(review, dict):
         raise ValueError
-    for reason_code, per_dataset in review.items():
-        if reason_code not in REVIEW_KINDS or not isinstance(per_dataset, dict):
+    for kind, datasets in review.items():
+        if kind not in REVIEW_KINDS or not isinstance(datasets, dict):
             raise ValueError
-        for dataset, days in per_dataset.items():
+        for dataset, days in datasets.items():
             if dataset not in REVIEW_DATASETS or not isinstance(days, list):
                 raise ValueError
-            if any(not _is_iso_date(day) for day in days) or len(days) != len(set(days)):
+            for value in days:
+                _validate_date(value)
+            if len(days) != len(set(days)):
                 raise ValueError
-
-
-def _validate_review_clear_audit(audit: Any) -> None:
+    audit = state["review_clear_audit"]
     if not isinstance(audit, dict) or set(audit) != set(REVIEW_DATASETS):
         raise ValueError
     expected_fields = {"target_date", "operation_date", "reason_code"}
@@ -227,23 +249,12 @@ def _validate_review_clear_audit(audit: Any) -> None:
         if not isinstance(events, list):
             raise ValueError
         for event in events:
-            if (
-                not isinstance(event, dict)
-                or set(event) != expected_fields
-                or event["reason_code"] not in REVIEW_KINDS
-                or not _is_iso_date(event["target_date"])
-                or not _is_iso_date(event["operation_date"])
-            ):
+            if not isinstance(event, dict) or set(event) != expected_fields:
                 raise ValueError
-
-
-def _is_iso_date(value: Any) -> bool:
-    if not isinstance(value, str):
-        return False
-    try:
-        return date.fromisoformat(value).isoformat() == value
-    except ValueError:
-        return False
+            if not isinstance(event["reason_code"], str) or event["reason_code"] not in REVIEW_KINDS:
+                raise ValueError
+            _validate_date(event["target_date"])
+            _validate_date(event["operation_date"])
 
 
 def _now() -> str:

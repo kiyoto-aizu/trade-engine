@@ -45,6 +45,18 @@
 - ディスク不足
 - 未許可の未知項目出現（`ExRT` と `MktCap` は確認済み・canonical未対応の記録対象であり、Holdにしない）
 
+### 0-6. 実効保存先（API 呼び出し前・必須）
+- 運用の保存先は raw / canonical / ledger / metrics / backfill state / calendar の全てが D: であること。
+- 次の読み取り専用チェックを、実行予定の取込コマンドと同じ Python、作業ディレクトリ、保存先環境変数で実行する。チェックは `.env` を読み込まないため、6つの保存先変数はチェックと取込の両方で使うプロセス環境に設定し、`.env` にだけ設定しない。
+  ```powershell
+  .\.venv\Scripts\python.exe -m src.entrypoints.check_jquants_storage_config
+  if ($LASTEXITCODE -ne 0) { throw "J-Quants storage check failed; ingestion was not started." }
+  ```
+- `status` が `PASS` であることを確認する。PASS は6つ全てがプロセス環境変数に明示され、絶対パスで D: 上と判定されたことだけを示す。1つでも未設定（`source=default`）なら、既定値が D: 上でもFAILEDとなる。D: の接続・存在・書込権限、ジャンクション・リンク・ドライブ割当の実体は確認しない。UNC、相対パス、ドライブ相対パスではPASSにならない。
+- スケジューラ実行では、実際のタスクアカウント・作業ディレクトリ・環境変数で同じコマンドを確認する。チェック失敗時は取込を実行しない。リポジトリからスケジューラの実登録状態は確認できないため、タスク側の設定は人間が確認する。
+- チェックは取込設定モジュールや `.env` を読み込まず、保存先の正規化パスと環境変数/既定値の別のみを表示する。他の環境変数値は参照せず、API通信・保存先作成・保存データ読み取りも行わない。絶対パスを含むため Issue・ログには貼らない。
+- C: のパイロットデータは、2026-10-27 の削除記録後に生成されたもの、またはそのときの削除対象外だった関連ファイルが残っている場合も原本を維持し、読み取り専用の所在・件数・ハッシュ棚卸しだけを行う。D: へのコピー/移行や削除は、別途明示承認を得るまで行わない。
+
 ---
 
 ## 1. コマンド（PowerShell）
@@ -190,16 +202,17 @@ APIキー・認証情報・raw本文・株価レコードは含めない。
 - ロック取得に失敗したジョブは待機せずスキップして記録する（稼働中の処理を奪わない）
 - 補填は新しい日付から契約境界へ遡り、1日分（dataset×date）を最小単位とする
 - 停止条件: 401と契約範囲内の403は全ジョブ停止（停止状態を保持し、人間が解除）。429・連続FAILED・ディスク不足・品質検証失敗の扱いはジョブ種別ごとに設計書18 §2 の表に従う
-- 同時実行の防止: 実行基盤で「実行中なら新規開始しない」設定にする（別プロセスの重複はAPI枠を倍消費する）
+- 同時実行の防止: 日次・補填・手動単日（通常/refresh/canonical-only）は `JQUANTS_BACKFILL_STATE_DIRECTORY` の同じ `backfill.lock` を処理全体で保持する（Issue #54）。競合時は待機・奪取せず終了コード2。手動とスケジューラで状態ディレクトリが異なると排他・フラグを共有できないため、同じ設定を使う。スケジューラ環境の確認・登録は #37/#53 の範囲
 - 再開手順:
   1. 未完了（PENDING/RUNNING/PARTIAL/FAILED）に加え、要確認（EMPTY_UNKNOWN/EMPTY_HELD）も確認し、RUNNINGは稼働中でないことを確認する
   2. 原因を記録（機密情報なし）する
   3. 同じ `--date` を `--refresh` で再実行する（変換のみ失敗した場合は `--canonical-only`）
   4. 失敗時は旧公開世代のままで、成功扱いにしない
+- 日次 `--date` の再実行は、補填の要確認リスト（403・400・未知status）にある dataset×date を `REVIEW_EXCLUDED` として除外し他の dataset は続行する。結果の `run_date` と各 outcome の `dataset` / `reason` を確認する。単日CLIの明示的な手動再実行に要確認リストだけによる阻止は追加しないが、原因確認は省略しない
 - 補填の1日予算・閾値は初期値で、実測後に見直す（未確定）
 
 ## 4-3. 補填の実行後に見る確認手順（方式は設計書18 §1-1・§2-1 で決定済み・Issue #49 人間承認済み）
-実装は `src/entrypoints/run_jquants_backfill.py`（既定は dry-run、`--execute` で実API）。状態は `JQUANTS_BACKFILL_STATE_DIRECTORY` の `backfill_state.json`（停止フラグ・当日停止履歴・要確認リスト・連続FAILED）と `backfill.lock`。いずれも Git 管理外。出力は日付とカテゴリのみ。
+実装は `src/entrypoints/run_jquants_backfill.py`（既定は dry-run、`--execute` で実API）。状態は `JQUANTS_BACKFILL_STATE_DIRECTORY` の `backfill_state.json`（停止フラグ・当日停止履歴・要確認リスト・解除監査履歴・連続FAILED）と `backfill.lock`。いずれも Git 管理外。出力は日付と列挙カテゴリのみで、停止フラグは scope・reason・set_on を含む JSON オブジェクトとして出力する。
 
 ### ① outcome 別の対処
 | outcome | 終了コード | 意味 | 対処 |
@@ -214,13 +227,14 @@ APIキー・認証情報・raw本文・株価レコードは含めない。
 
 ### ② 停止フラグと要確認リストの違い
 - 停止フラグ（`stop_flag`）: 補填全体（`ALL_FLAG` は全ジョブ）を止める。原因確認後、人間が解除する。補填結果の JSON では `stop_flag` に scope・reason・set_on が出る（未設定は `null`）。解除は `--clear-stop-flag` で行い、実行中は失敗する。エージェント・スケジューラは解除しない
+- Issue #54: 設定済み `ALL_FLAG` は日次更新・過去日の `--date`・単日CLIの通常/`--refresh`/`--canonical-only` を取得・公開処理前に止める（終了コード2、`BLOCKED_BY_FLAG` と理由コード）。`BACKFILL_FLAG` は日次・単日を止めない。状態の破損・読取り不能・ロック作成不能は失敗（終了コード1）であり、自動修復・解除しない。新たな日次/手動の401等からのフラグ永続化は未実装
 - 要確認リスト（`review`）: 日付単位で補填対象から外す（403・範囲内外の400・未知status）。他の日の補填は続く。補填結果の `review_excluded` に出る。ただし範囲内400・未知statusが同一原因で3走行日連続すると `REPEATED_REVIEW_STOP` で停止フラグが立つ（系統的な不具合。原因を直してから、該当する要確認項目と停止フラグをそれぞれ解除する）
-- 要確認の一覧（通信なし・状態変更なし）:
+- 要確認の一覧（通信なし・状態変更なし。読み取り中に補填処理が状態ファイルを置き換えないよう、全体ロックを取る。補填・日次・単日処理中は失敗し、再実行する）:
   ```powershell
   .\.venv\Scripts\python.exe -m src.entrypoints.manage_jquants_backfill_review list
   .\.venv\Scripts\python.exe -m src.entrypoints.manage_jquants_backfill_review list --dataset daily
   ```
-- 要確認の解除手順: ①原因（契約範囲の定数・権限・実装不具合）を解消、②補填プロセスが動いていないことを確認、③`backfill_state.json` をバックアップ、④該当する dataset・日付・理由コードの1件を解除する:
+- 要確認の解除手順（人間のみ。エージェント・スケジューラは解除しない）: ①原因（契約範囲の定数・権限・実装不具合）を解消、②補填プロセスが動いていないことを確認、③`backfill_state.json` をバックアップ、④該当する dataset・日付・理由コードの1件を解除する:
   ```powershell
   .\.venv\Scripts\python.exe -m src.entrypoints.manage_jquants_backfill_review clear `
     --dataset daily --date 2026-10-28 --reason-code UNKNOWN_STATUS
@@ -231,7 +245,7 @@ APIキー・認証情報・raw本文・株価レコードは含めない。
 ### ③ 残った backfill.lock
 - LOCK_SKIPPED が続く場合、補填プロセスが実行中でないこと（タスクスケジューラ／プロセス一覧）を確認する
 - 稼働中でなければ `backfill.lock` を削除する。稼働中のロックは削除しない（API枠を倍消費する）
-- `--clear-stop-flag` と要確認の `clear` はロックを取って変更する。補填の実行中は失敗（終了コード1）し、状態を変更しないので、実行終了後にやり直す。補填の dry-run と要確認の `list` はロックを取らない読み取り専用操作
+- `--clear-stop-flag`・要確認の `clear`・要確認の `list` と dry-run の状態読み取りは、ファイル読み書きの競合を避けるため全体ロックを取る。補填・日次・手動単日の実行中は失敗（終了コード1）し、状態を変更・読み取りせず、実行終了後に再実行する。`LOCK_SKIPPED` の補填結果はロックを取得できていないため stop flag を読み取らず、`stop_flag_status=UNKNOWN_LOCK_HELD` として不明を明示する
 
 ### ④ RUNNING が残った日
 強制終了などで台帳が RUNNING のまま残る。稼働中でないことを確認し、同じ `--date` を `--refresh` で再実行する（4-2 の再開手順）。補填ジョブは自動再実行しない。

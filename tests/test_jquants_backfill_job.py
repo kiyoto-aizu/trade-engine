@@ -282,8 +282,13 @@ def test_clear_stop_flag_requires_lock(monkeypatch, tmp_path, capsys):
     state.set_stop_flag("BACKFILL_FLAG", "DISK_FLOOR", TODAY)
     with state.global_lock():
         assert entry.main(["--clear-stop-flag"]) == 1
+    capsys.readouterr()
     assert state.stop_flag() is not None
+    state_before = state.stop_flag()
     assert entry.main(["--clear-stop-flag"]) == 0 and state.stop_flag() is None
+    output = json.loads(capsys.readouterr().out)
+    assert output["cleared_stop_flag"] == state_before
+    assert output["stop_flag"] is None
 
 
 def test_in_range_400_goes_to_review_and_is_not_resent(tmp_path):
@@ -360,12 +365,18 @@ def test_unknown_status_goes_to_review(tmp_path):
     assert START in state.review_dates("daily")
 
 
-def test_lock_held_skips_without_waiting(tmp_path):
+def test_lock_held_skips_without_reading_stop_flag_or_waiting(tmp_path, monkeypatch):
     ingestion = FakeIngestion()
     usecase, state = _usecase(tmp_path, FakePlanner(_plan(START)), ingestion)
+    monkeypatch.setattr(
+        state, "stop_flag",
+        lambda: (_ for _ in ()).throw(AssertionError("must not read state without lock")),
+    )
     with state.global_lock():
         result = usecase.run("daily", START, TODAY)
     assert result.outcome is BackfillOutcome.LOCK_SKIPPED and ingestion.calls == []
+    assert result.as_dict()["stop_flag"] is None
+    assert result.as_dict()["stop_flag_status"] == "UNKNOWN_LOCK_HELD"
     assert not (tmp_path / "state" / "backfill.lock").exists()
 
 
@@ -515,6 +526,37 @@ def test_entrypoint_dry_run_does_not_build_ingestion(monkeypatch, tmp_path, caps
     assert output["status"] == "DRY_RUN"
     assert output["stop_flag"] == {
         "scope": "BACKFILL_FLAG", "reason": "REPEATED_REVIEW_STOP", "set_on": TODAY.isoformat(),
+    }
+
+
+def test_entrypoint_dry_run_refuses_to_read_state_when_lock_is_held(
+    monkeypatch, tmp_path, capsys,
+):
+    from src.entrypoints import run_jquants_backfill as entry
+
+    class Planner:
+        def __init__(self, *args):
+            pass
+
+        def plan(self, dataset, start, end, today):
+            return _plan(START)
+
+    state = JQuantsBackfillStateStore(tmp_path)
+    monkeypatch.setattr(entry.config, "JQUANTS_BACKFILL_STATE_DIRECTORY", tmp_path)
+    monkeypatch.setattr(entry, "JQuantsBackfillStateStore", lambda directory: state)
+    monkeypatch.setattr(state, "stop_flag", lambda: pytest.fail("state read without lock"))
+    monkeypatch.setattr(entry, "JQuantsRawStore", lambda: object())
+    monkeypatch.setattr(entry, "RawStoreLedgerState", lambda store: object())
+    monkeypatch.setattr(entry, "JQuantsBackfillPlanner", Planner)
+
+    with state.global_lock():
+        code = entry.main([
+            "--dataset", "daily", "--from", "2026-10-01", "--to", "2026-10-02",
+        ])
+
+    assert code == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "FAILED", "error_category": "BackfillLockedError",
     }
 
 
