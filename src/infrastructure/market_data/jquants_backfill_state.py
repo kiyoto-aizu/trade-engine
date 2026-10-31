@@ -13,9 +13,12 @@ import os
 from pathlib import Path
 from typing import Any
 
+from src.domain.jquants_backfill_policy import StopReason
+
 LOCK_FILE = "backfill.lock"
 STATE_FILE = "backfill_state.json"
 REVIEW_KINDS = ("PERMISSION_403", "OUT_OF_CONTRACT_400", "UNEXPECTED_400_IN_RANGE", "UNKNOWN_STATUS")
+_STOP_REASONS = frozenset(reason.value for reason in StopReason)
 
 
 class BackfillStateError(Exception):
@@ -47,8 +50,6 @@ class JQuantsBackfillStateStore:
 
     def load(self) -> dict[str, Any]:
         path = self._directory / STATE_FILE
-        if not path.exists():
-            return _empty_state()
         try:
             state = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(state, dict):
@@ -58,8 +59,11 @@ class JQuantsBackfillStateStore:
                 merged["cause_stops"], dict
             ):
                 raise ValueError
+            _validate_execution_state(merged)
             return merged
-        except (OSError, ValueError):
+        except FileNotFoundError:
+            return _empty_state()
+        except (OSError, ValueError, TypeError):
             # A damaged state must stop the run, not silently reset the stop flags.
             raise BackfillStateError("backfill state is unreadable") from None
 
@@ -159,6 +163,34 @@ def _empty_state() -> dict[str, Any]:
     return {
         "stop_flag": None, "today_stops": {}, "cause_stops": {}, "failed_streak": {}, "review": {},
     }
+
+
+def _validate_date(value: Any) -> None:
+    if not isinstance(value, str) or date.fromisoformat(value).isoformat() != value:
+        raise ValueError
+
+
+def _validate_execution_state(state: dict[str, Any]) -> None:
+    flag = state["stop_flag"]
+    if flag is not None:
+        if not isinstance(flag, dict) or set(flag) != {"scope", "reason", "set_on"}:
+            raise ValueError
+        if flag["scope"] not in ("ALL_FLAG", "BACKFILL_FLAG"):
+            raise ValueError
+        if not isinstance(flag["reason"], str) or flag["reason"] not in _STOP_REASONS:
+            raise ValueError
+        _validate_date(flag["set_on"])
+    review = state["review"]
+    if not isinstance(review, dict):
+        raise ValueError
+    for kind, datasets in review.items():
+        if kind not in REVIEW_KINDS or not isinstance(datasets, dict):
+            raise ValueError
+        for dataset, days in datasets.items():
+            if dataset not in ("daily", "minute") or not isinstance(days, list):
+                raise ValueError
+            for day in days:
+                _validate_date(day)
 
 
 def _now() -> str:
