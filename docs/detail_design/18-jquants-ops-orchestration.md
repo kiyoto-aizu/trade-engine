@@ -116,6 +116,10 @@ daily は1日分が数秒のため、同じ予算の範囲内で扱う。実測�
 当日停止は日付つきで同じファイルに残し、翌日は妨げない。直近3回の当日停止が別々の日で同一原因なら `BACKFILL_FLAG`（`REPEATED_TODAY_STOP`）を立てる（「3営業日連続」は補填が走った日で数える。直近3回の走行日がすべて同一原因の当日停止のときだけ立て、間に成功した走行日が挟まれば履歴を消して数え直す。ユーザー承認済み(案A)。履歴は dataset 別（日足/分足）に持つ（人間承認済み））。連続 FAILED は dataset ごとに日付をまたいで数え、COMPLETE/ATTENTION で 0 に戻す。台帳のスキーマは変えない。
 補填の403・400（範囲内外とも。範囲内で送った日の400は常に `UNEXPECTED_400_IN_RANGE`）・未知statusの日付は状態ファイルの要確認リストに入れ、次回以降の補填対象から外す（400の扱いは決定・人間承認済み。`review_excluded` として出力）。範囲内400・未知statusが同一原因で3走行日連続（dataset別。間に成功した走行日が挟まれば数え直す）したら、系統的な不具合として `BACKFILL_FLAG`（`REPEATED_REVIEW_STOP`）を立て、人間の確認を必須とする（N1。人間承認済み）。なお、止まった走行の途中にあった成功日は数え直しの対象にしない（数え直すのは COMPLETED/BUDGET_EXHAUSTED で終わった走行のみ。安全側。N2）。
 
+要確認リストは `python -m src.entrypoints.manage_jquants_backfill_review list [--dataset daily|minute]` で読み取り専用の一覧を出し、`clear --dataset <daily|minute> --date <YYYY-MM-DD> --reason-code <code>` で対象1件を解除する。解除は人間のみが原因を確認した後に行う。状態ファイルの読み書きは Windows の置換競合を避けるため同じ全体ロックで直列化し、一覧・dry-runの状態読み取りもロックを取得する。ロック競合時は状態を読み書きせず明示的に失敗する。補填結果の `LOCK_SKIPPED` では停止フラグを確認できないため、`stop_flag` は `null`、`stop_flag_status` は `UNKNOWN_LOCK_HELD` として区別する。解除成功と監査記録は同じ状態ファイルへ原子的に保存し、`review_clear_audit` に dataset ごとに解除対象日・操作日（JST）・理由コードのみを記録する。一覧表示や失敗した解除は監査記録を追加しない。監査履歴は調査可能性のため上限なく保持し、自動切り詰めしない。保持期間・アーカイブ方針を変更する場合は別途判断する。停止フラグの解除は別操作の `--clear-stop-flag` が必要。
+
+補填の dry-run と実行結果 JSON は `stop_flag` を含む。設定済みの場合は scope・reason・set_on、ロック下で未設定を確認した場合は `null` と `stop_flag_status=KNOWN` を出力する。
+
 ## 3. 再開（recovery）手順
 
 1. 次の2つを確認する。

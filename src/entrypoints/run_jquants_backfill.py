@@ -60,8 +60,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.clear_stop_flag:
             with state.global_lock():
+                cleared_stop_flag = state.stop_flag()
                 cleared = state.clear_stop_flag()
-            print(json.dumps({"status": "COMPLETE", "cleared": cleared}))
+            print(json.dumps({
+                "status": "COMPLETE", "cleared": cleared,
+                "cleared_stop_flag": cleared_stop_flag, "stop_flag": None,
+            }, sort_keys=True))
             return 0
         if args.dataset is None:
             parser.error("--dataset is required")
@@ -75,10 +79,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         if not args.execute:
             plan = planner.plan(args.dataset, start, end, today)
-            flag = state.stop_flag()
+            with state.global_lock():
+                flag = state.stop_flag()
             print(json.dumps({
                 "status": "DRY_RUN", "dataset": args.dataset,
-                "stop_flag": None if flag is None else flag["reason"],
+                "stop_flag": flag,
                 "summary": {k: len(v) for k, v in plan.as_dict().items()},
             }, sort_keys=True))
             return 0

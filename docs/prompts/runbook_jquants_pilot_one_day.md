@@ -212,7 +212,7 @@ APIキー・認証情報・raw本文・株価レコードは含めない。
 - 補填の1日予算・閾値は初期値で、実測後に見直す（未確定）
 
 ## 4-3. 補填の実行後に見る確認手順（方式は設計書18 §1-1・§2-1 で決定済み・Issue #49 人間承認済み）
-実装は `src/entrypoints/run_jquants_backfill.py`（既定は dry-run、`--execute` で実API）。状態は `JQUANTS_BACKFILL_STATE_DIRECTORY` の `backfill_state.json`（停止フラグ・当日停止履歴・要確認リスト・連続FAILED）と `backfill.lock`。いずれも Git 管理外。出力は日付とカテゴリのみ。
+実装は `src/entrypoints/run_jquants_backfill.py`（既定は dry-run、`--execute` で実API）。状態は `JQUANTS_BACKFILL_STATE_DIRECTORY` の `backfill_state.json`（停止フラグ・当日停止履歴・要確認リスト・解除監査履歴・連続FAILED）と `backfill.lock`。いずれも Git 管理外。出力は日付と列挙カテゴリのみで、停止フラグは scope・reason・set_on を含む JSON オブジェクトとして出力する。
 
 ### ① outcome 別の対処
 | outcome | 終了コード | 意味 | 対処 |
@@ -226,15 +226,26 @@ APIキー・認証情報・raw本文・株価レコードは含めない。
 | LOCK_SKIPPED | 2 | 別ジョブがロック保持中で待たずにスキップ | ③を確認。稼働中でなければロック削除 |
 
 ### ② 停止フラグと要確認リストの違い
-- 停止フラグ（`stop_flag`）: 補填全体（`ALL_FLAG` は全ジョブ）を止める。解除は人間のみ: 原因確認 → ジョブが動いていないことを確認 → `--clear-stop-flag`。エージェント・スケジューラは解除しない
+- 停止フラグ（`stop_flag`）: 補填全体（`ALL_FLAG` は全ジョブ）を止める。原因確認後、人間が解除する。補填結果の JSON では `stop_flag` に scope・reason・set_on が出る（未設定は `null`）。解除は `--clear-stop-flag` で行い、実行中は失敗する。エージェント・スケジューラは解除しない
 - Issue #54: 設定済み `ALL_FLAG` は日次更新・過去日の `--date`・単日CLIの通常/`--refresh`/`--canonical-only` を取得・公開処理前に止める（終了コード2、`BLOCKED_BY_FLAG` と理由コード）。`BACKFILL_FLAG` は日次・単日を止めない。状態の破損・読取り不能・ロック作成不能は失敗（終了コード1）であり、自動修復・解除しない。新たな日次/手動の401等からのフラグ永続化は未実装
-- 要確認リスト（`review`）: 日付単位で補填対象から外す（403・範囲内外の400・未知status）。他の日の補填は続く。出力の `review_excluded` に出る。ただし範囲内400・未知statusが同一原因で3走行日連続すると `REPEATED_REVIEW_STOP` で停止フラグが立つ（系統的な不具合。原因を直してから、要確認の日付と併せて解除する）
-- 要確認の解除手順（専用コマンドは未実装・持ち越し）: ①原因（契約範囲の定数・権限・実装不具合）を解消、②ジョブが動いていないこと（③）を確認、③`backfill_state.json` をバックアップ、④該当日付を `review` の該当 dataset の配列から削除、⑤dry-run で対象に戻ったことを確認してから実行。契約範囲外の400は `CONTRACT_YEARS` 更新（設計書18 §2-2）まで解除しない
+- 要確認リスト（`review`）: 日付単位で補填対象から外す（403・範囲内外の400・未知status）。他の日の補填は続く。補填結果の `review_excluded` に出る。ただし範囲内400・未知statusが同一原因で3走行日連続すると `REPEATED_REVIEW_STOP` で停止フラグが立つ（系統的な不具合。原因を直してから、該当する要確認項目と停止フラグをそれぞれ解除する）
+- 要確認の一覧（通信なし・状態変更なし。読み取り中に補填処理が状態ファイルを置き換えないよう、全体ロックを取る。補填・日次・単日処理中は失敗し、再実行する）:
+  ```powershell
+  .\.venv\Scripts\python.exe -m src.entrypoints.manage_jquants_backfill_review list
+  .\.venv\Scripts\python.exe -m src.entrypoints.manage_jquants_backfill_review list --dataset daily
+  ```
+- 要確認の解除手順（人間のみ。エージェント・スケジューラは解除しない）: ①原因（契約範囲の定数・権限・実装不具合）を解消、②補填プロセスが動いていないことを確認、③`backfill_state.json` をバックアップ、④該当する dataset・日付・理由コードの1件を解除する:
+  ```powershell
+  .\.venv\Scripts\python.exe -m src.entrypoints.manage_jquants_backfill_review clear `
+    --dataset daily --date 2026-10-28 --reason-code UNKNOWN_STATUS
+  ```
+  解除時は全体ロックを取る。補填がロックを保持している場合は失敗し、状態は変わらない。ロックを自動削除・奪取しない。解除成功時のみ、`backfill_state.json` の `review_clear_audit` に dataset ごとに対象日・操作日（JST）・理由コードを記録する。一覧表示や失敗した解除は記録しない。契約範囲外の400は `CONTRACT_YEARS` 更新（設計書18 §2-2）まで解除しない。解除後は `list --dataset <dataset>` を再実行し、解除した日付と理由コードの項目が一覧から消えたことを確認する。同じ dataset・日付に別の理由コードが残っている場合、その日付は引き続き要確認で補填対象から除外される。dry-run では要確認リストの解除を確認できない
+- `REPEATED_REVIEW_STOP` が設定されている場合は、原因を解消して要確認項目を確認した後、上記の要確認解除と `--clear-stop-flag` を別々に実行する。要確認解除だけでは停止フラグは解除されない
 
 ### ③ 残った backfill.lock
 - LOCK_SKIPPED が続く場合、補填プロセスが実行中でないこと（タスクスケジューラ／プロセス一覧）を確認する
 - 稼働中でなければ `backfill.lock` を削除する。稼働中のロックは削除しない（API枠を倍消費する）
-- `--clear-stop-flag` はロックを取って解除する。補填・日次・手動単日の実行中は失敗（終了コード1）するので、実行終了後にやり直す。dry-run はロックを取らない（読み取りのみ）
+- `--clear-stop-flag`・要確認の `clear`・要確認の `list` と dry-run の状態読み取りは、ファイル読み書きの競合を避けるため全体ロックを取る。補填・日次・手動単日の実行中は失敗（終了コード1）し、状態を変更・読み取りせず、実行終了後に再実行する。`LOCK_SKIPPED` の補填結果はロックを取得できていないため stop flag を読み取らず、`stop_flag_status=UNKNOWN_LOCK_HELD` として不明を明示する
 
 ### ④ RUNNING が残った日
 強制終了などで台帳が RUNNING のまま残る。稼働中でないことを確認し、同じ `--date` を `--refresh` で再実行する（4-2 の再開手順）。補填ジョブは自動再実行しない。

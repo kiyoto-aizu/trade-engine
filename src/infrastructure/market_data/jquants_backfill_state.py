@@ -18,6 +18,7 @@ from src.domain.jquants_backfill_policy import StopReason
 LOCK_FILE = "backfill.lock"
 STATE_FILE = "backfill_state.json"
 REVIEW_KINDS = ("PERMISSION_403", "OUT_OF_CONTRACT_400", "UNEXPECTED_400_IN_RANGE", "UNKNOWN_STATUS")
+REVIEW_DATASETS = ("daily", "minute")
 _STOP_REASONS = frozenset(reason.value for reason in StopReason)
 
 
@@ -30,6 +31,8 @@ class BackfillLockedError(BackfillStateError):
 
 
 class JQuantsBackfillStateStore:
+    """Persistent state operations; callers serialize cross-process access with global_lock()."""
+
     def __init__(self, directory: Path | str) -> None:
         self._directory = Path(directory)
 
@@ -53,6 +56,9 @@ class JQuantsBackfillStateStore:
         try:
             state = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(state, dict):
+                raise ValueError
+            required_fields = set(_empty_state()) - {"review_clear_audit"}
+            if not required_fields.issubset(state):
                 raise ValueError
             merged = {**_empty_state(), **state}
             if not isinstance(merged["today_stops"], dict) or not isinstance(
@@ -158,10 +164,52 @@ class JQuantsBackfillStateStore:
             found.update(date.fromisoformat(d) for d in per_dataset.get(dataset, []))
         return found
 
+    def review_entries(self, dataset: str | None = None) -> list[dict[str, str]]:
+        if dataset is not None and dataset not in REVIEW_DATASETS:
+            raise ValueError("unknown review dataset")
+        entries = [
+            {"dataset": entry_dataset, "target_date": day, "reason_code": reason_code}
+            for reason_code, per_dataset in self.load()["review"].items()
+            for entry_dataset, days in per_dataset.items()
+            if dataset is None or entry_dataset == dataset
+            for day in days
+        ]
+        return sorted(entries, key=lambda item: (
+            item["target_date"], item["dataset"], item["reason_code"]
+        ))
+
+    def clear_review(
+        self, dataset: str, target_date: date, reason_code: str, operation_date: date
+    ) -> bool:
+        if dataset not in REVIEW_DATASETS:
+            raise ValueError("unknown review dataset")
+        if reason_code not in REVIEW_KINDS:
+            raise ValueError("unknown review reason code")
+        state = self.load()
+        days = state["review"].get(reason_code, {}).get(dataset, [])
+        target = target_date.isoformat()
+        if target not in days:
+            return False
+
+        days.remove(target)
+        per_dataset = state["review"][reason_code]
+        if not days:
+            per_dataset.pop(dataset)
+        if not per_dataset:
+            state["review"].pop(reason_code)
+        state["review_clear_audit"][dataset].append({
+            "target_date": target,
+            "operation_date": operation_date.isoformat(),
+            "reason_code": reason_code,
+        })
+        self.save(state)
+        return True
+
 
 def _empty_state() -> dict[str, Any]:
     return {
-        "stop_flag": None, "today_stops": {}, "cause_stops": {}, "failed_streak": {}, "review": {},
+        "stop_flag": None, "today_stops": {}, "cause_stops": {}, "failed_streak": {},
+        "review": {}, "review_clear_audit": {dataset: [] for dataset in REVIEW_DATASETS},
     }
 
 
@@ -187,10 +235,26 @@ def _validate_execution_state(state: dict[str, Any]) -> None:
         if kind not in REVIEW_KINDS or not isinstance(datasets, dict):
             raise ValueError
         for dataset, days in datasets.items():
-            if dataset not in ("daily", "minute") or not isinstance(days, list):
+            if dataset not in REVIEW_DATASETS or not isinstance(days, list):
                 raise ValueError
-            for day in days:
-                _validate_date(day)
+            for value in days:
+                _validate_date(value)
+            if len(days) != len(set(days)):
+                raise ValueError
+    audit = state["review_clear_audit"]
+    if not isinstance(audit, dict) or set(audit) != set(REVIEW_DATASETS):
+        raise ValueError
+    expected_fields = {"target_date", "operation_date", "reason_code"}
+    for events in audit.values():
+        if not isinstance(events, list):
+            raise ValueError
+        for event in events:
+            if not isinstance(event, dict) or set(event) != expected_fields:
+                raise ValueError
+            if not isinstance(event["reason_code"], str) or event["reason_code"] not in REVIEW_KINDS:
+                raise ValueError
+            _validate_date(event["target_date"])
+            _validate_date(event["operation_date"])
 
 
 def _now() -> str:
