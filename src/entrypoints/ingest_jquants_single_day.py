@@ -17,7 +17,7 @@ from src.infrastructure.market_data.jquants_canonical_store import (
     strict_date,
 )
 from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStore, JQuantsRawStoreError
-from src.infrastructure.notification.slack_notify import notify_critical
+from src.infrastructure.notification.jquants_notify import notify_critical
 
 
 def _date_argument(value: str) -> str:

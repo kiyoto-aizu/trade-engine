@@ -70,6 +70,17 @@ class FakeIngestion:
 
 def _usecase(tmp_path, planner, ingestion, *, free=500 * GB, today=lambda: TODAY, **kwargs):
     state = JQuantsBackfillStateStore(tmp_path / "state")
+    # Old summary-time fixtures now drive an actual fake monotonic clock.
+    ticks = [0.0]
+    original = ingestion.on_run
+
+    def advance(day):
+        if original:
+            original(day)
+        ticks[0] += ingestion.results.get(day, {}).get("elapsed", 1.0)
+
+    ingestion.on_run = advance
+    kwargs.setdefault("clock", lambda: ticks[0])
     usecase = JQuantsBackfillUseCase(
         planner, ingestion, state, raw_directory=tmp_path / "raw",
         canonical_directory=tmp_path / "canonical", today_provider=today,
@@ -110,8 +121,8 @@ def test_date_rollover_skips_without_request(tmp_path):
     )
     result = usecase.run("daily", boundary_day, TODAY)
     assert result.skipped_out_of_range == [boundary_day]
-    assert ingestion.calls == ["2021-10-30"]
-    assert result.outcome is BackfillOutcome.COMPLETED
+    assert ingestion.calls == []
+    assert result.outcome is BackfillOutcome.JST_DAY_CHANGED
 
 
 def test_disk_floor_blocks_with_flag(tmp_path):
@@ -281,7 +292,7 @@ def test_clear_stop_flag_requires_lock(monkeypatch, tmp_path, capsys):
     state = JQuantsBackfillStateStore(tmp_path)
     state.set_stop_flag("BACKFILL_FLAG", "DISK_FLOOR", TODAY)
     with state.global_lock():
-        assert entry.main(["--clear-stop-flag"]) == 1
+        assert entry.main(["--clear-stop-flag"]) == 2
     capsys.readouterr()
     assert state.stop_flag() is not None
     state_before = state.stop_flag()
@@ -554,10 +565,8 @@ def test_entrypoint_dry_run_refuses_to_read_state_when_lock_is_held(
             "--dataset", "daily", "--from", "2026-10-01", "--to", "2026-10-02",
         ])
 
-    assert code == 1
-    assert json.loads(capsys.readouterr().out) == {
-        "status": "FAILED", "error_category": "BackfillLockedError",
-    }
+    assert code == 2
+    assert json.loads(capsys.readouterr().out)["stop_flag_status"] == "UNKNOWN_LOCK_HELD"
 
 
 def test_entrypoint_execute_outputs_stop_flag_without_api(monkeypatch, tmp_path, capsys):
@@ -579,7 +588,7 @@ def test_entrypoint_execute_outputs_stop_flag_without_api(monkeypatch, tmp_path,
         def __init__(self, *args, **kwargs):
             pass
 
-        def run(self, *args, **kwargs):
+        def run_locked(self, *args, **kwargs):
             return result
 
     monkeypatch.setattr(entry.config, "JQUANTS_BACKFILL_STATE_DIRECTORY", tmp_path / "state")

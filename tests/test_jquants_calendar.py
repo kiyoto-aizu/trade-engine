@@ -148,6 +148,15 @@ def test_corrupted_file_fails(tmp_path):
         store.load()
 
 
+@pytest.fixture(autouse=True)
+def isolated_cli(tmp_path, monkeypatch):
+    from src.config import config
+    from src.infrastructure.notification.jquants_notify import JQuantsSafeNotifier
+    monkeypatch.setattr(config, "JQUANTS_BACKFILL_STATE_DIRECTORY", tmp_path / "state")
+    monkeypatch.setattr(config, "JQUANTS_EXECUTION_METRICS_DIRECTORY", tmp_path / "metrics")
+    monkeypatch.setattr(JQuantsSafeNotifier, "__call__", lambda self, event: True)
+
+
 def test_entrypoint_requires_allow_network(capsys):
     from src.entrypoints.ingest_jquants_calendar import main
     assert main(["--from", "2026-01-01", "--to", "2026-01-31"]) == 2

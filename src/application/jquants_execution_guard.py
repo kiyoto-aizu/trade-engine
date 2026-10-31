@@ -3,6 +3,7 @@
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from src.application.jquants_single_day_ingestion import (
@@ -36,8 +37,14 @@ class SkippedIngestionSummary:
 
 
 class JQuantsExecutionGuard:
-    def __init__(self, state: JQuantsBackfillStateStore) -> None:
+    def __init__(
+        self, state: JQuantsBackfillStateStore,
+        *, today_provider: Callable[[], date] = lambda: datetime.now(
+            timezone(timedelta(hours=9))
+        ).date(),
+    ) -> None:
         self._state = state
+        self._today_provider = today_provider
 
     @contextmanager
     def locked(self) -> Iterator[JQuantsBackfillStateStore]:
@@ -57,7 +64,12 @@ class JQuantsExecutionGuard:
         canonical_only: bool = False,
     ) -> JQuantsIngestionSummary | SkippedIngestionSummary:
         try:
-            with self.locked():
+            with self.locked() as state:
+                reason = state.daily_stop(dataset, self._today_provider())
+                if reason is not None:
+                    return SkippedIngestionSummary(
+                        dataset, date, "DAILY_STOPPED", reason, error_category="DAILY_STOPPED",
+                    )
                 return factory().run(
                     dataset=dataset, date=date, refresh=refresh, canonical_only=canonical_only,
                 )

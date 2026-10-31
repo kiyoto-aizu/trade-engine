@@ -2,13 +2,20 @@
 
 import argparse
 import json
+import sys
 from datetime import date
+from uuid import uuid4
 
-from src.application.jquants_calendar_ingestion import JQuantsCalendarIngestion
 from src.config import config
-from src.domain.jquants_business_calendar import BusinessCalendarError
 from src.infrastructure.market_data.jquants_calendar_store import JQuantsCalendarStore
-from src.infrastructure.market_data.jquants_v2_client import JQuantsAPIError, JQuantsV2Client
+from src.infrastructure.market_data.jquants_v2_client import JQuantsV2Client
+from src.application.jquants_calendar_job import JQuantsCalendarJob, CalendarJobResult
+from src.application.jquants_execution_guard import JQuantsExecutionGuard
+from src.infrastructure.market_data.jquants_backfill_state import JQuantsBackfillStateStore
+from src.infrastructure.market_data.jquants_ops_events import JQuantsOpsEventRepository
+from src.infrastructure.notification.jquants_notify import JQuantsSafeNotifier
+from src.application.jquants_ops_reporting import JQuantsOpsReporter
+from src.domain.jquants_ops_policy import JQuantsOpsEvent, REASONS
 
 
 def _date_argument(value: str) -> date:
@@ -32,21 +39,35 @@ def main(argv: list[str] | None = None) -> int:
     if not args.allow_network:
         print(json.dumps({"status": "SKIPPED", "reason": "--allow-network is required"}))
         return 2
-    client = None
     try:
-        client = JQuantsV2Client()
-        summary = JQuantsCalendarIngestion(
-            client, JQuantsCalendarStore(config.JQUANTS_CALENDAR_DIRECTORY)
+        state = JQuantsBackfillStateStore(config.JQUANTS_BACKFILL_STATE_DIRECTORY)
+        result = JQuantsCalendarJob(
+            JQuantsExecutionGuard(state), JQuantsV2Client,
+            lambda: JQuantsCalendarStore(config.JQUANTS_CALENDAR_DIRECTORY),
         ).run(args.start, args.end, refresh=args.refresh)
-    except (JQuantsAPIError, BusinessCalendarError, OSError, ValueError) as exc:
-        category = getattr(exc, "category", type(exc).__name__)
-        print(json.dumps({"status": "FAILED", "error_category": category}))
-        return 1
-    finally:
-        if client is not None:
-            client.close()
-    print(json.dumps(summary.as_dict(), sort_keys=True))
-    return 0
+    except Exception:
+        result = CalendarJobResult(1, "FAILED", "STATE_ERROR")
+    print(json.dumps(result.as_dict(), sort_keys=True))
+    try:
+        reporter = _build_reporter()
+        reporter.emit(JQuantsOpsEvent(
+            uuid4().hex, "CALENDAR", args.end.isoformat(), result.exit_code, result.status,
+            result.reason if result.reason in REASONS else "STAGE_FAILED",
+            stop_scope=result.stop_scope,
+        ), notify=result.exit_code in (1, 2))
+    except Exception:
+        print("JQUANTS_LOCAL_EVENT_FAILED", file=sys.stderr)
+        return result.exit_code or 1
+    if any(item.reason == "LOCAL_EVENT_FAILED" for item in reporter.events):
+        print("JQUANTS_LOCAL_EVENT_FAILED", file=sys.stderr)
+    return reporter.exit_code
+
+
+def _build_reporter():
+    return JQuantsOpsReporter(
+        JQuantsOpsEventRepository(config.JQUANTS_EXECUTION_METRICS_DIRECTORY),
+        JQuantsSafeNotifier(config.SLACK_WEBHOOK_CRITICAL),
+    )
 
 
 if __name__ == "__main__":

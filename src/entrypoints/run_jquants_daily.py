@@ -6,28 +6,25 @@
 
 import argparse
 import json
-import sqlite3
 import sys
 from datetime import date, datetime, time, timedelta, timezone
-from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from src.application.jquants_daily_job import DailyJobResult, JQuantsDailyJob
 from src.application.jquants_execution_guard import JQuantsExecutionGuard
-from src.application.jquants_metrics_evaluation import evaluate_metrics
+from src.application.jquants_metrics_evaluation import evaluate_summary
+from src.application.jquants_daily_disk_check import JQuantsDailyDiskCheck
 from src.application.jquants_single_day_ingestion import JQuantsSingleDayIngestion
 from src.config import config
 from src.infrastructure.market_data.jquants_calendar_store import JQuantsCalendarStore
-from src.infrastructure.market_data.jquants_backfill_state import (
-    BackfillStateError,
-    JQuantsBackfillStateStore,
-)
+from src.infrastructure.market_data.jquants_backfill_state import JQuantsBackfillStateStore
 from src.infrastructure.market_data.jquants_canonical_store import JQuantsCanonicalStore
-from src.infrastructure.market_data.jquants_metrics_failure_history import (
-    JQuantsMetricsFailureHistory,
-)
-from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStore, JQuantsRawStoreError
-from src.infrastructure.notification.slack_notify import notify_critical
+from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStore
+from src.infrastructure.notification.jquants_notify import JQuantsSafeNotifier, notify_critical
+from src.infrastructure.market_data.jquants_ops_events import JQuantsOpsEventRepository
+from src.application.jquants_ops_reporting import JQuantsOpsReporter
+from src.domain.jquants_ops_policy import JQuantsOpsEvent
 
 
 DEFAULT_PUBLISH_AFTER = time(17, 0)
@@ -51,16 +48,8 @@ def _time_argument(value: str) -> time:
         raise argparse.ArgumentTypeError("Time must be a valid HH:MM") from None
 
 
-def _verify(summary: Any) -> tuple[str, tuple[str, ...]]:
-    path = summary.metrics_file
-    try:
-        metrics = json.loads(Path(path).read_text(encoding="utf-8")) if path else None
-    except (OSError, ValueError):
-        metrics = None
-    if not isinstance(metrics, dict):
-        return "No-Go", ("METRICS_UNREADABLE",)
-    evaluation = evaluate_metrics(metrics)
-    return evaluation.verdict, evaluation.reasons
+def _verify(summary: Any):
+    return evaluate_summary(summary)
 
 
 def _ingestion() -> JQuantsSingleDayIngestion:
@@ -74,10 +63,20 @@ def _ingestion() -> JQuantsSingleDayIngestion:
 def build_job() -> JQuantsDailyJob:
     return JQuantsDailyJob(
         JQuantsCalendarStore(config.JQUANTS_CALENDAR_DIRECTORY), _ingestion,
-        JQuantsMetricsFailureHistory(config.JQUANTS_EXECUTION_METRICS_DIRECTORY), _verify,
+        None, _verify,
         guard=JQuantsExecutionGuard(
             JQuantsBackfillStateStore(config.JQUANTS_BACKFILL_STATE_DIRECTORY),
         ),
+        disk_check=JQuantsDailyDiskCheck(
+            config.JQUANTS_RAW_DIRECTORY, config.JQUANTS_CANONICAL_DIRECTORY,
+        ),
+    )
+
+
+def _build_reporter():
+    return JQuantsOpsReporter(
+        JQuantsOpsEventRepository(config.JQUANTS_EXECUTION_METRICS_DIRECTORY),
+        JQuantsSafeNotifier(config.SLACK_WEBHOOK_CRITICAL),
     )
 
 
@@ -93,14 +92,31 @@ def main(argv: list[str] | None = None) -> int:
     run_date = args.date or now.date()
     try:
         result: DailyJobResult = build_job().run(run_date, now, args.publish_after)
-    except (BackfillStateError, JQuantsRawStoreError, OSError, ValueError, sqlite3.Error):
+    except Exception:
         print(json.dumps({"run_date": run_date.isoformat(), "status": "FAILED",
                           "error_category": "INITIALIZATION_ERROR"}))
+        try:
+            reporter = _build_reporter()
+            reporter.emit(JQuantsOpsEvent(
+                uuid4().hex, "DAILY", now.date().isoformat(), 1, "FAILED", "INITIALIZATION_ERROR",
+            ), notify=True)
+            if any(item.reason == "LOCAL_EVENT_FAILED" for item in reporter.events):
+                print("JQUANTS_LOCAL_EVENT_FAILED", file=sys.stderr)
+        except Exception:
+            print("JQUANTS_LOCAL_EVENT_FAILED", file=sys.stderr)
         return 1
     print(json.dumps(result.as_dict(), sort_keys=True))
+    try:
+        reporter = _build_reporter()
+        reporter.daily(result, uuid4().hex, now.date())
+    except Exception:
+        print("JQUANTS_LOCAL_EVENT_FAILED", file=sys.stderr)
+        return result.exit_code or 1
+    if any(item.reason == "LOCAL_EVENT_FAILED" for item in reporter.events):
+        print("JQUANTS_LOCAL_EVENT_FAILED", file=sys.stderr)
     if result.halt_flag_required:
         print("ALERT: halt required (401/403). Investigate before the next run.", file=sys.stderr)
-    return result.exit_code
+    return reporter.exit_code
 
 
 if __name__ == "__main__":

@@ -1,4 +1,6 @@
 import pytest
+import os
+from pathlib import Path
 
 from src.config import config
 from tests.runtime_guard import RuntimeStateGuard, watch
@@ -12,6 +14,59 @@ PRODUCTION_FILTERING_DIAGNOSTICS_DIRECTORY = config.FILTERING_DIAGNOSTICS_DIRECT
 PRODUCTION_SCREENING_API_CHECK_DIRECTORY = config.SCREENING_API_CHECK_DIRECTORY
 PRODUCTION_SCREENING_PRICE_BAND_DIRECTORY = config.SCREENING_PRICE_BAND_RESULT_ROOT
 PRODUCTION_FILTERING_PRICE_BAND_DIRECTORY = config.FILTERING_PRICE_BAND_RESULT_ROOT
+JQUANTS_STORAGE_KEYS = (
+    "JQUANTS_RAW_DIRECTORY", "JQUANTS_CANONICAL_DIRECTORY", "JQUANTS_LEDGER_DATABASE_FILE",
+    "JQUANTS_EXECUTION_METRICS_DIRECTORY", "JQUANTS_BACKFILL_STATE_DIRECTORY",
+    "JQUANTS_CALENDAR_DIRECTORY",
+)
+PRODUCTION_JQUANTS_DESTINATIONS = tuple(
+    Path(getattr(config, key)).absolute() for key in JQUANTS_STORAGE_KEYS
+)
+
+
+@pytest.fixture(autouse=True)
+def _jquants_execution_io_guard(request, monkeypatch, tmp_path):
+    if request.path.name not in {
+        "test_jquants_ops_orchestration.py", "test_jquants_daily_job.py",
+        "test_jquants_calendar.py", "test_jquants_execution_guard.py",
+        "test_jquants_single_day_ingestion.py", "test_jquants_backfill_job.py",
+    }:
+        return
+    for key in JQUANTS_STORAGE_KEYS:
+        monkeypatch.setattr(config, key, tmp_path / key)
+
+    def check(path):
+        candidate = Path(path).absolute()
+        if any(candidate == root or root in candidate.parents for root in PRODUCTION_JQUANTS_DESTINATIONS):
+            pytest.fail("JQUANTS_DEFAULT_DESTINATION_WRITE_BLOCKED", pytrace=False)
+
+    original_mkdir = Path.mkdir
+    original_open = Path.open
+    original_os_open = os.open
+
+    def mkdir(path, *args, **kwargs):
+        check(path)
+        return original_mkdir(path, *args, **kwargs)
+
+    def opened(path, mode="r", *args, **kwargs):
+        if any(flag in mode for flag in "wax+"):
+            check(path)
+        return original_open(path, mode, *args, **kwargs)
+
+    def os_open(path, flags, *args, **kwargs):
+        if flags & (os.O_CREAT | os.O_WRONLY | os.O_RDWR | os.O_TRUNC | os.O_APPEND):
+            check(path)
+        return original_os_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    monkeypatch.setattr(Path, "open", opened)
+    monkeypatch.setattr(os, "open", os_open)
+
+    def forbidden_post(*args, **kwargs):
+        pytest.fail("JQUANTS_NETWORK_NOT_MOCKED", pytrace=False)
+
+    monkeypatch.setattr("requests.post", forbidden_post)
+    return PRODUCTION_JQUANTS_DESTINATIONS
 
 
 @pytest.fixture(autouse=True)

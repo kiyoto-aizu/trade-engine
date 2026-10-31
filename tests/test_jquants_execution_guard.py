@@ -27,6 +27,8 @@ DAY = date(2026, 10, 30)
 def state(tmp_path, monkeypatch):
     directory = tmp_path / "state"
     monkeypatch.setattr(daily.config, "JQUANTS_BACKFILL_STATE_DIRECTORY", directory)
+    monkeypatch.setattr(daily.config, "JQUANTS_EXECUTION_METRICS_DIRECTORY", tmp_path / "metrics")
+    monkeypatch.setattr(daily.JQuantsSafeNotifier, "__call__", lambda self, event: True)
     return JQuantsBackfillStateStore(directory)
 
 
@@ -154,7 +156,6 @@ def test_daily_build_job_wires_guard_before_ingestion(state, monkeypatch, capsys
         categories=lambda start, end: {DAY: 1},
     ))
     monkeypatch.setattr(daily, "_ingestion", forbidden)
-    monkeypatch.setattr(daily, "JQuantsMetricsFailureHistory", lambda directory: Mock())
     code = daily.main(["--date", DAY.isoformat(), "--publish-after", "00:00"])
     body = json.loads(capsys.readouterr().out)
     assert code == 2 and all(o["ran"] is False for o in body["outcomes"])
