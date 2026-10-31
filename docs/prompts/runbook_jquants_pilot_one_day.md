@@ -239,7 +239,7 @@ APIキー・認証情報・raw本文・株価レコードは含めない。
   .\.venv\Scripts\python.exe -m src.entrypoints.manage_jquants_backfill_review clear `
     --dataset daily --date 2026-10-28 --reason-code UNKNOWN_STATUS
   ```
-  解除時は全体ロックを取る。補填がロックを保持している場合は失敗し、状態は変わらない。ロックを自動削除・奪取しない。解除成功時のみ、`backfill_state.json` の `review_clear_audit` に dataset ごとに対象日・操作日（JST）・理由コードを記録する。一覧表示や失敗した解除は記録しない。契約範囲外の400は `CONTRACT_YEARS` 更新（設計書18 §2-2）まで解除しない。解除後は一覧と dry-run で対象から戻ったことを確認する
+  解除時は全体ロックを取る。補填がロックを保持している場合は失敗し、状態は変わらない。ロックを自動削除・奪取しない。解除成功時のみ、`backfill_state.json` の `review_clear_audit` に dataset ごとに対象日・操作日（JST）・理由コードを記録する。一覧表示や失敗した解除は記録しない。契約範囲外の400は `CONTRACT_YEARS` 更新（設計書18 §2-2）まで解除しない。解除後は `list --dataset <dataset>` を再実行し、解除した日付と理由コードの項目が一覧から消えたことを確認する。同じ dataset・日付に別の理由コードが残っている場合、その日付は引き続き要確認で補填対象から除外される。dry-run では要確認リストの解除を確認できない
 - `REPEATED_REVIEW_STOP` が設定されている場合は、原因を解消して要確認項目を確認した後、上記の要確認解除と `--clear-stop-flag` を別々に実行する。要確認解除だけでは停止フラグは解除されない
 
 ### ③ 残った backfill.lock
