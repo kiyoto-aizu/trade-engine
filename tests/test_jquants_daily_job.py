@@ -5,6 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from src.application.jquants_daily_job import JQuantsDailyJob
+from src.application.jquants_execution_guard import JQuantsExecutionGuard
+from src.config import config
+from src.infrastructure.market_data.jquants_backfill_state import JQuantsBackfillStateStore
 from src.domain.jquants_daily_plan import DailyDecision, plan_daily
 from src.domain.jquants_daily_stop_policy import StopAction, decide_stop
 from src.infrastructure.market_data.jquants_metrics_failure_history import (
@@ -13,6 +16,17 @@ from src.infrastructure.market_data.jquants_metrics_failure_history import (
 from src.infrastructure.market_data.jquants_raw_store import JQuantsDatasetAlreadyRunningError
 
 DAY = date(2026, 10, 30)
+
+
+@pytest.fixture(autouse=True)
+def isolate_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "JQUANTS_BACKFILL_STATE_DIRECTORY", tmp_path / "state")
+
+
+def guard():
+    return JQuantsExecutionGuard(
+        JQuantsBackfillStateStore(config.JQUANTS_BACKFILL_STATE_DIRECTORY),
+    )
 
 
 def at(hour, day=DAY):
@@ -54,7 +68,9 @@ class History:
 def job(results=None, categories=None, counts=None, verify=None):
     ingestion = Ingestion(results or {})
     cats = {DAY: 1} if categories is None else categories
-    return JQuantsDailyJob(Calendar(cats), lambda: ingestion, History(counts), verify), ingestion
+    return JQuantsDailyJob(
+        Calendar(cats), lambda: ingestion, History(counts), verify, guard=guard(),
+    ), ingestion
 
 
 def run(j, now=at(18), publish_after=None):
@@ -168,7 +184,7 @@ def test_unexpected_error_in_minute_keeps_daily_result():
                 raise ValueError("x")
             return super().run(dataset=dataset, date=date)
 
-    j = JQuantsDailyJob(Calendar({DAY: 1}), lambda: Boom({}), History())
+    j = JQuantsDailyJob(Calendar({DAY: 1}), lambda: Boom({}), History(), guard=guard())
     result = run(j)
     assert result.outcomes[0].status == "COMPLETE"
     assert result.outcomes[1].error_category == "STORAGE_OR_FORMAT_ERROR"
@@ -179,7 +195,7 @@ def test_ingestion_is_not_built_on_holiday():
     def factory():
         raise AssertionError("must not be built")
 
-    j = JQuantsDailyJob(Calendar({DAY: 0}), factory, History())
+    j = JQuantsDailyJob(Calendar({DAY: 0}), factory, History(), guard=guard())
     assert run(j).exit_code == 0
 
 

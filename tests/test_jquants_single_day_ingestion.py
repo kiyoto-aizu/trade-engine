@@ -26,6 +26,11 @@ from src.infrastructure.market_data.jquants_v2_client import (
 DAY = "2026-10-20"
 
 
+@pytest.fixture(autouse=True)
+def isolate_stop_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli.config, "JQUANTS_BACKFILL_STATE_DIRECTORY", tmp_path / "state")
+
+
 def row(dataset="daily", code="123A0", **changes):
     result = dict(Code=code, Date=DAY, O=10, H=12, L=8, C=11, Vo=0, Va=None)
     if dataset == "daily":

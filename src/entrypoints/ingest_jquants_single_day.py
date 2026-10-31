@@ -7,6 +7,11 @@ import sys
 
 from src.config import config
 from src.application.jquants_single_day_ingestion import JQuantsSingleDayIngestion
+from src.application.jquants_execution_guard import JQuantsExecutionGuard
+from src.infrastructure.market_data.jquants_backfill_state import (
+    BackfillStateError,
+    JQuantsBackfillStateStore,
+)
 from src.infrastructure.market_data.jquants_canonical_store import (
     JQuantsCanonicalStore,
     strict_date,
@@ -23,6 +28,15 @@ def _date_argument(value: str) -> str:
     return value
 
 
+def _ingestion(measure_peak_memory: bool) -> JQuantsSingleDayIngestion:
+    return JQuantsSingleDayIngestion(
+        JQuantsRawStore(), JQuantsCanonicalStore(config.JQUANTS_CANONICAL_DIRECTORY),
+        metrics_directory=config.JQUANTS_EXECUTION_METRICS_DIRECTORY,
+        measure_peak_memory=measure_peak_memory,
+        notifier=notify_critical,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="J-Quants single-day all-symbol ingestion")
     parser.add_argument("--dataset", choices=("daily", "minute"), required=True)
@@ -36,17 +50,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     try:
-        usecase = JQuantsSingleDayIngestion(
-            JQuantsRawStore(), JQuantsCanonicalStore(config.JQUANTS_CANONICAL_DIRECTORY),
-            metrics_directory=config.JQUANTS_EXECUTION_METRICS_DIRECTORY,
-            measure_peak_memory=args.measure_peak_memory,
-            notifier=notify_critical,
+        guard = JQuantsExecutionGuard(
+            JQuantsBackfillStateStore(config.JQUANTS_BACKFILL_STATE_DIRECTORY),
         )
-        summary = usecase.run(
+        summary = guard.run_single_day(
+            lambda: _ingestion(args.measure_peak_memory),
             dataset=args.dataset, date=args.date,
             refresh=args.refresh, canonical_only=args.canonical_only,
         )
-    except (JQuantsRawStoreError, OSError, ValueError, sqlite3.Error):
+    except (BackfillStateError, JQuantsRawStoreError, OSError, ValueError, sqlite3.Error):
         print(json.dumps({"dataset": args.dataset, "date": args.date, "status": "FAILED",
                           "error_category": "INITIALIZATION_ERROR"}))
         return 1
