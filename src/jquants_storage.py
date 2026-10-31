@@ -1,4 +1,7 @@
-"""Read-only validation of effective J-Quants storage destinations."""
+"""Read-only validation of effective J-Quants storage destinations.
+
+Kept outside src.config because that package imports credential/dotenv settings.
+"""
 
 from __future__ import annotations
 
@@ -51,7 +54,10 @@ class JQuantsStorageAudit:
 
     @property
     def is_valid(self) -> bool:
-        return all(item.matches_operational_drive for item in self.destinations)
+        return all(
+            item.source == "environment" and item.matches_operational_drive
+            for item in self.destinations
+        )
 
     def as_dict(self) -> dict[str, object]:
         return {

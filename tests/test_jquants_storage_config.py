@@ -1,5 +1,6 @@
 import os
 import json
+import ast
 from pathlib import Path
 import subprocess
 import sys
@@ -10,6 +11,7 @@ from src.jquants_storage import (
     inspect_jquants_storage,
 )
 from src.entrypoints import check_jquants_storage_config
+from src import jquants_storage
 
 
 def make_settings(root: str) -> SimpleNamespace:
@@ -24,10 +26,14 @@ def make_settings(root: str) -> SimpleNamespace:
     )
 
 
+def explicit_environment(settings):
+    return {key: os.fspath(value) for key, value in vars(settings).items()}
+
+
 def test_storage_audit_accepts_normalized_d_drive_paths():
     settings = make_settings("D:/trade-engine-data/jquants")
 
-    audit = inspect_jquants_storage(settings, {})
+    audit = inspect_jquants_storage(settings, explicit_environment(settings))
 
     assert audit.is_valid
     assert audit.as_dict()["status"] == "PASS"
@@ -43,7 +49,7 @@ def test_storage_audit_rejects_any_non_d_destination():
         "C:/trade-engine-data/jquants/backfill_state"
     )
 
-    audit = inspect_jquants_storage(settings, {})
+    audit = inspect_jquants_storage(settings, explicit_environment(settings))
 
     assert not audit.is_valid
     assert audit.as_dict()["status"] == "FAILED"
@@ -74,16 +80,20 @@ def test_storage_audit_does_not_access_or_create_storage_paths(monkeypatch):
     def fail_if_accessed(*args, **kwargs):
         raise AssertionError("storage audit must not access the filesystem")
 
-    monkeypatch.setattr(Path, "mkdir", fail_if_accessed)
-    monkeypatch.setattr(Path, "open", fail_if_accessed)
-    monkeypatch.setattr(os, "makedirs", fail_if_accessed)
-
-    audit = inspect_jquants_storage(settings, {})
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "mkdir", fail_if_accessed)
+        patch.setattr(Path, "open", fail_if_accessed)
+        patch.setattr(os, "makedirs", fail_if_accessed)
+        audit = inspect_jquants_storage(settings, explicit_environment(settings))
 
     assert audit.is_valid
 
 
 def test_entrypoint_prints_audit_without_reading_api_key(monkeypatch, capsys):
+    for key, value in explicit_environment(
+        make_settings("D:/trade-engine-data/jquants")
+    ).items():
+        monkeypatch.setenv(key, value)
     monkeypatch.setattr(
         check_jquants_storage_config,
         "default_jquants_storage_settings",
@@ -107,6 +117,8 @@ def test_entrypoint_fails_when_a_destination_is_not_on_d_drive(monkeypatch, caps
     settings.JQUANTS_LEDGER_DATABASE_FILE = Path(
         "C:/trade-engine-data/jquants/ledger.sqlite3"
     )
+    for key, value in explicit_environment(settings).items():
+        monkeypatch.setenv(key, value)
     monkeypatch.setattr(
         check_jquants_storage_config,
         "default_jquants_storage_settings",
@@ -137,7 +149,7 @@ def test_storage_audit_rejects_environment_override_to_c_drive():
 def test_storage_audit_accepts_lowercase_d_drive():
     settings = make_settings("d:/trade-engine-data/jquants")
 
-    audit = inspect_jquants_storage(settings, {})
+    audit = inspect_jquants_storage(settings, explicit_environment(settings))
 
     assert audit.is_valid
     assert all(item.drive == "D:" for item in audit.destinations)
@@ -172,7 +184,16 @@ def test_storage_audit_rejects_drive_relative_paths():
 def test_storage_audit_rejects_relative_path_even_if_cwd_is_on_d_drive(monkeypatch):
     settings = make_settings("D:/trade-engine-data/jquants")
     settings.JQUANTS_RAW_DIRECTORY = Path("data/jquants/raw")
-    monkeypatch.setattr(os.path, "abspath", lambda _: r"D:\runtime\data\jquants\raw")
+    monkeypatch.setattr(
+        jquants_storage, "os",
+        SimpleNamespace(
+            name=os.name, fspath=os.fspath,
+            path=SimpleNamespace(
+                isabs=os.path.isabs,
+                abspath=lambda _: r"D:\runtime\data\jquants\raw",
+            ),
+        ),
+    )
 
     audit = inspect_jquants_storage(settings, {})
 
@@ -186,8 +207,10 @@ def test_storage_audit_rejects_relative_path_even_if_cwd_is_on_d_drive(monkeypat
 def test_storage_audit_rejects_root_relative_windows_path(monkeypatch):
     settings = make_settings("D:/trade-engine-data/jquants")
     settings.JQUANTS_RAW_DIRECTORY = Path(r"\runtime\data\jquants\raw")
-    monkeypatch.setattr(os, "name", "nt")
-    monkeypatch.setattr(os.path, "abspath", lambda _: r"D:\runtime\data\jquants\raw")
+    monkeypatch.setattr(
+        jquants_storage, "os",
+        SimpleNamespace(name="nt", fspath=os.fspath, path=os.path),
+    )
 
     audit = inspect_jquants_storage(settings, {})
 
@@ -201,13 +224,69 @@ def test_storage_audit_normalizes_windows_paths_without_filesystem_resolution(
     monkeypatch,
 ):
     settings = make_settings("d:/trade-engine-data/jquants")
-    monkeypatch.setattr(os, "name", "nt")
-    monkeypatch.setattr(os.path, "abspath", lambda *_: (_ for _ in ()).throw(AssertionError()))
+    def unexpected_abspath(*args):
+        raise AssertionError("absolute Windows paths must not need abspath")
 
-    audit = inspect_jquants_storage(settings, {})
+    monkeypatch.setattr(
+        jquants_storage, "os",
+        SimpleNamespace(
+            name="nt", fspath=os.fspath,
+            path=SimpleNamespace(abspath=unexpected_abspath),
+        ),
+    )
+
+    audit = inspect_jquants_storage(settings, explicit_environment(settings))
 
     assert audit.is_valid
     assert all(item.path.startswith("d:\\") for item in audit.destinations)
+
+
+def test_windows_simulation_leaves_process_state_unchanged(monkeypatch, tmp_path):
+    original_name = os.name
+    original_abspath = os.path.abspath
+    settings = make_settings("D:/trade-engine-data/jquants")
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            jquants_storage, "os",
+            SimpleNamespace(name="nt", fspath=os.fspath, path=os.path),
+        )
+        assert inspect_jquants_storage(settings, explicit_environment(settings)).is_valid
+        assert os.name == original_name
+        assert os.path.abspath is original_abspath
+        assert Path(tmp_path).is_dir()
+    assert jquants_storage.os is os
+    assert os.name == original_name
+    assert os.path.abspath is original_abspath
+
+
+def test_defaults_on_d_drive_never_pass_without_all_explicit_settings():
+    settings = make_settings("D:/repository/data/jquants")
+    environment = explicit_environment(settings)
+    for key in environment:
+        incomplete = {name: value for name, value in environment.items() if name != key}
+        audit = inspect_jquants_storage(settings, incomplete)
+        assert not audit.is_valid
+        assert next(item for item in audit.destinations if item.setting == key).source == "default"
+    assert not inspect_jquants_storage(settings, {}).is_valid
+    assert inspect_jquants_storage(settings, environment).is_valid
+
+
+def test_audit_defaults_match_config_definitions_without_importing_config():
+    root = Path(__file__).resolve().parents[1]
+    tree = ast.parse((root / "src" / "config" / "config.py").read_text(encoding="utf-8"))
+    defaults = default_jquants_storage_settings()
+    definitions = {
+        node.targets[0].id: node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+    }
+    for key in vars(defaults):
+        definition = definitions[key]
+        getenv_call = definition.args[0]
+        relative = getattr(defaults, key).relative_to(jquants_storage._REPOSITORY_ROOT)
+        expression = "_repo_root" + "".join(f" / {part!r}" for part in relative.parts)
+        expected = ast.parse(f"str({expression})", mode="eval").body
+        assert ast.dump(getenv_call.args[1]) == ast.dump(expected)
 
 
 def test_cli_import_does_not_load_config_or_read_unrelated_environment():
@@ -247,7 +326,10 @@ def fail_if_dotenv_loaded(*args, **kwargs):
     raise AssertionError(".env must not be loaded")
 dotenv.load_dotenv = fail_if_dotenv_loaded
 sys.modules["dotenv"] = dotenv
-runpy.run_module("src.entrypoints.check_jquants_storage_config", run_name="__main__")
+try:
+    runpy.run_module("src.entrypoints.check_jquants_storage_config", run_name="__main__")
+except SystemExit as result:
+    assert result.code == 0
 assert "src.config.config" not in sys.modules
 '''
     result = subprocess.run(
