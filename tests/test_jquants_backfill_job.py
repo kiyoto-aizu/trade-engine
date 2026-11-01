@@ -125,6 +125,18 @@ def test_date_rollover_skips_without_request(tmp_path):
     assert result.outcome is BackfillOutcome.JST_DAY_CHANGED
 
 
+def test_date_rollover_after_last_target_has_no_remaining_targets(tmp_path):
+    clock = iter([TODAY, TODAY, TODAY + timedelta(days=1)])
+    usecase, _ = _usecase(
+        tmp_path, FakePlanner(_plan(START)), FakeIngestion(),
+        today=lambda: next(clock, TODAY + timedelta(days=1)),
+    )
+    result = usecase.run("daily", START, TODAY)
+    assert result.outcome is BackfillOutcome.JST_DAY_CHANGED
+    assert result.processed == [START]
+    assert result.remaining_targets == 0
+
+
 def test_disk_floor_blocks_with_flag(tmp_path):
     ingestion = FakeIngestion()
     usecase, state = _usecase(tmp_path, FakePlanner(_plan(START)), ingestion, free=10 * GB)

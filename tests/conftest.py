@@ -1,5 +1,7 @@
 import pytest
 import os
+import shutil
+import sqlite3
 from pathlib import Path
 
 from src.config import config
@@ -26,23 +28,30 @@ PRODUCTION_JQUANTS_DESTINATIONS = tuple(
 
 @pytest.fixture(autouse=True)
 def _jquants_execution_io_guard(request, monkeypatch, tmp_path):
-    if request.path.name not in {
-        "test_jquants_ops_orchestration.py", "test_jquants_daily_job.py",
-        "test_jquants_calendar.py", "test_jquants_execution_guard.py",
-        "test_jquants_single_day_ingestion.py", "test_jquants_backfill_job.py",
-    }:
+    if not request.path.name.startswith("test_jquants_"):
         return
     for key in JQUANTS_STORAGE_KEYS:
         monkeypatch.setattr(config, key, tmp_path / key)
 
     def check(path):
-        candidate = Path(path).absolute()
+        raw_path = os.fspath(path)
+        if isinstance(raw_path, bytes):
+            raw_path = os.fsdecode(raw_path)
+        if raw_path.startswith("file:"):
+            from urllib.parse import unquote, urlsplit
+            raw_path = unquote(urlsplit(raw_path).path)
+            if os.name == "nt" and raw_path.startswith("/") and len(raw_path) > 2 and raw_path[2] == ":":
+                raw_path = raw_path[1:]
+        candidate = Path(raw_path).absolute()
         if any(candidate == root or root in candidate.parents for root in PRODUCTION_JQUANTS_DESTINATIONS):
             pytest.fail("JQUANTS_DEFAULT_DESTINATION_WRITE_BLOCKED", pytrace=False)
 
     original_mkdir = Path.mkdir
     original_open = Path.open
     original_os_open = os.open
+    original_sqlite_connect = sqlite3.connect
+    original_replace = os.replace
+    original_rename = os.rename
 
     def mkdir(path, *args, **kwargs):
         check(path)
@@ -58,14 +67,77 @@ def _jquants_execution_io_guard(request, monkeypatch, tmp_path):
             check(path)
         return original_os_open(path, flags, *args, **kwargs)
 
+    def sqlite_connect(database, *args, **kwargs):
+        if database != ":memory:" and not str(database).startswith("file::memory:"):
+            check(database)
+        return original_sqlite_connect(database, *args, **kwargs)
+
+    def replace(src, dst, *args, **kwargs):
+        check(src)
+        check(dst)
+        return original_replace(src, dst, *args, **kwargs)
+
+    def rename(src, dst, *args, **kwargs):
+        check(src)
+        check(dst)
+        return original_rename(src, dst, *args, **kwargs)
+
+    def shutil_copy(original):
+        def guarded(src, dst, *args, **kwargs):
+            check(dst)
+            return original(src, dst, *args, **kwargs)
+        return guarded
+
+    def shutil_move(original):
+        def guarded(src, dst, *args, **kwargs):
+            check(src)
+            check(dst)
+            return original(src, dst, *args, **kwargs)
+        return guarded
+
+    def shutil_path_write(original, path_index):
+        def guarded(*args, **kwargs):
+            check(args[path_index] if len(args) > path_index else kwargs["path"])
+            return original(*args, **kwargs)
+        return guarded
+
+    def shutil_extract(original):
+        def guarded(filename, *args, **kwargs):
+            extract_dir = args[0] if args else kwargs.get("extract_dir", Path.cwd())
+            check(extract_dir or Path.cwd())
+            return original(filename, *args, **kwargs)
+        return guarded
+
+    def shutil_archive(original):
+        def guarded(base_name, *args, **kwargs):
+            check(base_name)
+            return original(base_name, *args, **kwargs)
+        return guarded
+
     monkeypatch.setattr(Path, "mkdir", mkdir)
     monkeypatch.setattr(Path, "open", opened)
     monkeypatch.setattr(os, "open", os_open)
+    monkeypatch.setattr(sqlite3, "connect", sqlite_connect)
+    monkeypatch.setattr(os, "replace", replace)
+    monkeypatch.setattr(os, "rename", rename)
+    for name in ("copy", "copy2", "copyfile"):
+        monkeypatch.setattr(shutil, name, shutil_copy(getattr(shutil, name)))
+    monkeypatch.setattr(shutil, "move", shutil_move(shutil.move))
+    monkeypatch.setattr(shutil, "copytree", shutil_copy(shutil.copytree))
+    monkeypatch.setattr(shutil, "copymode", shutil_copy(shutil.copymode))
+    monkeypatch.setattr(shutil, "copystat", shutil_copy(shutil.copystat))
+    monkeypatch.setattr(shutil, "rmtree", shutil_path_write(shutil.rmtree, 0))
+    monkeypatch.setattr(shutil, "unpack_archive", shutil_extract(shutil.unpack_archive))
+    monkeypatch.setattr(shutil, "make_archive", shutil_archive(shutil.make_archive))
 
     def forbidden_post(*args, **kwargs):
         pytest.fail("JQUANTS_NETWORK_NOT_MOCKED", pytrace=False)
 
+    def forbidden_request(*args, **kwargs):
+        pytest.fail("JQUANTS_NETWORK_NOT_MOCKED", pytrace=False)
+
     monkeypatch.setattr("requests.post", forbidden_post)
+    monkeypatch.setattr("requests.Session.request", forbidden_request)
     return PRODUCTION_JQUANTS_DESTINATIONS
 
 

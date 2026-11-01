@@ -2,7 +2,10 @@ import builtins
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
 import json
+import os
 from pathlib import Path
+import shutil
+import sqlite3
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -17,7 +20,9 @@ from src.application.jquants_daily_job import DatasetOutcome, DailyJobResult, JQ
 from src.application.jquants_execution_guard import JQuantsExecutionGuard
 from src.application.jquants_metrics_evaluation import JQuantsEvaluation, evaluate_summary
 from src.application.jquants_ops_orchestration import JQuantsOpsOrchestration
-from src.application.jquants_ops_reporting import JQuantsOpsReporter, JQuantsReportedIngestion
+from src.application.jquants_ops_reporting import (
+    JQuantsOpsReporter, JQuantsReportedIngestion, daily_event_records,
+)
 from src.domain.jquants_backfill_plan import BackfillPlan
 from src.domain.jquants_daily_plan import DailyDecision
 from src.domain.jquants_daily_stop_policy import StopAction, repeated_daily_failure_stop
@@ -83,6 +88,15 @@ def test_order_single_lock_calendar_contract_and_no_refresh(tmp_path):
     assert not (tmp_path / "state" / "backfill.lock").exists()
     assert (tmp_path / "metrics" / "ops" / "events.jsonl").exists()
     assert list((tmp_path / "metrics").glob("*/date=*/*.json")) == []
+
+
+def test_ops_event_day_is_jst_execution_day_and_target_is_separate(tmp_path):
+    job, _, _ = ops(tmp_path)
+    utc_execution = datetime(2026, 10, 30, 16, 30, tzinfo=timezone.utc)
+    job.event("CALENDAR", utc_execution, 0, "COMPLETE", target_day="2026-10-30")
+    event = job.reporter.events[-1]
+    assert event.day == "2026-10-31"
+    assert event.target_day == "2026-10-30"
 
 
 @pytest.mark.parametrize("decision,code", [
@@ -465,6 +479,52 @@ def test_429_safe_boundary_not_duplicated_and_state_failure_is_distinct(tmp_path
     assert SECRET not in json.dumps(result)
 
 
+def test_429_notification_result_is_scoped_to_this_emission(tmp_path):
+    notifier_results = iter([False, True])
+    reporter = JQuantsOpsReporter(
+        JQuantsOpsEventRepository(tmp_path / "metrics"),
+        lambda event: next(notifier_results),
+    )
+    reporter.emit(JQuantsOpsEvent(uuid4().hex, "CALENDAR", DAY.isoformat(), 1, "FAILED"), notify=True)
+    context = SimpleNamespace(
+        invocation_id=uuid4().hex, current_stage="BACKFILL", scheduled=False,
+        now_provider=lambda: NOW + timedelta(days=1),
+    )
+
+    class Ingestion:
+        def run(self, **kwargs):
+            assert self.notifier("ignored")
+            return SimpleNamespace(status="FAILED")
+
+    ingestion = Ingestion()
+    result = JQuantsReportedIngestion(ingestion, reporter, lambda: context).run(
+        dataset="daily", date="2021-11-08",
+    )
+    rate_event = next(event for event in reporter.events if event.event_id == "RATE_LIMIT_ABORTED")
+    assert result.status == "FAILED"
+    assert rate_event.day == (NOW + timedelta(days=1)).date().isoformat()
+    assert rate_event.target_day == "2021-11-08"
+    assert sum(event.event_id == "SLACK_NOTIFY_FAILED" for event in reporter.events) == 1
+
+
+@pytest.mark.parametrize("verdict,not_evaluated,reason", [
+    ("No-Go", (), "NO_GO"), ("Go", ("METRICS",), "EVALUATION_INCOMPLETE"),
+])
+def test_daily_reporting_notifies_no_go_and_incomplete_in_both_paths(
+    tmp_path, verdict, not_evaluated, reason,
+):
+    result = DailyJobResult(DAY, DailyDecision.TARGET, [
+        DatasetOutcome("daily", True, "COMPLETE", exit_code=0, verdict=verdict,
+                       not_evaluated=not_evaluated, stop_scope="NONE"),
+    ])
+    standalone = JQuantsOpsReporter(JQuantsOpsEventRepository(tmp_path / "standalone"), lambda _: True)
+    standalone.daily(result, uuid4().hex, DAY)
+    emitted, notify, _ = daily_event_records(result, uuid4().hex, DAY, "NONE")[0]
+    assert standalone.events[0].reason == reason
+    assert standalone.events[0].reason == emitted.reason and notify is True
+    assert any(event.reason == reason for event in standalone.events)
+
+
 def test_daily_verification_preserves_partial_evaluation_and_approved_limits(tmp_path):
     metrics = {
         "dataset": "daily", "status": "COMPLETE", "error_category": None,
@@ -691,3 +751,31 @@ def test_attempted_original_default_event_write_fails_before_any_io(_jquants_exe
     event = JQuantsOpsEvent(uuid4().hex, "DAILY", DAY.isoformat(), 1, "FAILED")
     with pytest.raises(pytest.fail.Exception, match="JQUANTS_DEFAULT_DESTINATION_WRITE_BLOCKED"):
         JQuantsOpsEventRepository(default_metrics).append(event)
+
+
+def test_all_jquants_storage_paths_are_isolated_and_write_holes_are_blocked(
+    _jquants_execution_io_guard, tmp_path,
+):
+    from tests.conftest import JQUANTS_STORAGE_KEYS
+    from src.config import config
+
+    production = _jquants_execution_io_guard
+    assert len(production) == len(JQUANTS_STORAGE_KEYS) == 6
+    assert all(Path(getattr(config, key)) != root for key, root in zip(JQUANTS_STORAGE_KEYS, production))
+    source = tmp_path / "safe-source"
+    source.write_text("test-only", encoding="utf-8")
+    source_dir = tmp_path / "safe-source-dir"
+    source_dir.mkdir()
+    (source_dir / "file").write_text("test-only", encoding="utf-8")
+    ledger = production[2]
+    with pytest.raises(pytest.fail.Exception, match="JQUANTS_DEFAULT_DESTINATION_WRITE_BLOCKED"):
+        sqlite3.connect(ledger)
+    with pytest.raises(pytest.fail.Exception, match="JQUANTS_DEFAULT_DESTINATION_WRITE_BLOCKED"):
+        os.replace(source, production[0] / "guard-probe")
+    with pytest.raises(pytest.fail.Exception, match="JQUANTS_DEFAULT_DESTINATION_WRITE_BLOCKED"):
+        shutil.copyfile(source, production[3] / "guard-probe")
+    with pytest.raises(pytest.fail.Exception, match="JQUANTS_DEFAULT_DESTINATION_WRITE_BLOCKED"):
+        shutil.copytree(source_dir, production[4] / "guard-probe")
+    with pytest.raises(pytest.fail.Exception, match="JQUANTS_DEFAULT_DESTINATION_WRITE_BLOCKED"):
+        shutil.rmtree(production[5])
+    assert source.read_text(encoding="utf-8") == "test-only"

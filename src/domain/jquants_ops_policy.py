@@ -10,10 +10,12 @@ REASONS = frozenset({
     "NONE", "PASS", "AUDIT_FAILED", "INITIALIZATION_ERROR", "STAGE_FAILED",
     "STATE_ERROR", "STOP_STATE_SAVE_FAILED", "LOCAL_EVENT_FAILED", "SLACK_NOTIFY_FAILED",
     "ALL_FLAG", "BACKFILL_FLAG", "UNKNOWN", "GLOBAL_ALREADY_RUNNING",
+    "CALENDAR_MISMATCH", "CALENDAR_MISSING", "CALENDAR_INVALID",
     "STALE_LOCK_CHECK_REQUIRED", "DAILY_NOT_READY", "CALENDAR_NOT_READY",
     "HOLIDAY", "NOT_PUBLISHED", "CALENDAR_MISSING", "REVIEW_EXCLUDED",
     "DAILY_STOPPED", "STOPPED_EARLIER", "EVALUATION_INCOMPLETE",
-    "AUTH_ERROR", "PERMISSION_ERROR", "DISK_SPACE_CRITICAL", "DISK_UNMEASURABLE",
+    "AUTH_ERROR", "PERMISSION_ERROR", "PERMISSION_OR_CONTRACT_ERROR", "DISK_SPACE_CRITICAL",
+    "DISK_UNMEASURABLE", "RATE_LIMITED", "TRANSPORT_ERROR", "API_ERROR", "HTTP_ERROR",
     "RATE_LIMIT_ABORTED", "CONSECUTIVE_FAILED", "CONSECUTIVE_FAILED_3",
     "STORAGE_OR_FORMAT_ERROR", "SERVER_ERROR", "CLIENT_REQUEST_ERROR", "QUALITY_ERROR",
     "UNKNOWN_ERROR", "HTTP_401", "HTTP_403_IN_RANGE", "UNEXPECTED_400_IN_RANGE",
@@ -60,12 +62,16 @@ class JQuantsOpsEvent:
     stop_scope: str = "UNKNOWN"
     scheduled: bool = False
     event_id: str = "RESULT"
+    target_day: str | None = None
 
     def __post_init__(self):
         if not re.fullmatch(r"[0-9a-f]{32}", self.invocation_id):
             raise ValueError("invalid invocation id")
         if date.fromisoformat(self.day).isoformat() != self.day:
             raise ValueError("invalid date")
+        if self.target_day is not None:
+            if not isinstance(self.target_day, str) or date.fromisoformat(self.target_day).isoformat() != self.target_day:
+                raise ValueError("invalid target date")
         if self.stage not in STAGES or type(self.exit_code) is not int or self.exit_code not in EXIT_SEVERITY:
             raise ValueError("invalid operational event")
         if self.status not in STATUSES or self.reason not in REASONS:

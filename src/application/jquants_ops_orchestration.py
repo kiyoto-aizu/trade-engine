@@ -6,7 +6,10 @@ from uuid import uuid4
 from src.application.jquants_execution_guard import JQuantsExecutionBlockedError
 from src.domain.jquants_contract_range import calculate_earliest_available_date
 from src.domain.jquants_ops_policy import JQuantsOpsEvent, REASONS, STATUSES, daily_ready
+from src.application.jquants_ops_reporting import daily_event_records
 from src.infrastructure.market_data.jquants_backfill_state import BackfillLockedError, BackfillStateError
+
+JST = timezone(timedelta(hours=9))
 
 
 class JQuantsOpsOrchestration:
@@ -25,15 +28,18 @@ class JQuantsOpsOrchestration:
         self.scheduled = False
 
     def event(self, stage, now, code, status, reason="NONE", dataset=None, scope="UNKNOWN",
-              scheduled=False, event_id="RESULT", notify=False):
+              scheduled=False, event_id="RESULT", notify=False, target_day=None):
+        execution_day = now.astimezone(JST).date() if now.tzinfo else now.date()
         event = JQuantsOpsEvent(
-            self.invocation_id, stage, now.date().isoformat(), code,
+            self.invocation_id, stage, execution_day.isoformat(), code,
             status if status in STATUSES else "FAILED",
             reason if reason in REASONS else "STAGE_FAILED", dataset, scope, scheduled, event_id,
+            target_day,
         )
         self.reporter.emit(event, notify=notify)
 
     def run(self, now, *, scheduled=False):
+        now = now.astimezone(JST) if now.tzinfo else now.replace(tzinfo=JST)
         self.scheduled = scheduled
         try:
             with self.guard.locked() as state:
@@ -108,7 +114,8 @@ class JQuantsOpsOrchestration:
         )
         self.event("CALENDAR", now, calendar.exit_code, calendar.status, calendar.reason,
                    scope=(state.stop_flag() or {}).get("scope", "NONE"),
-                   scheduled=scheduled, notify=calendar.exit_code in (1, 2))
+                   scheduled=scheduled, notify=calendar.exit_code in (1, 2),
+                   target_day=today.isoformat())
         if calendar.exit_code != 0 or calendar.status != "COMPLETE":
             self._skip_after("CALENDAR", now, "CALENDAR_NOT_READY", scheduled)
             return
@@ -122,24 +129,16 @@ class JQuantsOpsOrchestration:
             self._skip_after("DAILY", now, "JST_DAY_CHANGED", scheduled)
             return
         daily = self.daily_factory().run_locked(today, current_now, state, time(17))
-        if not daily.outcomes:
-            decision = daily.decision.value
-            self.event("DAILY", now, daily.exit_code, decision, decision,
-                       scope=(state.stop_flag() or {}).get("scope", "NONE"),
-                       scheduled=scheduled, notify=decision != "HOLIDAY")
-        for outcome in daily.outcomes:
-            reason = outcome.reason or outcome.error_category or "NONE"
-            if outcome.verdict != "Go" and outcome.exit_code == 0:
-                reason = "NO_GO"
-            elif outcome.not_evaluated and outcome.exit_code == 0:
-                reason = "EVALUATION_INCOMPLETE"
-            code = outcome.exit_code if outcome.exit_code is not None else daily.exit_code
-            self.event(
-                "DAILY", now, code, outcome.status or "SKIPPED", reason, outcome.dataset,
-                scope=outcome.stop_scope, scheduled=scheduled,
-                event_id=reason if reason in ("STOP_STATE_SAVE_FAILED", "METRICS_SAVE_FAILED") else "RESULT",
-                notify=code in (1, 2) or (code == 0 and reason != "NONE"),
+        for daily_event, notify, notification_failed in daily_event_records(
+            daily, self.invocation_id, now.date(),
+            (state.stop_flag() or {}).get("scope", "NONE"),
+        ):
+            daily_event = daily_event.__class__(
+                **{**daily_event.as_dict(), "scheduled": scheduled}
             )
+            self.reporter.emit(daily_event, notify=notify)
+            if notification_failed:
+                self.reporter._failure(daily_event, "SLACK_NOTIFY_FAILED")
         if not daily_ready(daily, today) or self.reporter.exit_code:
             self._skip_after("DAILY", now, "DAILY_NOT_READY", scheduled)
             return

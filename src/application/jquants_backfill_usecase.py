@@ -213,8 +213,8 @@ class JQuantsBackfillUseCase:
             result.spent_seconds = self._state.finish_budget_day(
                 self._clock() - started, held,
             )
+            result.remaining_targets = len(targets) - index - 1
             if stopped:
-                result.remaining_targets = len(targets) - index - 1
                 return result
             if self._today_provider() != today:
                 result.outcome = BackfillOutcome.JST_DAY_CHANGED

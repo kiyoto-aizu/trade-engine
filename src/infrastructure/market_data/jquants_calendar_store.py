@@ -13,7 +13,9 @@ from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
 
-from src.domain.jquants_business_calendar import VALID_CATEGORIES, BusinessCalendarError
+from src.domain.jquants_business_calendar import (
+    VALID_CATEGORIES, BusinessCalendarError, CalendarErrorReason,
+)
 
 FORMAT_VERSION = 1
 FILE_NAME = "calendar.json"
@@ -36,18 +38,24 @@ class JQuantsCalendarStore:
             payload = json.loads(self._path.read_text(encoding="utf-8"))
             raw = payload["categories"]
             if payload["format_version"] != FORMAT_VERSION:
-                raise BusinessCalendarError("calendar file has an unsupported format version")
+                raise BusinessCalendarError("calendar file has an unsupported format version",
+                                            reason=CalendarErrorReason.INVALID)
             if payload["sha256"] != _digest(raw):
-                raise BusinessCalendarError("calendar file hash mismatch")
+                raise BusinessCalendarError("calendar file hash mismatch", reason=CalendarErrorReason.INVALID)
             result = {date.fromisoformat(k): v for k, v in raw.items()}
             if any(d.isoformat() != k for d, k in zip(result, raw)):
-                raise BusinessCalendarError("calendar file has a non-standard date")
+                raise BusinessCalendarError("calendar file has a non-standard date",
+                                            reason=CalendarErrorReason.INVALID)
         except BusinessCalendarError:
             raise
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            raise BusinessCalendarError("calendar file is unreadable") from None
+            raise BusinessCalendarError(
+                "calendar file is unreadable", reason=CalendarErrorReason.INVALID,
+            ) from None
         if any(type(v) is not int or v not in VALID_CATEGORIES for v in result.values()):
-            raise BusinessCalendarError("calendar file has an unknown category")
+            raise BusinessCalendarError(
+                "calendar file has an unknown category", reason=CalendarErrorReason.INVALID,
+            )
         return result
 
     def save(self, categories: Mapping[date, int]) -> None:

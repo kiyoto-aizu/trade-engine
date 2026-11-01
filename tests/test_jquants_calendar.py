@@ -97,8 +97,9 @@ def test_invalid_rows_fail(bad):
 
 
 def test_gap_duplicate_and_out_of_range_fail():
-    with pytest.raises(BusinessCalendarError, match="cover"):
+    with pytest.raises(BusinessCalendarError, match="cover") as missing:
         parse_rows(JAN[:-1], START, END)
+    assert missing.value.reason == "CALENDAR_MISSING"
     with pytest.raises(BusinessCalendarError, match="duplicate"):
         parse_rows(JAN + rows(("2026-01-01", "0")), START, END)
     with pytest.raises(BusinessCalendarError, match="outside"):
@@ -120,8 +121,9 @@ def test_difference_requires_refresh_and_rerun_is_idempotent(tmp_path):
     assert JQuantsCalendarIngestion(FakeClient(JAN), store).run(START, END).changed == 0
     changed = [dict(r) for r in JAN]
     changed[4]["HolDiv"] = "0"
-    with pytest.raises(BusinessCalendarError, match="refresh"):
+    with pytest.raises(BusinessCalendarError, match="refresh") as mismatch:
         JQuantsCalendarIngestion(FakeClient(changed), store).run(START, END)
+    assert mismatch.value.reason == "CALENDAR_MISMATCH"
     assert store.load()[date(2026, 1, 5)] == 1
     summary = JQuantsCalendarIngestion(FakeClient(changed), store).run(START, END, refresh=True)
     assert summary.changed == 1 and store.load()[date(2026, 1, 5)] == 0
@@ -184,4 +186,49 @@ def test_entrypoint_success_and_failure_output(tmp_path, monkeypatch, capsys):
     assert '"status": "COMPLETE"' in out and "HolDiv" not in out and "Date" not in out
     holder["rows"] = JAN[:-1]
     assert ep.main(args) == 1
-    assert '"error_category": "BusinessCalendarError"' in capsys.readouterr().out
+    assert '"error_category": "CALENDAR_MISSING"' in capsys.readouterr().out
+
+
+def test_calendar_job_preserves_safe_api_failure_category():
+    from src.application.jquants_calendar_job import JQuantsCalendarJob
+    from src.infrastructure.market_data.jquants_v2_client import JQuantsAuthenticationError
+
+    def fail_client():
+        raise JQuantsAuthenticationError("must not be emitted")
+
+    result = JQuantsCalendarJob(None, fail_client, lambda: None).run_locked(START, END)
+    assert result.reason == "AUTH_ERROR"
+    assert "must not be emitted" not in str(result.as_dict())
+
+
+def test_calendar_cli_event_uses_jst_execution_day_and_target_day(monkeypatch, capsys):
+    from datetime import datetime, timedelta, timezone
+    from src.application.jquants_calendar_job import CalendarJobResult
+    from src.entrypoints import ingest_jquants_calendar as ep
+
+    events = []
+
+    class Reporter:
+        exit_code = 0
+        events = ()
+
+        def emit(self, event, *, notify=False):
+            events.append(event)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 10, 30, 16, 30, tzinfo=timezone.utc)
+            return value.astimezone(tz) if tz else value
+
+    monkeypatch.setattr(ep, "datetime", FixedDateTime)
+    monkeypatch.setattr(ep, "JQuantsCalendarJob", lambda *args: SimpleNamespace(
+        run=lambda *a, **k: CalendarJobResult(0, "COMPLETE"),
+    ))
+    monkeypatch.setattr(ep, "_build_reporter", Reporter)
+    assert ep.main([
+        "--from", "2021-11-01", "--to", "2021-11-08", "--allow-network",
+    ]) == 0
+    capsys.readouterr()
+    assert events[0].day == "2026-10-31"
+    assert events[0].target_day == "2021-11-08"

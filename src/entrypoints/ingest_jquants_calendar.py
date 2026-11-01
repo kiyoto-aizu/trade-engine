@@ -3,7 +3,7 @@
 import argparse
 import json
 import sys
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 
 from src.config import config
@@ -16,6 +16,8 @@ from src.infrastructure.market_data.jquants_ops_events import JQuantsOpsEventRep
 from src.infrastructure.notification.jquants_notify import JQuantsSafeNotifier
 from src.application.jquants_ops_reporting import JQuantsOpsReporter
 from src.domain.jquants_ops_policy import JQuantsOpsEvent, REASONS
+
+JST = timezone(timedelta(hours=9))
 
 
 def _date_argument(value: str) -> date:
@@ -51,9 +53,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         reporter = _build_reporter()
         reporter.emit(JQuantsOpsEvent(
-            uuid4().hex, "CALENDAR", args.end.isoformat(), result.exit_code, result.status,
+            uuid4().hex, "CALENDAR", datetime.now(JST).date().isoformat(),
+            result.exit_code, result.status,
             result.reason if result.reason in REASONS else "STAGE_FAILED",
-            stop_scope=result.stop_scope,
+            stop_scope=result.stop_scope, target_day=args.end.isoformat(),
         ), notify=result.exit_code in (1, 2))
     except Exception:
         print("JQUANTS_LOCAL_EVENT_FAILED", file=sys.stderr)

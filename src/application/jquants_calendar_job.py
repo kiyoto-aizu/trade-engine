@@ -47,10 +47,15 @@ class JQuantsCalendarJob:
                 start, end, refresh=refresh,
             )
             result = CalendarJobResult(0, "COMPLETE", summary=summary, stop_scope="NONE")
-        except BusinessCalendarError:
-            result = CalendarJobResult(1, "FAILED", "BusinessCalendarError")
-        except Exception:
-            result = CalendarJobResult(1, "FAILED", "STAGE_FAILED")
+        except BusinessCalendarError as exc:
+            result = CalendarJobResult(1, "FAILED", exc.reason.value)
+        except Exception as exc:
+            category = getattr(exc, "category", None)
+            result = CalendarJobResult(1, "FAILED", category if isinstance(category, str) and category in {
+                "API_ERROR", "AUTH_ERROR", "PERMISSION_OR_CONTRACT_ERROR", "RATE_LIMITED",
+                "RATE_LIMIT_ABORTED", "TRANSPORT_ERROR", "SERVER_ERROR", "HTTP_ERROR",
+                "CLIENT_REQUEST_ERROR", "RESPONSE_SCHEMA_ERROR",
+            } else "STAGE_FAILED")
         finally:
             if client is not None:
                 try:

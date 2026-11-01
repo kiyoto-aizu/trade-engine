@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from src.domain.jquants_business_calendar import (
     BusinessCalendarError,
+    CalendarErrorReason,
     differing_dates,
     parse_rows,
 )
@@ -62,7 +63,8 @@ class JQuantsCalendarIngestion:
         if changed and not refresh:
             raise BusinessCalendarError(
                 f"stored calendar differs for {len(changed)} days (first "
-                f"{changed[0].isoformat()}); rerun with refresh to overwrite"
+                f"{changed[0].isoformat()}); rerun with refresh to overwrite",
+                reason=CalendarErrorReason.MISMATCH,
             )
         merged = {**existing, **fetched}
         if merged != existing:
