@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import math
 import re
+import json
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -28,6 +30,20 @@ VALID_STATUSES = frozenset({"COMPLETE", "ATTENTION", "FAILED"})
 BASE_NOT_EVALUATED = ("WARNINGS", "UNKNOWN_FIELDS", "SYMBOL_COUNT", "DISK_SPACE")
 RAW_SOURCES = frozenset({"fetch", "existing", "none"})
 _CODE = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
+
+
+def evaluate_summary(summary):
+    from src.domain.jquants_backfill_policy import ELAPSED_LIMIT_SECONDS
+    try:
+        path = summary.metrics_file
+        metrics = json.loads(Path(path).read_text(encoding="utf-8")) if path else None
+    except (OSError, ValueError, TypeError):
+        metrics = None
+    if not isinstance(metrics, dict):
+        return JQuantsEvaluation("No-Go", ("METRICS_UNREADABLE",), ("METRICS",))
+    return evaluate_metrics(
+        metrics, JQuantsGoThresholds(elapsed_limit_seconds=ELAPSED_LIMIT_SECONDS[summary.dataset]),
+    )
 
 
 @dataclass(frozen=True)

@@ -67,11 +67,14 @@ class JQuantsIngestionSummary:
     metrics_file: str | None = None
     warnings: list[str] = field(default_factory=list)
     error_category: str | None = None
+    metrics_persistence_failed: bool = False
 
     @property
     def exit_code(self) -> int:
         if self.error_category == "RATE_LIMIT_ABORTED":
             return 3
+        if self.metrics_persistence_failed:
+            return 1
         return {"COMPLETE": 0, "ATTENTION": 2, "FAILED": 1}[self.status]
 
     def as_dict(self) -> dict[str, Any]:
@@ -310,7 +313,10 @@ class JQuantsSingleDayIngestion:
             telemetry["canonical_size_bytes"] = summary.canonical_size_bytes
             summary.execution_metrics = telemetry
             if self.metrics_directory is not None:
-                summary.metrics_file = str(self._write_metrics(summary))
+                try:
+                    summary.metrics_file = str(self._write_metrics(summary))
+                except Exception:
+                    summary.metrics_persistence_failed = True
         return summary
 
     def _measure_disk_space(self) -> dict[str, Any]:

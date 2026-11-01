@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from datetime import date, timedelta
+from collections.abc import Mapping, Sequence
 
 CONSECUTIVE_FAILED_LIMIT = 3
 
@@ -15,6 +17,7 @@ RATE_LIMIT_ABORTED = "RATE_LIMIT_ABORTED"
 HALT_CATEGORIES = {
     "AUTH_ERROR": "HTTP_401",
     "PERMISSION_OR_CONTRACT_ERROR": "HTTP_403_IN_RANGE",
+    "DISK_SPACE_CRITICAL": "DISK_SPACE_CRITICAL",
 }
 JOB_STOP_CATEGORIES = {
     "CLIENT_REQUEST_ERROR": "UNEXPECTED_400_IN_RANGE",
@@ -51,3 +54,39 @@ def decide_stop(status: str, error_category: str | None, prior_consecutive_faile
     if prior_consecutive_failed + 1 >= CONSECUTIVE_FAILED_LIMIT:
         return StopDecision(StopAction.STOP_TODAY, "CONSECUTIVE_FAILED_3")
     return StopDecision(StopAction.CONTINUE, "FAILED_RECOVERY_TARGET")
+
+
+def repeated_daily_failure_stop(
+    stops: Sequence[Mapping[str, str]], history: Sequence[Mapping[str, str]],
+    categories: Mapping[date, int | None], today: date,
+) -> bool:
+    """Only CONSECUTIVE_FAILED on three adjacent executed business days promotes ALL_FLAG."""
+    stop_dates = {
+        date.fromisoformat(item["date"])
+        for item in stops if item["reason"] == "CONSECUTIVE_FAILED"
+    }
+    if not history:
+        return False
+    cause = history[-1]["reason"]
+    uninterrupted = []
+    for item in reversed(history):
+        if item["status"] != "FAILED" or item["reason"] != cause or item["reason"] == "RATE_LIMIT_ABORTED":
+            break
+        uninterrupted.append(item)
+    executed = {date.fromisoformat(item["date"]): item for item in reversed(uninterrupted)}
+    found = 0
+    cause = executed.get(today, {}).get("reason")
+    day = today
+    while found < 3:
+        category = categories.get(day)
+        if category not in (0, 1, 2, 3):
+            return False
+        if category in (1, 2):
+            event = executed.get(day)
+            if day not in stop_dates or event is None or event["status"] != "FAILED":
+                return False
+            if event["reason"] == "RATE_LIMIT_ABORTED" or event["reason"] != cause:
+                return False
+            found += 1
+        day -= timedelta(days=1)
+    return True

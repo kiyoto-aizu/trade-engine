@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,15 @@ STATE_FILE = "backfill_state.json"
 REVIEW_KINDS = ("PERMISSION_403", "OUT_OF_CONTRACT_400", "UNEXPECTED_400_IN_RANGE", "UNKNOWN_STATUS")
 REVIEW_DATASETS = ("daily", "minute")
 _STOP_REASONS = frozenset(reason.value for reason in StopReason)
+DAILY_REASONS = frozenset({
+    "AUTH_ERROR", "PERMISSION_ERROR", "DISK_SPACE_CRITICAL", "DISK_UNMEASURABLE",
+    "RATE_LIMIT_ABORTED", "CONSECUTIVE_FAILED", "STORAGE_OR_FORMAT_ERROR",
+    "SERVER_ERROR", "CLIENT_REQUEST_ERROR", "QUALITY_ERROR", "UNKNOWN_ERROR",
+    "REPEATED_TODAY_STOP", "RESPONSE_SCHEMA_ERROR", "RAW_STORE_ERROR",
+})
+_OPTIONAL_FIELDS = {
+    "review_clear_audit", "daily_history", "daily_stops", "shared_budget",
+}
 
 
 class BackfillStateError(Exception):
@@ -57,7 +67,9 @@ class JQuantsBackfillStateStore:
             state = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(state, dict):
                 raise ValueError
-            required_fields = set(_empty_state()) - {"review_clear_audit"}
+            if not set(state).issubset(_empty_state()):
+                raise ValueError
+            required_fields = set(_empty_state()) - _OPTIONAL_FIELDS
             if not required_fields.issubset(state):
                 raise ValueError
             merged = {**_empty_state(), **state}
@@ -74,13 +86,14 @@ class JQuantsBackfillStateStore:
             raise BackfillStateError("backfill state is unreadable") from None
 
     def save(self, state: dict[str, Any]) -> None:
-        self._directory.mkdir(parents=True, exist_ok=True)
         path = self._directory / STATE_FILE
         temporary = path.with_suffix(".tmp")
         try:
+            _validate_execution_state(state)
+            self._directory.mkdir(parents=True, exist_ok=True)
             temporary.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
             os.replace(temporary, path)
-        except OSError:
+        except (OSError, ValueError, TypeError, KeyError):
             # 停止が永続化されないまま続行しない。呼び出し側は失敗として終了する。
             raise BackfillStateError("backfill state is not writable") from None
 
@@ -205,11 +218,82 @@ class JQuantsBackfillStateStore:
         self.save(state)
         return True
 
+    def daily_stop(self, dataset: str, execution_day: date) -> str | None:
+        for item in self.load()["daily_stops"]:
+            if item["date"] == execution_day.isoformat() and (
+                item["scope"] == "STOP_TODAY" or item["dataset"] == dataset
+            ):
+                return item["reason"]
+        return None
+
+    def daily_history(self, dataset: str) -> list[dict[str, Any]]:
+        return self.load()["daily_history"].get(dataset, [])
+
+    def record_daily_result(
+        self, dataset: str, execution_day: date, status: str, reason: str,
+        *, stop_scope: str | None = None, stop_reason: str | None = None,
+        halt_reason: str | None = None,
+    ) -> None:
+        state = self.load()
+        state["daily_history"].setdefault(dataset, []).append({
+            "date": execution_day.isoformat(), "status": status, "reason": reason,
+        })
+        if stop_scope is not None:
+            state["daily_stops"].append({
+                "date": execution_day.isoformat(), "dataset": dataset,
+                "scope": stop_scope, "reason": stop_reason or reason,
+            })
+        if halt_reason is not None:
+            state["stop_flag"] = {
+                "scope": "ALL_FLAG", "reason": halt_reason, "set_on": execution_day.isoformat(),
+            }
+        self.save(state)
+
+    def daily_stop_history(self, dataset: str) -> list[dict[str, Any]]:
+        return [item for item in self.load()["daily_stops"] if item["dataset"] == dataset]
+
+    def budget(self, day: date, limit: float = 7200.0) -> dict[str, Any]:
+        state = self.load()
+        budget = state["shared_budget"]
+        if budget is not None and budget["in_progress"] is not None:
+            raise BackfillStateError("backfill budget is unresolved")
+        if budget is None or budget["date"] != day.isoformat():
+            budget = {
+                "date": day.isoformat(), "spent_seconds": 0.0, "held": False,
+                "limit_seconds": min(limit, 7200.0), "in_progress": None,
+            }
+        else:
+            budget["limit_seconds"] = min(budget["limit_seconds"], limit, 7200.0)
+        state["shared_budget"] = budget
+        self.save(state)
+        return budget
+
+    def begin_budget_day(self, day: date, dataset: str, target: date, held: bool) -> None:
+        state = self.load()
+        budget = state["shared_budget"]
+        if budget is None or budget["date"] != day.isoformat() or budget["in_progress"] is not None:
+            raise BackfillStateError("backfill budget is unresolved")
+        budget["held"] = budget["held"] or held
+        budget["in_progress"] = {"dataset": dataset, "target_date": target.isoformat()}
+        self.save(state)
+
+    def finish_budget_day(self, seconds: float, held: bool) -> float:
+        state = self.load()
+        budget = state["shared_budget"]
+        if budget is None or budget["in_progress"] is None:
+            raise BackfillStateError("backfill budget has no active day")
+        budget["spent_seconds"] += seconds
+        budget["held"] = budget["held"] or held
+        budget["in_progress"] = None
+        self.save(state)
+        return budget["spent_seconds"]
+
 
 def _empty_state() -> dict[str, Any]:
     return {
         "stop_flag": None, "today_stops": {}, "cause_stops": {}, "failed_streak": {},
         "review": {}, "review_clear_audit": {dataset: [] for dataset in REVIEW_DATASETS},
+        "daily_history": {}, "daily_stops": [], "shared_budget": None,
     }
 
 
@@ -219,6 +303,8 @@ def _validate_date(value: Any) -> None:
 
 
 def _validate_execution_state(state: dict[str, Any]) -> None:
+    if set(state) != set(_empty_state()):
+        raise ValueError
     flag = state["stop_flag"]
     if flag is not None:
         if not isinstance(flag, dict) or set(flag) != {"scope", "reason", "set_on"}:
@@ -255,6 +341,66 @@ def _validate_execution_state(state: dict[str, Any]) -> None:
                 raise ValueError
             _validate_date(event["target_date"])
             _validate_date(event["operation_date"])
+    for key in ("today_stops", "cause_stops"):
+        if not isinstance(state[key], dict):
+            raise ValueError
+        for dataset, events in state[key].items():
+            if dataset not in REVIEW_DATASETS or not isinstance(events, list):
+                raise ValueError
+            for event in events:
+                if not isinstance(event, dict) or set(event) != {"date", "reason"}:
+                    raise ValueError
+                _validate_date(event["date"])
+                if event["reason"] not in _STOP_REASONS:
+                    raise ValueError
+    if not isinstance(state["failed_streak"], dict):
+        raise ValueError
+    for dataset, count in state["failed_streak"].items():
+        if dataset not in REVIEW_DATASETS or type(count) is not int or count < 0:
+            raise ValueError
+    if not isinstance(state["daily_history"], dict):
+        raise ValueError
+    for dataset, events in state["daily_history"].items():
+        if dataset not in REVIEW_DATASETS or not isinstance(events, list):
+            raise ValueError
+        for event in events:
+            if not isinstance(event, dict) or set(event) != {"date", "status", "reason"}:
+                raise ValueError
+            _validate_date(event["date"])
+            if event["status"] not in ("COMPLETE", "ATTENTION", "FAILED"):
+                raise ValueError
+            if event["reason"] not in DAILY_REASONS | {"NONE"}:
+                raise ValueError
+    if not isinstance(state["daily_stops"], list):
+        raise ValueError
+    for event in state["daily_stops"]:
+        if not isinstance(event, dict) or set(event) != {"date", "dataset", "scope", "reason"}:
+            raise ValueError
+        _validate_date(event["date"])
+        if event["dataset"] not in REVIEW_DATASETS or event["scope"] not in ("STOP_JOB", "STOP_TODAY"):
+            raise ValueError
+        if event["reason"] not in DAILY_REASONS:
+            raise ValueError
+    budget = state["shared_budget"]
+    if budget is not None:
+        if not isinstance(budget, dict) or set(budget) != {
+            "date", "spent_seconds", "limit_seconds", "held", "in_progress",
+        }:
+            raise ValueError
+        _validate_date(budget["date"])
+        for key in ("spent_seconds", "limit_seconds"):
+            value = budget[key]
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ValueError
+        if not 0 < budget["limit_seconds"] <= 7200 or type(budget["held"]) is not bool:
+            raise ValueError
+        active = budget["in_progress"]
+        if active is not None:
+            if not isinstance(active, dict) or set(active) != {"dataset", "target_date"}:
+                raise ValueError
+            if active["dataset"] not in REVIEW_DATASETS:
+                raise ValueError
+            _validate_date(active["target_date"])
 
 
 def _now() -> str:

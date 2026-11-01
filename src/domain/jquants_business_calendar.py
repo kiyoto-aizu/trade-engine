@@ -8,12 +8,23 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from datetime import date, timedelta
+from enum import StrEnum
 
 VALID_CATEGORIES = frozenset({0, 1, 2, 3})
 
 
+class CalendarErrorReason(StrEnum):
+    INVALID = "CALENDAR_INVALID"
+    MISSING = "CALENDAR_MISSING"
+    MISMATCH = "CALENDAR_MISMATCH"
+
+
 class BusinessCalendarError(Exception):
     """営業日カレンダーが不正、または期間を覆わない。"""
+
+    def __init__(self, message: str, reason: CalendarErrorReason = CalendarErrorReason.INVALID):
+        super().__init__(message)
+        self.reason = reason
 
 
 def parse_rows(rows: Iterable[Mapping[str, object]], start: date, end: date) -> dict[date, int]:
@@ -48,7 +59,7 @@ def parse_rows(rows: Iterable[Mapping[str, object]], start: date, end: date) -> 
     if missing:
         raise BusinessCalendarError(
             f"calendar response does not cover the period ({len(missing)} days missing, "
-            f"first {missing[0].isoformat()})"
+            f"first {missing[0].isoformat()})", reason=CalendarErrorReason.MISSING,
         )
     return result
 

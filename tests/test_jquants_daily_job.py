@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +21,9 @@ DAY = date(2026, 10, 30)
 @pytest.fixture(autouse=True)
 def isolate_state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "JQUANTS_BACKFILL_STATE_DIRECTORY", tmp_path / "state")
+    monkeypatch.setattr(config, "JQUANTS_EXECUTION_METRICS_DIRECTORY", tmp_path / "metrics")
+    from src.infrastructure.notification.jquants_notify import JQuantsSafeNotifier
+    monkeypatch.setattr(JQuantsSafeNotifier, "__call__", lambda self, event: True)
 
 
 def guard():
@@ -68,6 +71,10 @@ class History:
 def job(results=None, categories=None, counts=None, verify=None):
     ingestion = Ingestion(results or {})
     cats = {DAY: 1} if categories is None else categories
+    state = JQuantsBackfillStateStore(config.JQUANTS_BACKFILL_STATE_DIRECTORY)
+    for dataset, count in (counts or {}).items():
+        for offset in reversed(range(1, count + 1)):
+            state.record_daily_result(dataset, DAY - timedelta(days=offset), "FAILED", "SERVER_ERROR")
     return JQuantsDailyJob(
         Calendar(cats), lambda: ingestion, History(counts), verify, guard=guard(),
     ), ingestion

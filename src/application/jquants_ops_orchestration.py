@@ -1,0 +1,176 @@
+"""Audit is upstream; one shared lock covers calendar, daily and conditional backfill."""
+
+from datetime import datetime, timedelta, time, timezone
+from uuid import uuid4
+
+from src.application.jquants_execution_guard import JQuantsExecutionBlockedError
+from src.domain.jquants_contract_range import calculate_earliest_available_date
+from src.domain.jquants_ops_policy import JQuantsOpsEvent, REASONS, STATUSES, daily_ready
+from src.application.jquants_ops_reporting import daily_event_records
+from src.infrastructure.market_data.jquants_backfill_state import BackfillLockedError, BackfillStateError
+
+JST = timezone(timedelta(hours=9))
+
+
+class JQuantsOpsOrchestration:
+    def __init__(
+        self, guard, calendar_factory, daily_factory, backfill_factory, reporter,
+        *, now_provider=lambda: datetime.now(timezone(timedelta(hours=9))),
+    ):
+        self.guard = guard
+        self.calendar_factory = calendar_factory
+        self.daily_factory = daily_factory
+        self.backfill_factory = backfill_factory
+        self.reporter = reporter
+        self.invocation_id = uuid4().hex
+        self.current_stage = "OPS"
+        self.now_provider = now_provider
+        self.scheduled = False
+
+    def event(self, stage, now, code, status, reason="NONE", dataset=None, scope="UNKNOWN",
+              scheduled=False, event_id="RESULT", notify=False, target_day=None):
+        execution_day = now.astimezone(JST).date() if now.tzinfo else now.date()
+        event = JQuantsOpsEvent(
+            self.invocation_id, stage, execution_day.isoformat(), code,
+            status if status in STATUSES else "FAILED",
+            reason if reason in REASONS else "STAGE_FAILED", dataset, scope, scheduled, event_id,
+            target_day,
+        )
+        self.reporter.emit(event, notify=notify)
+
+    def run(self, now, *, scheduled=False):
+        now = now.astimezone(JST) if now.tzinfo else now.replace(tzinfo=JST)
+        self.scheduled = scheduled
+        try:
+            with self.guard.locked() as state:
+                self._run_locked(now, state, scheduled)
+        except BackfillLockedError:
+            self.event("OPS", now, 2, "LOCK_SKIPPED", "GLOBAL_ALREADY_RUNNING",
+                       scheduled=scheduled, notify=True)
+            self._skip_after("CALENDAR", now, "STOP_STATE_UNKNOWN", scheduled)
+            self.event("CALENDAR", now, 2, "LOCK_SKIPPED", "GLOBAL_ALREADY_RUNNING",
+                       scheduled=scheduled)
+            if scheduled:
+                try:
+                    if self.reporter.repository.scheduled_lock_streak() >= 3:
+                        self.event(
+                            "OPS", now, 2, "LOCK_SKIPPED", "STALE_LOCK_CHECK_REQUIRED",
+                            scheduled=True, event_id="STALE_LOCK_CHECK_REQUIRED", notify=True,
+                        )
+                except Exception:
+                    self.event("OPS", now, 1, "FAILED", "LOCAL_EVENT_FAILED",
+                               event_id="LOCAL_EVENT_FAILED", scheduled=scheduled)
+        except JQuantsExecutionBlockedError:
+            self.event("OPS", now, 2, "BLOCKED_BY_FLAG", "ALL_FLAG", scope="ALL_FLAG",
+                       scheduled=scheduled, notify=True)
+            self._skip_after("CALENDAR", now, "ALL_FLAG", scheduled)
+        except BackfillStateError:
+            # Not a backfill cause notification (#53); daily save failure is a distinct event.
+            reason = "STOP_STATE_SAVE_FAILED" if self.current_stage == "DAILY" else "STATE_ERROR"
+            event_id = "STOP_STATE_SAVE_FAILED" if reason == "STOP_STATE_SAVE_FAILED" else "RESULT"
+            self.event(self.current_stage, now, 1, "FAILED", reason, scheduled=scheduled,
+                       event_id=event_id, notify=self.current_stage != "BACKFILL")
+            self._skip_after(self.current_stage, now, reason, scheduled)
+        except Exception:
+            self.event(self.current_stage, now, 1, "FAILED", "STAGE_FAILED",
+                       scheduled=scheduled, notify=True)
+            self._skip_after(self.current_stage, now, "STAGE_FAILED", scheduled)
+        if not any(event.stage == "OPS" and event.event_id == "RESULT" for event in self.reporter.events):
+            self.event("OPS", now, self.reporter.exit_code, self._status(), scheduled=scheduled)
+        return {
+            "invocation_id": self.invocation_id, "exit_code": self.reporter.exit_code,
+            "status": self._status(),
+            "events": [event.as_dict() for event in self.reporter.events],
+            "operational_go": "NOT_GRANTED",
+        }
+
+    def _status(self):
+        events = self.reporter.events
+        if any(event.status == "LOCK_SKIPPED" for event in events):
+            return "LOCK_SKIPPED"
+        if self.reporter.exit_code:
+            return "FAILED"
+        if any(event.status == "BUDGET_EXHAUSTED" for event in events):
+            return "BUDGET_EXHAUSTED"
+        if any(event.reason in (
+            "COMPLETED_WITH_REVIEW", "NOT_PUBLISHED", "NO_GO", "EVALUATION_INCOMPLETE",
+        ) for event in events):
+            return "ATTENTION"
+        if any(event.status == "SKIPPED" for event in events):
+            return "SKIPPED"
+        return "COMPLETE"
+
+    def _skip_after(self, stage, now, reason, scheduled):
+        stages = ("CALENDAR", "DAILY", "BACKFILL")
+        start = stages.index(stage) if stage in stages else -1
+        for following in stages[start + 1:]:
+            self.event(following, now, 0, "SKIPPED", reason, scheduled=scheduled)
+
+    def _run_locked(self, now, state, scheduled):
+        self.current_stage = "CALENDAR"
+        today = now.date()
+        calendar = self.calendar_factory().run_locked(
+            calculate_earliest_available_date("daily", today), today, refresh=False,
+        )
+        self.event("CALENDAR", now, calendar.exit_code, calendar.status, calendar.reason,
+                   scope=(state.stop_flag() or {}).get("scope", "NONE"),
+                   scheduled=scheduled, notify=calendar.exit_code in (1, 2),
+                   target_day=today.isoformat())
+        if calendar.exit_code != 0 or calendar.status != "COMPLETE":
+            self._skip_after("CALENDAR", now, "CALENDAR_NOT_READY", scheduled)
+            return
+        if self.reporter.exit_code:
+            self._skip_after("CALENDAR", now, "LOCAL_EVENT_FAILED", scheduled)
+            return
+        self.current_stage = "DAILY"
+        current_now = self.now_provider()
+        if current_now.date() != today:
+            self.event("DAILY", now, 2, "JST_DAY_CHANGED", "JST_DAY_CHANGED", scheduled=scheduled)
+            self._skip_after("DAILY", now, "JST_DAY_CHANGED", scheduled)
+            return
+        daily = self.daily_factory().run_locked(today, current_now, state, time(17))
+        for daily_event, notify, notification_failed in daily_event_records(
+            daily, self.invocation_id, now.date(),
+            (state.stop_flag() or {}).get("scope", "NONE"),
+        ):
+            daily_event = daily_event.__class__(
+                **{**daily_event.as_dict(), "scheduled": scheduled}
+            )
+            self.reporter.emit(daily_event, notify=notify)
+            if notification_failed:
+                self.reporter._failure(daily_event, "SLACK_NOTIFY_FAILED")
+        if not daily_ready(daily, today) or self.reporter.exit_code:
+            self._skip_after("DAILY", now, "DAILY_NOT_READY", scheduled)
+            return
+        self.current_stage = "BACKFILL"
+        if self.now_provider().date() != today:
+            self.event("BACKFILL", now, 2, "JST_DAY_CHANGED", "JST_DAY_CHANGED", scheduled=scheduled)
+            return
+        flag = state.stop_flag()
+        if flag is not None:
+            self.event("BACKFILL", now, 2, "BLOCKED_BY_FLAG", flag["scope"], "daily",
+                       scope=flag["scope"], scheduled=scheduled)
+            self.event("BACKFILL", now, 0, "SKIPPED", "BACKFILL_NOT_COMPLETE", "minute",
+                       scope=flag["scope"], scheduled=scheduled)
+            return
+        backfill = self.backfill_factory()
+        for dataset in ("daily", "minute"):
+            result = backfill.run_locked(
+                dataset, calculate_earliest_available_date(dataset, today),
+                today - timedelta(days=1), today=today,
+            )
+            # Cause-specific flag/state notifications belong to #53.
+            self.event(
+                "BACKFILL", now, result.exit_code, result.outcome.value, result.outcome.value,
+                dataset, scope=(result.stop_flag or {}).get("scope", "NONE"),
+                scheduled=scheduled,
+                notify=result.outcome.value == "COMPLETED_WITH_REVIEW",
+            )
+            if result.outcome.value != "COMPLETED" or result.remaining_targets or self.reporter.exit_code:
+                if dataset == "daily":
+                    self.event("BACKFILL", now, 0, "SKIPPED", "BACKFILL_NOT_COMPLETE",
+                               "minute", scheduled=scheduled)
+                break
+        self.event("OPS", now, self.reporter.exit_code, self._status(),
+                   scope=(state.stop_flag() or {}).get("scope", "NONE"),
+                   scheduled=scheduled)

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
+from time import monotonic
 from typing import Any, Protocol
 
 from src.application.jquants_single_day_ingestion import JQuantsIngestionSummary
@@ -50,6 +51,7 @@ class BackfillOutcome(StrEnum):
     STOPPED_TODAY = "STOPPED_TODAY"
     LOCK_SKIPPED = "LOCK_SKIPPED"
     STOPPED = "STOPPED"
+    JST_DAY_CHANGED = "JST_DAY_CHANGED"
 
 
 class BackfillStopFlagStatus(StrEnum):
@@ -68,6 +70,7 @@ _EXIT_CODES = {
     BackfillOutcome.STOPPED_TODAY: 2,
     BackfillOutcome.LOCK_SKIPPED: 2,
     BackfillOutcome.STOPPED: 1,
+    BackfillOutcome.JST_DAY_CHANGED: 2,
 }
 
 
@@ -125,6 +128,7 @@ class JQuantsBackfillUseCase:
         today_provider: Callable[[], date] = jst_today,
         volume_probe: Callable[[Path | str], tuple[int, int]] = measure_volume,
         budget_seconds: float = DAILY_BUDGET_SECONDS,
+        clock: Callable[[], float] = monotonic,
     ) -> None:
         self._planner = planner
         self._ingestion = ingestion
@@ -134,6 +138,7 @@ class JQuantsBackfillUseCase:
         self._today_provider = today_provider
         self._volume_probe = volume_probe
         self._budget_seconds = budget_seconds
+        self._clock = clock
         self._max_days: int | None = None
     def run(
         self, dataset: str, start: date, end: date, *, max_days: int | None = None
@@ -143,17 +148,26 @@ class JQuantsBackfillUseCase:
         result = BackfillResult(dataset, BackfillOutcome.COMPLETED)
         try:
             with self._state.global_lock():
-                blocked = self._blocked_outcome(dataset, today)
-                if blocked is not None:
-                    result.outcome = blocked
-                else:
-                    result = self._run_locked(dataset, start, end, today, result)
-                result.stop_flag = self._state.stop_flag()
-                return result
+                return self.run_locked(dataset, start, end, max_days=max_days, today=today)
         except BackfillLockedError:
             result.outcome = BackfillOutcome.LOCK_SKIPPED
             result.stop_flag_status = BackfillStopFlagStatus.UNKNOWN_LOCK_HELD
             return result
+
+    def run_locked(
+        self, dataset: str, start: date, end: date, *,
+        max_days: int | None = None, today: date | None = None,
+    ) -> BackfillResult:
+        self._max_days = max_days
+        today = today or self._today_provider()
+        result = BackfillResult(dataset, BackfillOutcome.COMPLETED)
+        blocked = self._blocked_outcome(dataset, today)
+        if blocked is not None:
+            result.outcome = blocked
+        else:
+            result = self._run_locked(dataset, start, end, today, result)
+        result.stop_flag = self._state.stop_flag()
+        return result
 
     def _blocked_outcome(self, dataset: str, today: date) -> BackfillOutcome | None:
         if self._state.stop_flag() is not None:
@@ -165,72 +179,101 @@ class JQuantsBackfillUseCase:
     def _run_locked(
         self, dataset: str, start: date, end: date, today: date, result: BackfillResult
     ) -> BackfillResult:
+        budget = self._state.budget(today, self._budget_seconds)
+        result.spent_seconds = budget["spent_seconds"]
         plan = self._planner.plan(dataset, start, end, today)
         reviewed = self._state.review_dates(dataset)
         result.review_excluded = sorted(d for d in reviewed if start <= d <= end)
         targets = sorted(d for d in plan.targets if d not in reviewed)
         result.attention = list(plan.attention)
-        held = False
+        held = budget["held"]
         sizes = dict(DEFAULT_RUN_BYTES[dataset])
         for index, day in enumerate(targets):
             result.remaining_targets = len(targets) - index
             now = self._today_provider()
+            if now != today:
+                if not is_within_contract(dataset, day, now):
+                    result.skipped_out_of_range.append(day)
+                result.outcome = BackfillOutcome.JST_DAY_CHANGED
+                return result
             if not is_within_contract(dataset, day, now):
                 # The range rolled over after planning; skip without sending a request.
                 result.skipped_out_of_range.append(day)
                 continue
-            if result.spent_seconds >= effective_budget_seconds(self._budget_seconds, held) or (
+            if result.spent_seconds >= effective_budget_seconds(budget["limit_seconds"], held) or (
                 self._max_days is not None and len(result.processed) >= self._max_days
             ):
                 result.outcome = BackfillOutcome.BUDGET_EXHAUSTED
                 if result.processed:
                     self._state.reset_today_stops(dataset)
                 return result
-            disk = self._check_disk(sizes)
-            if disk is None:
-                self._stop(result, dataset, now, StopScope.END_JOB, StopReason.DISK_FLOOR)
+            started = self._clock()
+            self._state.begin_budget_day(today, dataset, day, held)
+            held, stopped = self._process_day(result, dataset, day, now, sizes, held)
+            result.spent_seconds = self._state.finish_budget_day(
+                self._clock() - started, held,
+            )
+            result.remaining_targets = len(targets) - index - 1
+            if stopped:
                 return result
-            verdict, floor_ok = disk
-            if verdict is DiskVerdict.STOP:
-                self._stop(result, dataset, now, StopScope.ALL_FLAG, StopReason.DISK_SPACE_CRITICAL)
+            if self._today_provider() != today:
+                result.outcome = BackfillOutcome.JST_DAY_CHANGED
                 return result
-            if not floor_ok:
-                self._stop(result, dataset, now, StopScope.BACKFILL_FLAG, StopReason.DISK_FLOOR)
-                return result
-            held = held or verdict is DiskVerdict.HOLD
-            summary = self._ingestion.run(dataset=dataset, date=day.isoformat())
-            result.processed.append(day)
-            elapsed = float(summary.durations_seconds.get("total", 0.0))
-            result.spent_seconds += elapsed
-            if summary.raw_size_bytes > 0:
-                sizes["raw"] = summary.raw_size_bytes
-            if summary.canonical_size_bytes > 0:
-                sizes["canonical"] = summary.canonical_size_bytes
-            streak = next_failed_streak(self._state.failed_streak(dataset), summary.status)
-            self._state.set_failed_streak(dataset, streak)
-            metrics = summary.execution_metrics
-            decision = decide_after_day(DayObservation(
-                dataset=dataset, target_date=day, today=now, status=summary.status,
-                error_category=summary.error_category, warnings=tuple(summary.warnings),
-                rate_limit_429_count=_count(metrics.get("rate_limit_429_count")),
-                retry_count=_count(metrics.get("retry_count")),
-                elapsed_seconds=elapsed, failed_streak=streak,
-            ))
-            if summary.status == "ATTENTION" and day not in result.attention:
-                result.attention.append(day)
-            if decision.scope is not StopScope.NONE:
-                assert decision.reason is not None
-                self._record_review(dataset, day, decision.reason)
-                result.remaining_targets = len(targets) - index - 1
-                self._stop(result, dataset, now, decision.scope, decision.reason)
-                return result
-            held = held or decision.hold
         result.remaining_targets = 0
         if result.processed:
             self._state.reset_today_stops(dataset)
         if result.attention or plan.in_progress or result.review_excluded:
             result.outcome = BackfillOutcome.COMPLETED_WITH_REVIEW
         return result
+
+    def _process_day(self, result, dataset, day, now, sizes, held) -> tuple[bool, bool]:
+        disk = self._check_disk(sizes)
+        if disk is None:
+            self._stop(result, dataset, now, StopScope.END_JOB, StopReason.DISK_FLOOR)
+            return held, True
+        verdict, floor_ok = disk
+        if verdict is DiskVerdict.STOP:
+            self._stop(result, dataset, now, StopScope.ALL_FLAG, StopReason.DISK_SPACE_CRITICAL)
+            return held, True
+        if not floor_ok:
+            self._stop(result, dataset, now, StopScope.BACKFILL_FLAG, StopReason.DISK_FLOOR)
+            return held, True
+        held = held or verdict is DiskVerdict.HOLD
+        # A newly observed Hold reduces the *shared* allowance before starting this date.
+        active_budget = self._state.load()["shared_budget"]
+        if active_budget["spent_seconds"] >= effective_budget_seconds(
+            active_budget["limit_seconds"], held,
+        ):
+            result.outcome = BackfillOutcome.BUDGET_EXHAUSTED
+            return held, True
+        summary = self._ingestion.run(dataset=dataset, date=day.isoformat())
+        result.processed.append(day)
+        elapsed = float(summary.durations_seconds.get("total", 0.0))
+        if summary.raw_size_bytes > 0:
+            sizes["raw"] = summary.raw_size_bytes
+        if summary.canonical_size_bytes > 0:
+            sizes["canonical"] = summary.canonical_size_bytes
+        streak = next_failed_streak(self._state.failed_streak(dataset), summary.status)
+        self._state.set_failed_streak(dataset, streak)
+        metrics = summary.execution_metrics
+        decision = decide_after_day(DayObservation(
+            dataset=dataset, target_date=day, today=now, status=summary.status,
+            error_category=summary.error_category, warnings=tuple(summary.warnings),
+            rate_limit_429_count=_count(metrics.get("rate_limit_429_count")),
+            retry_count=_count(metrics.get("retry_count")),
+            elapsed_seconds=elapsed, failed_streak=streak,
+        ))
+        if summary.status == "ATTENTION" and day not in result.attention:
+            result.attention.append(day)
+        if decision.scope is not StopScope.NONE:
+            assert decision.reason is not None
+            self._record_review(dataset, day, decision.reason)
+            self._stop(result, dataset, now, decision.scope, decision.reason)
+            return held, True
+        if getattr(summary, "metrics_persistence_failed", False):
+            result.outcome = BackfillOutcome.STOPPED
+            return held, True
+        return held or decision.hold, False
 
     def _record_review(self, dataset: str, day: date, reason: StopReason) -> None:
         if reason is StopReason.PERMISSION_ERROR:

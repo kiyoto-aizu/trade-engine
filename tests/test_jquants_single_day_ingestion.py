@@ -403,6 +403,18 @@ def test_429_abort_sends_safe_slack_critical_notification(stores):
     assert "429回数=3" in sent[0]
 
 
+def test_429_final_metrics_write_failure_retains_primary_outcome(stores, tmp_path, monkeypatch):
+    ingestion = JQuantsSingleDayIngestion(
+        *stores, client_factory=lambda: Client(aborting_pages()),
+        metrics_directory=tmp_path / "metrics", notifier=lambda message: True,
+    )
+    monkeypatch.setattr(ingestion, "_write_metrics", lambda summary: (_ for _ in ()).throw(OSError("SECRET")))
+    result = ingestion.run(dataset="daily", date=DAY)
+    assert result.exit_code == 3 and result.error_category == "RATE_LIMIT_ABORTED"
+    assert result.status == "FAILED" and result.metrics_persistence_failed
+    assert "SECRET" not in json.dumps(result.as_dict())
+
+
 def test_slack_false_return_adds_warning_without_changing_result(stores):
     result = JQuantsSingleDayIngestion(
         *stores, client_factory=lambda: Client(aborting_pages()), notifier=lambda _m: False

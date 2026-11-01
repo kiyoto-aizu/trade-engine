@@ -20,13 +20,14 @@ from src.domain.jquants_consumer_contract import ConsumerContractError
 from src.domain.jquants_contract_range import calculate_earliest_available_date
 from src.infrastructure.market_data.jquants_backfill_state import (
     BackfillStateError,
+    BackfillLockedError,
     JQuantsBackfillStateStore,
 )
 from src.infrastructure.market_data.jquants_calendar_store import JQuantsCalendarStore
 from src.infrastructure.market_data.jquants_canonical_store import JQuantsCanonicalStore
 from src.infrastructure.market_data.jquants_raw_ledger_state import RawStoreLedgerState
 from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStore, JQuantsRawStoreError
-from src.infrastructure.notification.slack_notify import notify_critical
+from src.infrastructure.notification.jquants_notify import notify_critical
 
 
 def _date_argument(value: str) -> date:
@@ -72,34 +73,40 @@ def main(argv: list[str] | None = None) -> int:
         today = jst_today()
         start = args.start or calculate_earliest_available_date(args.dataset, today)
         end = args.end or today - timedelta(days=1)
-        raw_store = JQuantsRawStore()
-        planner = JQuantsBackfillPlanner(
-            JQuantsCalendarStore(config.JQUANTS_CALENDAR_DIRECTORY),
-            RawStoreLedgerState(raw_store),
-        )
-        if not args.execute:
-            plan = planner.plan(args.dataset, start, end, today)
-            with state.global_lock():
+        with state.global_lock():
+            raw_store = JQuantsRawStore()
+            planner = JQuantsBackfillPlanner(
+                JQuantsCalendarStore(config.JQUANTS_CALENDAR_DIRECTORY),
+                RawStoreLedgerState(raw_store),
+            )
+            if not args.execute:
+                plan = planner.plan(args.dataset, start, end, today)
                 flag = state.stop_flag()
-            print(json.dumps({
-                "status": "DRY_RUN", "dataset": args.dataset,
-                "stop_flag": flag,
-                "summary": {k: len(v) for k, v in plan.as_dict().items()},
-            }, sort_keys=True))
-            return 0
-        canonical_store = JQuantsCanonicalStore(config.JQUANTS_CANONICAL_DIRECTORY)
-        ingestion = JQuantsSingleDayIngestion(
-            raw_store, canonical_store,
-            metrics_directory=config.JQUANTS_EXECUTION_METRICS_DIRECTORY,
-            notifier=notify_critical,
-        )
-        usecase = JQuantsBackfillUseCase(
-            planner, ingestion, state,
-            raw_directory=raw_store.raw_directory,
-            canonical_directory=canonical_store.directory,
-            **({} if args.budget_seconds is None else {"budget_seconds": args.budget_seconds}),
-        )
-        result = usecase.run(args.dataset, start, end, max_days=args.max_days)
+                print(json.dumps({
+                    "status": "DRY_RUN", "dataset": args.dataset,
+                    "stop_flag": flag,
+                    "summary": {k: len(v) for k, v in plan.as_dict().items()},
+                }, sort_keys=True))
+                return 0
+            canonical_store = JQuantsCanonicalStore(config.JQUANTS_CANONICAL_DIRECTORY)
+            ingestion = JQuantsSingleDayIngestion(
+                raw_store, canonical_store,
+                metrics_directory=config.JQUANTS_EXECUTION_METRICS_DIRECTORY,
+                notifier=notify_critical,
+            )
+            usecase = JQuantsBackfillUseCase(
+                planner, ingestion, state,
+                raw_directory=raw_store.raw_directory,
+                canonical_directory=canonical_store.directory,
+                **({} if args.budget_seconds is None else {"budget_seconds": args.budget_seconds}),
+            )
+            result = usecase.run_locked(args.dataset, start, end, max_days=args.max_days, today=today)
+    except BackfillLockedError:
+        print(json.dumps({
+            "dataset": args.dataset, "outcome": "LOCK_SKIPPED", "exit_code": 2,
+            "stop_flag": None, "stop_flag_status": "UNKNOWN_LOCK_HELD",
+        }, sort_keys=True))
+        return 2
     except (BackfillStateError, BusinessCalendarError, ConsumerContractError,
             JQuantsRawStoreError, OSError, ValueError, sqlite3.Error) as exc:
         print(json.dumps({"status": "FAILED", "error_category": type(exc).__name__}))
