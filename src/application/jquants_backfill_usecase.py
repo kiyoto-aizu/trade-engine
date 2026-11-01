@@ -287,12 +287,10 @@ class JQuantsBackfillUseCase:
                 # 同じ日を次回も再送しないよう、400・未知statusも要確認に入れる。
                 self._state.mark_review(reason.value, dataset, day)
         except BackfillStateError as exc:
-            if not exc.write_failure or exc.dataset is not None:
+            contextual_error = exc.with_write_context(reason.value, dataset)
+            if contextual_error is None:
                 raise
-            raise BackfillStateError(
-                "backfill state is not writable", write_failure=True,
-                cause_reason=reason.value, dataset=dataset,
-            ) from None
+            raise contextual_error from None
 
     def _stop(
         self, result: BackfillResult, dataset: str, day: date, scope: StopScope,
@@ -321,12 +319,12 @@ class JQuantsBackfillUseCase:
                         dataset=dataset,
                     )
         except BackfillStateError as exc:
-            if not exc.write_failure or exc.dataset is not None:
+            contextual_error = exc.with_write_context(
+                exc.cause_reason or reason.value, dataset,
+            )
+            if contextual_error is None:
                 raise
-            raise BackfillStateError(
-                "backfill state is not writable", write_failure=True,
-                cause_reason=exc.cause_reason or reason.value, dataset=dataset,
-            ) from None
+            raise contextual_error from None
 
     def _check_disk(self, sizes: dict[str, int]) -> tuple[DiskVerdict, bool] | None:
         """Return (verdict, floor_ok) before one day's fetch, or None when unmeasurable."""

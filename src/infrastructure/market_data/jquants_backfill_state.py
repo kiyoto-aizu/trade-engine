@@ -42,6 +42,19 @@ class BackfillStateError(Exception):
         self.cause_reason = cause_reason
         self.dataset = dataset
 
+    def with_write_context(
+        self, cause_reason: str, dataset: str | None,
+    ) -> BackfillStateError | None:
+        if (
+            not self.write_failure or self.dataset is not None
+            or (dataset is None and self.cause_reason is not None)
+        ):
+            return None
+        return BackfillStateError(
+            "backfill state is not writable", write_failure=True,
+            cause_reason=self.cause_reason or cause_reason, dataset=dataset,
+        )
+
 
 class BackfillLockedError(BackfillStateError):
     """Another run holds the global lock. Never wait for it or take it over."""
@@ -121,12 +134,10 @@ class JQuantsBackfillStateStore:
         try:
             self.save(state)
         except BackfillStateError as exc:
-            if not exc.write_failure:
+            contextual_error = exc.with_write_context(reason, dataset)
+            if contextual_error is None:
                 raise
-            raise BackfillStateError(
-                "backfill state is not writable", write_failure=True,
-                cause_reason=reason, dataset=dataset,
-            ) from None
+            raise contextual_error from None
 
     def clear_stop_flag(self) -> bool:
         state = self.load()
@@ -273,12 +284,12 @@ class JQuantsBackfillStateStore:
         try:
             self.save(state)
         except BackfillStateError as exc:
-            if not exc.write_failure:
+            contextual_error = exc.with_write_context(
+                stop_reason or halt_reason or reason, dataset,
+            )
+            if contextual_error is None:
                 raise
-            raise BackfillStateError(
-                "backfill state is not writable", write_failure=True,
-                cause_reason=stop_reason or halt_reason or reason, dataset=dataset,
-            ) from None
+            raise contextual_error from None
 
     def daily_stop_history(self, dataset: str) -> list[dict[str, Any]]:
         return [item for item in self.load()["daily_stops"] if item["dataset"] == dataset]

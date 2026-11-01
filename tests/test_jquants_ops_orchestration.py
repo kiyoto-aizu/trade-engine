@@ -24,7 +24,7 @@ from src.application.jquants_ops_reporting import (
     JQuantsOpsReporter, JQuantsReportedIngestion, daily_event_records,
 )
 from src.domain.jquants_backfill_plan import BackfillPlan
-from src.domain.jquants_backfill_policy import StopReason
+from src.domain.jquants_backfill_policy import StopReason, StopScope
 from src.domain.jquants_daily_plan import DailyDecision
 from src.domain.jquants_daily_stop_policy import StopAction, repeated_daily_failure_stop
 from src.domain.jquants_disk_space import DiskVerdict
@@ -799,6 +799,79 @@ def test_backfill_stop_persistence_failure_preserves_cause_and_dataset(
     assert SECRET not in str(error.value)
 
 
+def test_record_cause_stop_write_failure_preserves_cause_and_dataset(tmp_path, monkeypatch):
+    usecase, state, _ = budget_usecase(tmp_path)
+    original_save = state.save
+
+    def fail_cause_write(value):
+        if value["cause_stops"].get("daily"):
+            raise BackfillStateError(SECRET, write_failure=True)
+        original_save(value)
+
+    monkeypatch.setattr(state, "save", fail_cause_write)
+
+    with pytest.raises(BackfillStateError) as error:
+        usecase._stop(
+            BackfillResult("daily", BackfillOutcome.COMPLETED),
+            "daily", DAY, StopScope.END_JOB, StopReason.UNEXPECTED_400_IN_RANGE,
+        )
+
+    assert error.value.write_failure
+    assert error.value.cause_reason == "UNEXPECTED_400_IN_RANGE"
+    assert error.value.dataset == "daily"
+    assert SECRET not in str(error.value)
+
+
+def test_repeated_today_flag_write_failure_preserves_reason_and_dataset(tmp_path, monkeypatch):
+    usecase, state, _ = budget_usecase(tmp_path)
+    for day in (DAY - timedelta(days=2), DAY - timedelta(days=1)):
+        state.record_today_stop("daily", day, StopReason.RATE_LIMITED.value)
+    original_save = state.save
+
+    def fail_flag_write(value):
+        if value["stop_flag"] is not None:
+            raise BackfillStateError(SECRET, write_failure=True)
+        original_save(value)
+
+    monkeypatch.setattr(state, "save", fail_flag_write)
+
+    with pytest.raises(BackfillStateError) as error:
+        usecase._stop(
+            BackfillResult("daily", BackfillOutcome.COMPLETED),
+            "daily", DAY, StopScope.TODAY, StopReason.RATE_LIMITED,
+        )
+
+    assert error.value.write_failure
+    assert error.value.cause_reason == "REPEATED_TODAY_STOP"
+    assert error.value.dataset == "daily"
+    assert SECRET not in str(error.value)
+
+
+def test_repeated_review_flag_write_failure_preserves_reason_and_dataset(tmp_path, monkeypatch):
+    usecase, state, _ = budget_usecase(tmp_path)
+    for day in (DAY - timedelta(days=2), DAY - timedelta(days=1)):
+        state.record_cause_stop("daily", day, StopReason.UNKNOWN_STATUS.value)
+    original_save = state.save
+
+    def fail_flag_write(value):
+        if value["stop_flag"] is not None:
+            raise BackfillStateError(SECRET, write_failure=True)
+        original_save(value)
+
+    monkeypatch.setattr(state, "save", fail_flag_write)
+
+    with pytest.raises(BackfillStateError) as error:
+        usecase._stop(
+            BackfillResult("daily", BackfillOutcome.COMPLETED),
+            "daily", DAY, StopScope.END_JOB, StopReason.UNKNOWN_STATUS,
+        )
+
+    assert error.value.write_failure
+    assert error.value.cause_reason == "REPEATED_REVIEW_STOP"
+    assert error.value.dataset == "daily"
+    assert SECRET not in str(error.value)
+
+
 @pytest.mark.parametrize("field,value", [
     ("daily_history", []), ("daily_stops", {}), ("shared_budget", {"date": SECRET}),
     ("failed_streak", {"daily": -1}), ("today_stops", {"daily": [{"date": DAY.isoformat(), "reason": SECRET}]}),
@@ -818,6 +891,25 @@ def test_invalid_state_payload_is_not_classified_as_write_failure(tmp_path):
         state.save({"invalid": SECRET})
     assert not error.value.write_failure
     assert not (tmp_path / "backfill_state.json").exists()
+
+
+def test_set_stop_flag_without_dataset_preserves_safe_write_context(tmp_path, monkeypatch):
+    state = JQuantsBackfillStateStore(tmp_path)
+    monkeypatch.setattr(
+        state, "save",
+        lambda value: (_ for _ in ()).throw(
+            BackfillStateError(SECRET, write_failure=True)
+        ),
+    )
+
+    with pytest.raises(BackfillStateError) as error:
+        state.set_stop_flag("BACKFILL_FLAG", "DISK_FLOOR", DAY)
+
+    assert error.value.write_failure
+    assert error.value.cause_reason == "DISK_FLOOR"
+    assert error.value.dataset is None
+    assert str(error.value) == "backfill state is not writable"
+    assert SECRET not in str(error.value)
 
 
 def test_legacy_state_gets_safe_new_fields_without_losing_flags_or_reviews(tmp_path):
