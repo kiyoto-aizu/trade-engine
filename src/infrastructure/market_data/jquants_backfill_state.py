@@ -33,7 +33,9 @@ _OPTIONAL_FIELDS = {
 
 
 class BackfillStateError(Exception):
-    pass
+    def __init__(self, message: str, *, write_failure: bool = False) -> None:
+        super().__init__(message)
+        self.write_failure = write_failure
 
 
 class BackfillLockedError(BackfillStateError):
@@ -95,7 +97,9 @@ class JQuantsBackfillStateStore:
             os.replace(temporary, path)
         except (OSError, ValueError, TypeError, KeyError):
             # 停止が永続化されないまま続行しない。呼び出し側は失敗として終了する。
-            raise BackfillStateError("backfill state is not writable") from None
+            raise BackfillStateError(
+                "backfill state is not writable", write_failure=True,
+            ) from None
 
     def stop_flag(self) -> dict[str, str] | None:
         return self.load()["stop_flag"]

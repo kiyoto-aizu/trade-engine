@@ -24,11 +24,15 @@ from src.application.jquants_ops_reporting import (
     JQuantsOpsReporter, JQuantsReportedIngestion, daily_event_records,
 )
 from src.domain.jquants_backfill_plan import BackfillPlan
+from src.domain.jquants_backfill_policy import StopReason
 from src.domain.jquants_daily_plan import DailyDecision
 from src.domain.jquants_daily_stop_policy import StopAction, repeated_daily_failure_stop
 from src.domain.jquants_disk_space import DiskVerdict
 from src.domain.jquants_ops_policy import JQuantsOpsEvent, aggregate_exit_codes, daily_ready
-from src.infrastructure.market_data.jquants_backfill_state import BackfillStateError, JQuantsBackfillStateStore
+from src.infrastructure.market_data.jquants_backfill_state import (
+    BackfillStateError,
+    JQuantsBackfillStateStore,
+)
 from src.infrastructure.market_data.jquants_ops_events import JQuantsOpsEventRepository
 from src.infrastructure.notification.jquants_notify import JQuantsSafeNotifier
 
@@ -187,6 +191,58 @@ def test_backfill_flag_does_not_stop_calendar_or_daily(tmp_path):
     assert any(call[0] == "DAILY" for call in calls)
 
 
+@pytest.mark.parametrize("scope,reason", [
+    ("BACKFILL_FLAG", "DISK_FLOOR"),
+    ("ALL_FLAG", "AUTH_ERROR"),
+])
+def test_backfill_stop_flags_notify_reason_scope_and_dataset(tmp_path, scope, reason):
+    backfill = BackfillResult(
+        "daily", BackfillOutcome.STOPPED, StopReason(reason),
+        stop_flag={"scope": scope, "reason": reason, "set_on": DAY.isoformat()},
+    )
+    job, _, calls = ops(tmp_path, backfill=backfill)
+
+    result = job.run(NOW, scheduled=True)
+
+    event = next(
+        event for event in result["events"]
+        if event["stage"] == "BACKFILL" and event["dataset"] == "daily"
+    )
+    notified = [item[1] for item in calls if item[0] == "notify"]
+    assert result["exit_code"] == 1
+    assert event["reason"] == reason
+    assert event["stop_scope"] == scope
+    assert any(
+        item.stage == "BACKFILL" and item.dataset == "daily"
+        and item.reason == reason and item.stop_scope == scope
+        for item in notified
+    )
+
+
+@pytest.mark.parametrize("notify", [True, False])
+def test_backfill_state_write_failure_notifies_and_fails_safely(tmp_path, notify):
+    job, _, calls = ops(tmp_path, notify=notify)
+
+    def fail_write(*args, **kwargs):
+        raise BackfillStateError(SECRET, write_failure=True)
+
+    job.backfill_factory = lambda: SimpleNamespace(run_locked=fail_write)
+    result = job.run(NOW, scheduled=True)
+
+    event = next(
+        event for event in result["events"]
+        if event["stage"] == "BACKFILL" and event["event_id"] == "STOP_STATE_SAVE_FAILED"
+    )
+    notified = [item[1] for item in calls if item[0] == "notify"]
+    assert result["exit_code"] == 1
+    assert event["scheduled"] is True
+    assert SECRET not in json.dumps(result)
+    if notify:
+        assert any(item.event_id == "STOP_STATE_SAVE_FAILED" for item in notified)
+    else:
+        assert any(item["event_id"] == "SLACK_NOTIFY_FAILED" for item in result["events"])
+
+
 def test_scheduled_stale_skips_exclude_manual_and_never_take_lock(tmp_path):
     job, state, _ = ops(tmp_path)
     with state.global_lock():
@@ -198,6 +254,9 @@ def test_scheduled_stale_skips_exclude_manual_and_never_take_lock(tmp_path):
             assert any(event["stop_scope"] == "UNKNOWN" for event in result["events"])
             assert (tmp_path / "state" / "backfill.lock").exists()
         assert any(event["reason"] == "STALE_LOCK_CHECK_REQUIRED" for event in result["events"])
+        notified = [item[1] for item in calls if item[0] == "notify"]
+        assert any(event.reason == "GLOBAL_ALREADY_RUNNING" for event in notified)
+        assert any(event.reason == "STALE_LOCK_CHECK_REQUIRED" for event in notified)
     job, _, _ = ops(tmp_path, daily=DailyJobResult(DAY, DailyDecision.HOLIDAY))
     job.run(NOW, scheduled=True)
     assert job.reporter.repository.scheduled_lock_streak() == 0
