@@ -206,10 +206,18 @@ class JQuantsDailyJob:
             if outcome.stop_action is not StopAction.SKIP_LOCKED:
                 try:
                     self._persist_outcome(state, dataset, execution_day, outcome)
-                except BackfillStateError:
+                except BackfillStateError as exc:
+                    error_category = (
+                        "STOP_STATE_SAVE_FAILED" if exc.write_failure else "STATE_ERROR"
+                    )
+                    reason = (
+                        exc.cause_reason
+                        if exc.write_failure and exc.cause_reason is not None
+                        else error_category
+                    )
                     result.outcomes.append(DatasetOutcome(
                         dataset, ran=False, status="FAILED", exit_code=1,
-                        error_category="STOP_STATE_SAVE_FAILED", reason="STOP_STATE_SAVE_FAILED",
+                        error_category=error_category, reason=reason,
                     ))
                     break
             result.outcomes[-1] = replace(
@@ -246,7 +254,9 @@ class JQuantsDailyJob:
             earliest = min(date.fromisoformat(item["date"]) for item in stops)
             categories = self._calendar.categories(earliest - timedelta(days=7), execution_day)
             if repeated_daily_failure_stop(stops, history, categories, execution_day):
-                state.set_stop_flag("ALL_FLAG", "REPEATED_TODAY_STOP", execution_day)
+                state.set_stop_flag(
+                    "ALL_FLAG", "REPEATED_TODAY_STOP", execution_day, dataset=dataset,
+                )
 
     def _ingest(self) -> SingleDayIngestionPort:
         # 休場日・未公開では RawStore 等を作らない（初期化失敗を避ける）

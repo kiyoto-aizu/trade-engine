@@ -28,7 +28,7 @@ from src.domain.jquants_backfill_policy import StopReason
 from src.domain.jquants_daily_plan import DailyDecision
 from src.domain.jquants_daily_stop_policy import StopAction, repeated_daily_failure_stop
 from src.domain.jquants_disk_space import DiskVerdict
-from src.domain.jquants_ops_policy import JQuantsOpsEvent, aggregate_exit_codes, daily_ready
+from src.domain.jquants_ops_policy import JQuantsOpsEvent, REASONS, aggregate_exit_codes, daily_ready
 from src.infrastructure.market_data.jquants_backfill_state import (
     BackfillStateError,
     JQuantsBackfillStateStore,
@@ -189,6 +189,7 @@ def test_backfill_flag_does_not_stop_calendar_or_daily(tmp_path):
     job.run(NOW)
     assert any(call[0] == "CALENDAR" for call in calls)
     assert any(call[0] == "DAILY" for call in calls)
+    assert not any(call[0] == "notify" for call in calls)
 
 
 @pytest.mark.parametrize("scope,reason", [
@@ -241,6 +242,60 @@ def test_backfill_state_write_failure_notifies_and_fails_safely(tmp_path, notify
         assert any(item.event_id == "STOP_STATE_SAVE_FAILED" for item in notified)
     else:
         assert any(item["event_id"] == "SLACK_NOTIFY_FAILED" for item in result["events"])
+
+
+def test_stop_flag_write_failure_notification_keeps_safe_cause_and_dataset(tmp_path, monkeypatch):
+    job, state, calls = ops(tmp_path)
+    monkeypatch.setattr(
+        state, "save",
+        lambda value: (_ for _ in ()).throw(
+            BackfillStateError(SECRET, write_failure=True)
+        ),
+    )
+
+    def set_stop_flag(*args, **kwargs):
+        state.set_stop_flag("BACKFILL_FLAG", "DISK_FLOOR", DAY, dataset="daily")
+
+    job.backfill_factory = lambda: SimpleNamespace(run_locked=set_stop_flag)
+    result = job.run(NOW, scheduled=True)
+    event = next(
+        event for event in result["events"]
+        if event["stage"] == "BACKFILL" and event["event_id"] == "STOP_STATE_SAVE_FAILED"
+    )
+    notified = [item[1] for item in calls if item[0] == "notify"]
+
+    assert result["exit_code"] == 1
+    assert event["dataset"] == "daily" and event["reason"] == "DISK_FLOOR"
+    assert any(
+        item.event_id == "STOP_STATE_SAVE_FAILED" and item.dataset == "daily"
+        and item.reason == "DISK_FLOOR"
+        for item in notified
+    )
+    assert SECRET not in json.dumps(result)
+
+
+def test_state_read_failure_is_not_reported_as_save_failure(tmp_path):
+    job, _, calls = ops(tmp_path)
+
+    def fail_read(*args, **kwargs):
+        raise BackfillStateError(SECRET)
+
+    job.daily_factory = lambda: SimpleNamespace(run_locked=fail_read)
+    result = job.run(NOW, scheduled=True)
+    daily_event = next(event for event in result["events"] if event["stage"] == "DAILY")
+
+    assert result["exit_code"] == 1
+    assert daily_event["reason"] == "STATE_ERROR"
+    assert daily_event["event_id"] == "RESULT"
+    assert not any(
+        item[1].event_id == "STOP_STATE_SAVE_FAILED"
+        for item in calls if item[0] == "notify"
+    )
+    assert SECRET not in json.dumps(result)
+
+
+def test_stop_reason_codes_are_supported_by_ops_events():
+    assert {reason.value for reason in StopReason}.issubset(REASONS)
 
 
 def test_scheduled_stale_skips_exclude_manual_and_never_take_lock(tmp_path):
@@ -505,10 +560,17 @@ def test_daily_disk_probe_error_never_treated_as_sufficient():
 
 def test_stop_state_write_failure_retains_429_and_emits_distinct_error(tmp_path, monkeypatch):
     job, state, _ = daily_job(tmp_path, category="RATE_LIMIT_ABORTED")
-    monkeypatch.setattr(state, "save", lambda value: (_ for _ in ()).throw(BackfillStateError(SECRET)))
+    monkeypatch.setattr(
+        state, "save",
+        lambda value: (_ for _ in ()).throw(
+            BackfillStateError(SECRET, write_failure=True)
+        ),
+    )
     result = job.run(DAY, NOW)
     assert result.exit_code == 3
-    assert result.outcomes[-1].reason == "STOP_STATE_SAVE_FAILED"
+    assert result.outcomes[-1].error_category == "STOP_STATE_SAVE_FAILED"
+    assert result.outcomes[-1].reason == "RATE_LIMIT_ABORTED"
+    assert result.outcomes[-1].dataset == "daily"
     assert len(result.outcomes) == 2
     assert SECRET not in json.dumps(result.as_dict())
 
@@ -528,7 +590,12 @@ def test_429_safe_boundary_not_duplicated_and_state_failure_is_distinct(tmp_path
         None, guard=job.guard,
     )
     if save_failure:
-        monkeypatch.setattr(state, "save", lambda value: (_ for _ in ()).throw(BackfillStateError(SECRET)))
+        monkeypatch.setattr(
+            state, "save",
+            lambda value: (_ for _ in ()).throw(
+                BackfillStateError(SECRET, write_failure=True)
+            ),
+        )
     result = job.run(NOW, scheduled=True)
     notified = [call[1] for call in calls if call[0] == "notify"]
     assert result["exit_code"] == 3 and len(notified) == (2 if save_failure else 1)
@@ -696,6 +763,42 @@ def test_budget_jst_rollover_stops_without_reattributing_consumption(tmp_path):
     assert state.load()["shared_budget"]["spent_seconds"] == 10
 
 
+@pytest.mark.parametrize(("error_category", "write_method", "cause_reason"), [
+    ("RATE_LIMITED", "record_today_stop", "RATE_LIMITED"),
+    ("PERMISSION_OR_CONTRACT_ERROR", "mark_review", "PERMISSION_ERROR"),
+])
+def test_backfill_stop_persistence_failure_preserves_cause_and_dataset(
+    tmp_path, monkeypatch, error_category, write_method, cause_reason,
+):
+    state = JQuantsBackfillStateStore(tmp_path / "state")
+    target = DAY - timedelta(days=1)
+    plan = BackfillPlan((target,), (), (), (), (), (), ())
+    ingestion = SimpleNamespace(run=lambda **kwargs: SimpleNamespace(
+        status="FAILED", error_category=error_category, warnings=[],
+        durations_seconds={"total": 0}, raw_size_bytes=1, canonical_size_bytes=1,
+        execution_metrics={},
+    ))
+    usecase = JQuantsBackfillUseCase(
+        SimpleNamespace(plan=lambda *args: plan), ingestion, state,
+        raw_directory=tmp_path / "raw", canonical_directory=tmp_path / "canonical",
+        today_provider=lambda: DAY, volume_probe=lambda path: (500_000_000_000, 1),
+    )
+    monkeypatch.setattr(
+        state, write_method,
+        lambda *args: (_ for _ in ()).throw(
+            BackfillStateError(SECRET, write_failure=True)
+        ),
+    )
+
+    with pytest.raises(BackfillStateError) as error:
+        usecase.run("daily", target, target)
+
+    assert error.value.write_failure
+    assert error.value.cause_reason == cause_reason
+    assert error.value.dataset == "daily"
+    assert SECRET not in str(error.value)
+
+
 @pytest.mark.parametrize("field,value", [
     ("daily_history", []), ("daily_stops", {}), ("shared_budget", {"date": SECRET}),
     ("failed_streak", {"daily": -1}), ("today_stops", {"daily": [{"date": DAY.isoformat(), "reason": SECRET}]}),
@@ -707,6 +810,14 @@ def test_state_invalid_old_and_new_values_fail_closed(tmp_path, field, value):
     (tmp_path / "backfill_state.json").write_text(json.dumps(content), encoding="utf-8")
     with pytest.raises(BackfillStateError):
         state.load()
+
+
+def test_invalid_state_payload_is_not_classified_as_write_failure(tmp_path):
+    state = JQuantsBackfillStateStore(tmp_path)
+    with pytest.raises(BackfillStateError) as error:
+        state.save({"invalid": SECRET})
+    assert not error.value.write_failure
+    assert not (tmp_path / "backfill_state.json").exists()
 
 
 def test_legacy_state_gets_safe_new_fields_without_losing_flags_or_reviews(tmp_path):
@@ -764,8 +875,15 @@ def test_daily_required_halt_and_history_commit_in_one_atomic_save(tmp_path, mon
 
 def test_failed_atomic_halt_commit_does_not_leave_unrestricted_auth_history(tmp_path, monkeypatch):
     job, state, _ = daily_job(tmp_path, category="AUTH_ERROR")
-    monkeypatch.setattr(state, "save", lambda value: (_ for _ in ()).throw(BackfillStateError(SECRET)))
-    assert job.run(DAY, NOW).outcomes[-1].reason == "STOP_STATE_SAVE_FAILED"
+    monkeypatch.setattr(
+        state, "save",
+        lambda value: (_ for _ in ()).throw(
+            BackfillStateError(SECRET, write_failure=True)
+        ),
+    )
+    outcome = job.run(DAY, NOW).outcomes[-1]
+    assert outcome.error_category == "STOP_STATE_SAVE_FAILED"
+    assert outcome.reason == "AUTH_ERROR" and outcome.dataset == "daily"
     assert state.daily_history("daily") == [] and state.stop_flag() is None
 
 

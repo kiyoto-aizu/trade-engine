@@ -30,7 +30,11 @@ def daily_event_records(result, invocation_id, execution_day, stop_scope="UNKNOW
             reason = "NO_GO"
         elif getattr(item, "not_evaluated", False) and code == 0:
             reason = "EVALUATION_INCOMPLETE"
-        event_id = reason if reason in ("STOP_STATE_SAVE_FAILED", "METRICS_SAVE_FAILED") else "RESULT"
+        event_id = (
+            "STOP_STATE_SAVE_FAILED"
+            if item.error_category == "STOP_STATE_SAVE_FAILED"
+            else reason if reason == "METRICS_SAVE_FAILED" else "RESULT"
+        )
         event = JQuantsOpsEvent(
             invocation_id, "DAILY", execution_day.isoformat(), code,
             item.status if item.status in STATUSES else "SKIPPED",

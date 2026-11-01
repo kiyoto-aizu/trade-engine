@@ -32,6 +32,7 @@ from src.domain.jquants_disk_space import (
 )
 from src.infrastructure.market_data.jquants_backfill_state import (
     BackfillLockedError,
+    BackfillStateError,
     JQuantsBackfillStateStore,
 )
 from src.infrastructure.market_data.jquants_disk_space import measure_volume
@@ -276,14 +277,22 @@ class JQuantsBackfillUseCase:
         return held or decision.hold, False
 
     def _record_review(self, dataset: str, day: date, reason: StopReason) -> None:
-        if reason is StopReason.PERMISSION_ERROR:
-            self._state.mark_review("PERMISSION_403", dataset, day)
-        elif reason in (
-            StopReason.OUT_OF_CONTRACT_400, StopReason.UNEXPECTED_400_IN_RANGE,
-            StopReason.UNKNOWN_STATUS,
-        ):
-            # 同じ日を次回も再送しないよう、400・未知statusも要確認に入れる。
-            self._state.mark_review(reason.value, dataset, day)
+        try:
+            if reason is StopReason.PERMISSION_ERROR:
+                self._state.mark_review("PERMISSION_403", dataset, day)
+            elif reason in (
+                StopReason.OUT_OF_CONTRACT_400, StopReason.UNEXPECTED_400_IN_RANGE,
+                StopReason.UNKNOWN_STATUS,
+            ):
+                # 同じ日を次回も再送しないよう、400・未知statusも要確認に入れる。
+                self._state.mark_review(reason.value, dataset, day)
+        except BackfillStateError as exc:
+            if not exc.write_failure or exc.dataset is not None:
+                raise
+            raise BackfillStateError(
+                "backfill state is not writable", write_failure=True,
+                cause_reason=reason.value, dataset=dataset,
+            ) from None
 
     def _stop(
         self, result: BackfillResult, dataset: str, day: date, scope: StopScope,
@@ -291,23 +300,33 @@ class JQuantsBackfillUseCase:
     ) -> None:
         result.outcome = BackfillOutcome.STOPPED
         result.reason = reason
-        if scope is StopScope.TODAY:
-            self._state.record_today_stop(dataset, day, reason.value)
-            history = [(d, StopReason(r)) for d, r in self._state.today_stop_dates(dataset)]
-            if is_repeated_today_stop(history, reason):
-                self._state.set_stop_flag(
-                    StopScope.BACKFILL_FLAG.value, StopReason.REPEATED_TODAY_STOP.value, day
-                )
-        elif scope in (StopScope.BACKFILL_FLAG, StopScope.ALL_FLAG):
-            self._state.set_stop_flag(scope.value, reason.value, day)
-        elif reason in _CAUSE_STOP_REASONS:
-            # 全日で同じ400・未知statusが続く系統的な不具合は、人間の確認を必須にする。
-            self._state.record_cause_stop(dataset, day, reason.value)
-            history = [(d, StopReason(r)) for d, r in self._state.cause_stop_dates(dataset)]
-            if is_repeated_today_stop(history, reason):
-                self._state.set_stop_flag(
-                    StopScope.BACKFILL_FLAG.value, StopReason.REPEATED_REVIEW_STOP.value, day
-                )
+        try:
+            if scope is StopScope.TODAY:
+                self._state.record_today_stop(dataset, day, reason.value)
+                history = [(d, StopReason(r)) for d, r in self._state.today_stop_dates(dataset)]
+                if is_repeated_today_stop(history, reason):
+                    self._state.set_stop_flag(
+                        StopScope.BACKFILL_FLAG.value, StopReason.REPEATED_TODAY_STOP.value, day,
+                        dataset=dataset,
+                    )
+            elif scope in (StopScope.BACKFILL_FLAG, StopScope.ALL_FLAG):
+                self._state.set_stop_flag(scope.value, reason.value, day, dataset=dataset)
+            elif reason in _CAUSE_STOP_REASONS:
+                # 全日で同じ400・未知statusが続く系統的な不具合は、人間の確認を必須にする。
+                self._state.record_cause_stop(dataset, day, reason.value)
+                history = [(d, StopReason(r)) for d, r in self._state.cause_stop_dates(dataset)]
+                if is_repeated_today_stop(history, reason):
+                    self._state.set_stop_flag(
+                        StopScope.BACKFILL_FLAG.value, StopReason.REPEATED_REVIEW_STOP.value, day,
+                        dataset=dataset,
+                    )
+        except BackfillStateError as exc:
+            if not exc.write_failure or exc.dataset is not None:
+                raise
+            raise BackfillStateError(
+                "backfill state is not writable", write_failure=True,
+                cause_reason=exc.cause_reason or reason.value, dataset=dataset,
+            ) from None
 
     def _check_disk(self, sizes: dict[str, int]) -> tuple[DiskVerdict, bool] | None:
         """Return (verdict, floor_ok) before one day's fetch, or None when unmeasurable."""

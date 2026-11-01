@@ -68,15 +68,18 @@ class JQuantsOpsOrchestration:
                        scheduled=scheduled, notify=True)
             self._skip_after("CALENDAR", now, "ALL_FLAG", scheduled)
         except BackfillStateError as exc:
-            # Other state errors are distinct from a failed stop-state save.
             is_write_failure = exc.write_failure
             reason = (
-                "STOP_STATE_SAVE_FAILED"
-                if is_write_failure or self.current_stage == "DAILY" else "STATE_ERROR"
+                exc.cause_reason
+                if is_write_failure and exc.cause_reason in REASONS
+                else "STOP_STATE_SAVE_FAILED" if is_write_failure else "STATE_ERROR"
             )
-            event_id = "STOP_STATE_SAVE_FAILED" if reason == "STOP_STATE_SAVE_FAILED" else "RESULT"
-            self.event(self.current_stage, now, 1, "FAILED", reason, scheduled=scheduled,
-                       event_id=event_id, notify=is_write_failure or self.current_stage != "BACKFILL")
+            event_id = "STOP_STATE_SAVE_FAILED" if is_write_failure else "RESULT"
+            self.event(
+                self.current_stage, now, 1, "FAILED", reason,
+                dataset=exc.dataset, scheduled=scheduled, event_id=event_id,
+                notify=is_write_failure or self.current_stage != "BACKFILL",
+            )
             self._skip_after(self.current_stage, now, reason, scheduled)
         except Exception:
             self.event(self.current_stage, now, 1, "FAILED", "STAGE_FAILED",
