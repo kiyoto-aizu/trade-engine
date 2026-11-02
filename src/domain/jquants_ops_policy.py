@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass
 from datetime import date
 import re
 
+from src.domain.jquants_backfill_policy import StopReason
+
 EXIT_SEVERITY = {0: 0, 2: 1, 1: 2, 3: 3}
 STAGES = frozenset({"AUDIT", "CALENDAR", "DAILY", "BACKFILL", "OPS", "INGESTION"})
 REASONS = frozenset({
@@ -25,7 +27,7 @@ REASONS = frozenset({
     "STOPPED_TODAY", "LOCK_SKIPPED", "JST_DAY_CHANGED", "BACKFILL_NOT_COMPLETE",
     "STOP_STATE_UNKNOWN", "REPEATED_TODAY_STOP", "NO_GO", "ATTENTION",
     "METRICS_SAVE_FAILED",
-})
+}) | frozenset(reason.value for reason in StopReason)
 STATUSES = frozenset({
     "COMPLETE", "FAILED", "SKIPPED", "ATTENTION", "NOT_PUBLISHED", "HOLIDAY",
     "COMPLETED", "COMPLETED_WITH_REVIEW", "BUDGET_EXHAUSTED", "BLOCKED_BY_FLAG",

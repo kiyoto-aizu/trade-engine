@@ -33,7 +33,27 @@ _OPTIONAL_FIELDS = {
 
 
 class BackfillStateError(Exception):
-    pass
+    def __init__(
+        self, message: str, *, write_failure: bool = False,
+        cause_reason: str | None = None, dataset: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.write_failure = write_failure
+        self.cause_reason = cause_reason
+        self.dataset = dataset
+
+    def with_write_context(
+        self, cause_reason: str, dataset: str | None,
+    ) -> BackfillStateError | None:
+        if (
+            not self.write_failure or self.dataset is not None
+            or (dataset is None and self.cause_reason is not None)
+        ):
+            return None
+        return BackfillStateError(
+            "backfill state is not writable", write_failure=True,
+            cause_reason=self.cause_reason or cause_reason, dataset=dataset,
+        )
 
 
 class BackfillLockedError(BackfillStateError):
@@ -90,20 +110,34 @@ class JQuantsBackfillStateStore:
         temporary = path.with_suffix(".tmp")
         try:
             _validate_execution_state(state)
+            payload = json.dumps(state, sort_keys=True)
+        except (ValueError, TypeError, KeyError):
+            raise BackfillStateError("backfill state is invalid") from None
+        try:
             self._directory.mkdir(parents=True, exist_ok=True)
-            temporary.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
+            temporary.write_text(payload, encoding="utf-8")
             os.replace(temporary, path)
-        except (OSError, ValueError, TypeError, KeyError):
+        except OSError:
             # 停止が永続化されないまま続行しない。呼び出し側は失敗として終了する。
-            raise BackfillStateError("backfill state is not writable") from None
+            raise BackfillStateError(
+                "backfill state is not writable", write_failure=True,
+            ) from None
 
     def stop_flag(self) -> dict[str, str] | None:
         return self.load()["stop_flag"]
 
-    def set_stop_flag(self, scope: str, reason: str, set_on: date) -> None:
+    def set_stop_flag(
+        self, scope: str, reason: str, set_on: date, *, dataset: str | None = None,
+    ) -> None:
         state = self.load()
         state["stop_flag"] = {"scope": scope, "reason": reason, "set_on": set_on.isoformat()}
-        self.save(state)
+        try:
+            self.save(state)
+        except BackfillStateError as exc:
+            contextual_error = exc.with_write_context(reason, dataset)
+            if contextual_error is None:
+                raise
+            raise contextual_error from None
 
     def clear_stop_flag(self) -> bool:
         state = self.load()
@@ -247,7 +281,15 @@ class JQuantsBackfillStateStore:
             state["stop_flag"] = {
                 "scope": "ALL_FLAG", "reason": halt_reason, "set_on": execution_day.isoformat(),
             }
-        self.save(state)
+        try:
+            self.save(state)
+        except BackfillStateError as exc:
+            contextual_error = exc.with_write_context(
+                stop_reason or halt_reason or reason, dataset,
+            )
+            if contextual_error is None:
+                raise
+            raise contextual_error from None
 
     def daily_stop_history(self, dataset: str) -> list[dict[str, Any]]:
         return [item for item in self.load()["daily_stops"] if item["dataset"] == dataset]

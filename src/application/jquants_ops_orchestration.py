@@ -7,7 +7,10 @@ from src.application.jquants_execution_guard import JQuantsExecutionBlockedError
 from src.domain.jquants_contract_range import calculate_earliest_available_date
 from src.domain.jquants_ops_policy import JQuantsOpsEvent, REASONS, STATUSES, daily_ready
 from src.application.jquants_ops_reporting import daily_event_records
-from src.infrastructure.market_data.jquants_backfill_state import BackfillLockedError, BackfillStateError
+from src.infrastructure.market_data.jquants_backfill_state import (
+    BackfillLockedError,
+    BackfillStateError,
+)
 
 JST = timezone(timedelta(hours=9))
 
@@ -64,12 +67,19 @@ class JQuantsOpsOrchestration:
             self.event("OPS", now, 2, "BLOCKED_BY_FLAG", "ALL_FLAG", scope="ALL_FLAG",
                        scheduled=scheduled, notify=True)
             self._skip_after("CALENDAR", now, "ALL_FLAG", scheduled)
-        except BackfillStateError:
-            # Not a backfill cause notification (#53); daily save failure is a distinct event.
-            reason = "STOP_STATE_SAVE_FAILED" if self.current_stage == "DAILY" else "STATE_ERROR"
-            event_id = "STOP_STATE_SAVE_FAILED" if reason == "STOP_STATE_SAVE_FAILED" else "RESULT"
-            self.event(self.current_stage, now, 1, "FAILED", reason, scheduled=scheduled,
-                       event_id=event_id, notify=self.current_stage != "BACKFILL")
+        except BackfillStateError as exc:
+            is_write_failure = exc.write_failure
+            reason = (
+                exc.cause_reason
+                if is_write_failure and exc.cause_reason in REASONS
+                else "STOP_STATE_SAVE_FAILED" if is_write_failure else "STATE_ERROR"
+            )
+            event_id = "STOP_STATE_SAVE_FAILED" if is_write_failure else "RESULT"
+            self.event(
+                self.current_stage, now, 1, "FAILED", reason,
+                dataset=exc.dataset, scheduled=scheduled, event_id=event_id,
+                notify=is_write_failure or self.current_stage != "BACKFILL",
+            )
             self._skip_after(self.current_stage, now, reason, scheduled)
         except Exception:
             self.event(self.current_stage, now, 1, "FAILED", "STAGE_FAILED",
@@ -159,12 +169,16 @@ class JQuantsOpsOrchestration:
                 dataset, calculate_earliest_available_date(dataset, today),
                 today - timedelta(days=1), today=today,
             )
-            # Cause-specific flag/state notifications belong to #53.
+            stop_flag = result.stop_flag or {}
+            stop_scope = stop_flag.get("scope", "NONE")
+            stop_reason = stop_flag.get("reason")
+            is_flagged = stop_scope in ("BACKFILL_FLAG", "ALL_FLAG")
             self.event(
-                "BACKFILL", now, result.exit_code, result.outcome.value, result.outcome.value,
-                dataset, scope=(result.stop_flag or {}).get("scope", "NONE"),
+                "BACKFILL", now, result.exit_code, result.outcome.value,
+                stop_reason if is_flagged and stop_reason else result.outcome.value,
+                dataset, scope=stop_scope,
                 scheduled=scheduled,
-                notify=result.outcome.value == "COMPLETED_WITH_REVIEW",
+                notify=result.outcome.value == "COMPLETED_WITH_REVIEW" or is_flagged,
             )
             if result.outcome.value != "COMPLETED" or result.remaining_targets or self.reporter.exit_code:
                 if dataset == "daily":
