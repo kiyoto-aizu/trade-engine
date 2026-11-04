@@ -44,7 +44,9 @@ def _build_ops():
     from src.infrastructure.market_data.jquants_raw_ledger_state import RawStoreLedgerState
     from src.infrastructure.market_data.jquants_raw_store import JQuantsRawStore
     from src.infrastructure.market_data.jquants_v2_client import JQuantsV2Client
-    from src.infrastructure.notification.jquants_notify import JQuantsSafeNotifier
+    from src.infrastructure.notification.jquants_notify import (
+        JQuantsOpsSummaryNotifier, JQuantsSafeNotifier,
+    )
 
     state = JQuantsBackfillStateStore(config.JQUANTS_BACKFILL_STATE_DIRECTORY)
     guard = JQuantsExecutionGuard(state)
@@ -87,6 +89,7 @@ def _build_ops():
             lambda: JQuantsCalendarStore(config.JQUANTS_CALENDAR_DIRECTORY),
         ),
         daily, backfill, reporter,
+        summary_notifier=JQuantsOpsSummaryNotifier(config.SLACK_WEBHOOK_DAILY),
     )
     holder["ops"] = ops
     return ops
@@ -133,6 +136,9 @@ def main(argv=None):
     if any(event.get("reason") == "LOCAL_EVENT_FAILED" for event in result.get("events", [])):
         import sys
         print("JQUANTS_LOCAL_EVENT_FAILED", file=sys.stderr)
+    if result.get("summary_notification_failed"):
+        import sys
+        print("JQUANTS_DAILY_SUMMARY_NOTIFY_FAILED", file=sys.stderr)
     return result["exit_code"]
 
 

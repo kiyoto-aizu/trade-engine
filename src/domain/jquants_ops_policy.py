@@ -91,3 +91,37 @@ class JQuantsOpsEvent:
 
     def as_dict(self):
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class JQuantsOpsSummary:
+    day: str
+    overall_status: str
+    calendar_status: str
+    daily_daily_status: str
+    daily_minute_status: str
+    backfill_daily_status: str
+    backfill_minute_status: str
+    backfill_daily_processed: int
+    backfill_minute_processed: int
+    budget_exhausted: bool
+    exit_code: int
+
+    def __post_init__(self):
+        if date.fromisoformat(self.day).isoformat() != self.day:
+            raise ValueError("invalid summary date")
+        allowed_statuses = STATUSES | {"NOT_RUN"}
+        if any(status not in allowed_statuses for status in (
+            self.overall_status, self.calendar_status,
+            self.daily_daily_status, self.daily_minute_status,
+            self.backfill_daily_status, self.backfill_minute_status,
+        )):
+            raise ValueError("invalid summary status")
+        if any(type(count) is not int or count < 0 for count in (
+            self.backfill_daily_processed, self.backfill_minute_processed,
+        )):
+            raise ValueError("invalid processed count")
+        if type(self.budget_exhausted) is not bool:
+            raise ValueError("invalid budget status")
+        if type(self.exit_code) is not int or self.exit_code not in EXIT_SEVERITY:
+            raise ValueError("invalid exit code")

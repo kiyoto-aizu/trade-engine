@@ -6,7 +6,7 @@ from uuid import uuid4
 from src.application.jquants_execution_guard import JQuantsExecutionBlockedError
 from src.domain.jquants_contract_range import calculate_earliest_available_date
 from src.domain.jquants_ops_policy import JQuantsOpsEvent, REASONS, STATUSES, daily_ready
-from src.application.jquants_ops_reporting import daily_event_records
+from src.application.jquants_ops_reporting import build_ops_summary, daily_event_records
 from src.infrastructure.market_data.jquants_backfill_state import (
     BackfillLockedError,
     BackfillStateError,
@@ -19,6 +19,7 @@ class JQuantsOpsOrchestration:
     def __init__(
         self, guard, calendar_factory, daily_factory, backfill_factory, reporter,
         *, now_provider=lambda: datetime.now(timezone(timedelta(hours=9))),
+        summary_notifier=None,
     ):
         self.guard = guard
         self.calendar_factory = calendar_factory
@@ -29,6 +30,8 @@ class JQuantsOpsOrchestration:
         self.current_stage = "OPS"
         self.now_provider = now_provider
         self.scheduled = False
+        self.summary_notifier = summary_notifier
+        self.backfill_processed_counts = {"daily": 0, "minute": 0}
 
     def event(self, stage, now, code, status, reason="NONE", dataset=None, scope="UNKNOWN",
               scheduled=False, event_id="RESULT", notify=False, target_day=None):
@@ -44,6 +47,7 @@ class JQuantsOpsOrchestration:
     def run(self, now, *, scheduled=False):
         now = now.astimezone(JST) if now.tzinfo else now.replace(tzinfo=JST)
         self.scheduled = scheduled
+        self.backfill_processed_counts = {"daily": 0, "minute": 0}
         try:
             with self.guard.locked() as state:
                 self._run_locked(now, state, scheduled)
@@ -87,12 +91,39 @@ class JQuantsOpsOrchestration:
             self._skip_after(self.current_stage, now, "STAGE_FAILED", scheduled)
         if not any(event.stage == "OPS" and event.event_id == "RESULT" for event in self.reporter.events):
             self.event("OPS", now, self.reporter.exit_code, self._status(), scheduled=scheduled)
+        result_status = self._status()
+        result_exit_code = self.reporter.exit_code
+        summary_notification_failed = self._send_summary(
+            now, result_status, result_exit_code,
+        )
         return {
-            "invocation_id": self.invocation_id, "exit_code": self.reporter.exit_code,
-            "status": self._status(),
+            "invocation_id": self.invocation_id, "exit_code": result_exit_code,
+            "status": result_status,
             "events": [event.as_dict() for event in self.reporter.events],
             "operational_go": "NOT_GRANTED",
+            "summary_notification_failed": summary_notification_failed,
         }
+
+    def _send_summary(self, now, status, exit_code):
+        if self.summary_notifier is None:
+            return False
+        summary = build_ops_summary(
+            self.reporter.events, now.date().isoformat(), status, exit_code,
+            self.backfill_processed_counts,
+        )
+        try:
+            sent = self.summary_notifier(summary)
+        except Exception:
+            sent = False
+        if sent:
+            return False
+        event = next((
+            item for item in reversed(self.reporter.events)
+            if item.stage == "OPS" and item.event_id == "RESULT"
+        ), None)
+        if event is not None:
+            self.reporter.record_nonfatal_notification_failure(event)
+        return True
 
     def _status(self):
         events = self.reporter.events
@@ -169,6 +200,7 @@ class JQuantsOpsOrchestration:
                 dataset, calculate_earliest_available_date(dataset, today),
                 today - timedelta(days=1), today=today,
             )
+            self.backfill_processed_counts[dataset] = len(result.processed)
             stop_flag = result.stop_flag or {}
             stop_scope = stop_flag.get("scope", "NONE")
             stop_reason = stop_flag.get("reason")
