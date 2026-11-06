@@ -49,7 +49,10 @@ def ready():
     ])
 
 
-def ops(tmp_path, *, daily=None, calendar=None, backfill=None, notify=True, now_provider=lambda: NOW):
+def ops(
+    tmp_path, *, daily=None, calendar=None, backfill=None, notify=True,
+    now_provider=lambda: NOW, summary_notifier=None,
+):
     calls = []
     state = JQuantsBackfillStateStore(tmp_path / "state")
     guard = JQuantsExecutionGuard(state)
@@ -76,6 +79,7 @@ def ops(tmp_path, *, daily=None, calendar=None, backfill=None, notify=True, now_
     instance = JQuantsOpsOrchestration(
         guard, lambda: factory("CALENDAR"), lambda: factory("DAILY"),
         lambda: factory("BACKFILL"), reporter, now_provider=now_provider,
+        summary_notifier=summary_notifier,
     )
     return instance, state, calls
 
@@ -92,6 +96,124 @@ def test_order_single_lock_calendar_contract_and_no_refresh(tmp_path):
     assert not (tmp_path / "state" / "backfill.lock").exists()
     assert (tmp_path / "metrics" / "ops" / "events.jsonl").exists()
     assert list((tmp_path / "metrics").glob("*/date=*/*.json")) == []
+
+
+def test_summary_includes_statuses_processed_counts_and_budget(tmp_path):
+    summaries = []
+    job, _, _ = ops(tmp_path, summary_notifier=lambda summary: summaries.append(summary) or True)
+
+    def run_backfill(dataset, *args, **kwargs):
+        if dataset == "daily":
+            return BackfillResult(
+                dataset, BackfillOutcome.COMPLETED,
+                processed=[DAY - timedelta(days=2), DAY - timedelta(days=1)],
+            )
+        return BackfillResult(
+            dataset, BackfillOutcome.BUDGET_EXHAUSTED,
+            processed=[DAY - timedelta(days=3), DAY - timedelta(days=2), DAY - timedelta(days=1)],
+        )
+
+    job.backfill_factory = lambda: SimpleNamespace(run_locked=run_backfill)
+    result = job.run(NOW, scheduled=True)
+
+    assert result["exit_code"] == 0
+    assert result["status"] == "BUDGET_EXHAUSTED"
+    assert len(summaries) == 1
+    summary = summaries[0]
+    assert summary.day == DAY.isoformat()
+    assert summary.overall_status == "BUDGET_EXHAUSTED"
+    assert summary.calendar_status == "COMPLETE"
+    assert summary.daily_daily_status == "COMPLETE"
+    assert summary.daily_minute_status == "COMPLETE"
+    assert summary.backfill_daily_status == "COMPLETED"
+    assert summary.backfill_minute_status == "BUDGET_EXHAUSTED"
+    assert summary.backfill_daily_processed == 2
+    assert summary.backfill_minute_processed == 3
+    assert summary.budget_exhausted is True
+
+
+def test_summary_is_sent_alongside_existing_critical_notification(tmp_path):
+    summaries = []
+    job, _, calls = ops(
+        tmp_path, daily=DailyJobResult(DAY, DailyDecision.CALENDAR_MISSING),
+        summary_notifier=lambda summary: summaries.append(summary) or True,
+    )
+
+    result = job.run(NOW)
+
+    assert result["exit_code"] == 1
+    assert result["status"] == "FAILED"
+    assert len(summaries) == 1
+    assert summaries[0].overall_status == "FAILED"
+    assert summaries[0].daily_daily_status == "FAILED"
+    assert any(call[0] == "notify" for call in calls)
+    assert result["summary_notification_failed"] is False
+
+
+@pytest.mark.parametrize("failure_point", ["summary_build", "notifier"])
+def test_summary_failure_is_recorded_without_changing_success_exit(
+    tmp_path, monkeypatch, capsys, failure_point,
+):
+    from src.entrypoints import run_jquants_ops as cli
+    job, _, _ = ops(tmp_path, summary_notifier=lambda _: False)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW
+
+    monkeypatch.setattr(cli, "_preflight", lambda: True)
+    monkeypatch.setattr(cli, "_build_ops", lambda: job)
+    monkeypatch.setattr(cli, "datetime", FixedDateTime)
+    if failure_point == "summary_build":
+        from src.application import jquants_ops_orchestration
+        monkeypatch.setattr(
+            jquants_ops_orchestration, "build_ops_summary",
+            lambda *args, **kwargs: (_ for _ in ()).throw(ValueError(SECRET)),
+        )
+    else:
+        job.summary_notifier = lambda _: (_ for _ in ()).throw(RuntimeError(SECRET))
+
+    assert cli.main(["--execute"]) == 0
+    output = capsys.readouterr()
+
+    assert "JQUANTS_DAILY_SUMMARY_NOTIFY_FAILED" in output.err
+    assert SECRET not in output.out + output.err
+    assert "SLACK_NOTIFY_FAILED" in (tmp_path / "metrics" / "ops" / "events.jsonl").read_text()
+
+
+def test_lock_skip_sends_one_summary_with_skipped_stages(tmp_path):
+    summaries = []
+    job, state, calls = ops(
+        tmp_path, summary_notifier=lambda summary: summaries.append(summary) or True,
+    )
+
+    with state.global_lock():
+        result = job.run(NOW, scheduled=True)
+
+    assert result["exit_code"] == 2
+    assert result["status"] == "LOCK_SKIPPED"
+    assert len(summaries) == 1
+    assert summaries[0].overall_status == "LOCK_SKIPPED"
+    assert summaries[0].calendar_status == "LOCK_SKIPPED"
+    assert summaries[0].daily_daily_status == "SKIPPED"
+    assert summaries[0].backfill_daily_status == "SKIPPED"
+    assert not any(call[0] == "build" for call in calls)
+
+
+def test_backfill_flag_summary_reports_blocked_and_skipped_datasets(tmp_path):
+    summaries = []
+    job, state, _ = ops(
+        tmp_path, summary_notifier=lambda summary: summaries.append(summary) or True,
+    )
+    state.set_stop_flag("BACKFILL_FLAG", "DISK_FLOOR", DAY)
+
+    result = job.run(NOW)
+
+    assert result["exit_code"] == 2
+    assert len(summaries) == 1
+    assert summaries[0].backfill_daily_status == "BLOCKED_BY_FLAG"
+    assert summaries[0].backfill_minute_status == "SKIPPED"
 
 
 def test_ops_event_day_is_jst_execution_day_and_target_is_separate(tmp_path):
@@ -345,6 +467,36 @@ def test_transport_never_logs_exception_response_or_webhook(tmp_path, capsys, ca
     assert SECRET not in caplog.text + capsys.readouterr().out + (tmp_path / "ops" / "events.jsonl").read_text()
     assert JQuantsSafeNotifier("")(event) is False
     assert notifier(SimpleNamespace(as_dict=lambda: {"secret": SECRET})) is False
+
+
+def test_summary_transport_uses_shared_daily_format_without_sensitive_values():
+    from src.domain.jquants_ops_policy import JQuantsOpsSummary
+    from src.infrastructure.notification.jquants_notify import JQuantsOpsSummaryNotifier
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+    captured = {}
+    summary = JQuantsOpsSummary(
+        DAY.isoformat(), "BUDGET_EXHAUSTED", "COMPLETE", "COMPLETE", "COMPLETE",
+        "COMPLETED", "BUDGET_EXHAUSTED", 1218, 25, True, 0,
+    )
+    notifier = JQuantsOpsSummaryNotifier(
+        SECRET, post=lambda url, **kwargs: captured.update(kwargs) or Response(),
+    )
+
+    assert notifier(summary) is True
+    message = captured["json"]["text"]
+    assert message.startswith(
+        "【業務】J-Quants\n【機能】定期データ運用\n【概要】\n"
+    )
+    assert "【詳細】" in message
+    assert "実行日: 2026-10-30 / 全体状態: BUDGET_EXHAUSTED" in message
+    assert "daily=COMPLETED (1218日分), minute=BUDGET_EXHAUSTED (25日分)" in message
+    assert "予算到達: あり" in message
+    assert "終了コード: 0" in message
+    assert SECRET not in message
 
 
 def test_record_failure_is_not_success_and_has_safe_stderr_code(tmp_path, monkeypatch, capsys):

@@ -3,9 +3,47 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from src.domain.jquants_ops_policy import JQuantsOpsEvent, REASONS, STATUSES, aggregate_exit_codes
+from src.domain.jquants_ops_policy import (
+    JQuantsOpsEvent, JQuantsOpsSummary, REASONS, STATUSES, aggregate_exit_codes,
+)
 
 JST = timezone(timedelta(hours=9))
+
+
+def build_ops_summary(events, execution_day, overall_status, exit_code, backfill_processed):
+    """Build a bounded summary from safe operational statuses and counts only."""
+    events = tuple(events)
+    ignored_event_ids = {"SLACK_NOTIFY_FAILED", "LOCAL_EVENT_FAILED"}
+
+    def status_for(stage, dataset=None):
+        matching = [
+            event for event in events
+            if event.stage == stage and event.event_id not in ignored_event_ids
+        ]
+        if dataset is not None:
+            dataset_events = [event for event in matching if event.dataset == dataset]
+            if dataset_events:
+                return dataset_events[-1].status
+        stage_events = [event for event in matching if event.dataset is None]
+        return stage_events[-1].status if stage_events else "NOT_RUN"
+
+    return JQuantsOpsSummary(
+        execution_day,
+        overall_status,
+        status_for("CALENDAR"),
+        status_for("DAILY", "daily"),
+        status_for("DAILY", "minute"),
+        status_for("BACKFILL", "daily"),
+        status_for("BACKFILL", "minute"),
+        backfill_processed.get("daily", 0),
+        backfill_processed.get("minute", 0),
+        any(
+            event.stage == "BACKFILL" and event.status == "BUDGET_EXHAUSTED"
+            and event.event_id not in ignored_event_ids
+            for event in events
+        ),
+        exit_code,
+    )
 
 
 def daily_event_records(result, invocation_id, execution_day, stop_scope="UNKNOWN"):
@@ -75,15 +113,22 @@ class JQuantsOpsReporter:
             if not sent:
                 self._failure(event, "SLACK_NOTIFY_FAILED")
 
-    def _failure(self, event, reason, *, persist=True):
+    def _failure(self, event, reason, *, persist=True, affect_exit_code=True):
         failure = replace(event, status="FAILED", reason=reason, event_id=reason, exit_code=1)
         self.events.append(failure)
-        self.codes.append(1)
+        if affect_exit_code:
+            self.codes.append(1)
         if persist:
             try:
                 self.repository.append(failure)
             except Exception:
-                self._failure(event, "LOCAL_EVENT_FAILED", persist=False)
+                self._failure(
+                    event, "LOCAL_EVENT_FAILED", persist=False,
+                    affect_exit_code=affect_exit_code,
+                )
+
+    def record_nonfatal_notification_failure(self, event):
+        self._failure(event, "SLACK_NOTIFY_FAILED", affect_exit_code=False)
 
     @property
     def exit_code(self):
