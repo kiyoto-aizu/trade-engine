@@ -50,7 +50,7 @@ def test_use_case_records_pre_relief_regime_and_last_bar_inputs(monkeypatch):
     )
     monkeypatch.setattr(
         market_regime_usecase,
-        "previous_us_equity_trading_day",
+        "expected_vix_session_date",
         lambda today: vix[-1].date,
     )
 
