@@ -107,11 +107,11 @@ class JQuantsOpsOrchestration:
     def _send_summary(self, now, status, exit_code):
         if self.summary_notifier is None:
             return False
-        summary = build_ops_summary(
-            self.reporter.events, now.date().isoformat(), status, exit_code,
-            self.backfill_processed_counts,
-        )
         try:
+            summary = build_ops_summary(
+                self.reporter.events, now.date().isoformat(), status, exit_code,
+                self.backfill_processed_counts,
+            )
             sent = self.summary_notifier(summary)
         except Exception:
             sent = False

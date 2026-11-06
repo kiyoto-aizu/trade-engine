@@ -56,9 +56,9 @@ class JQuantsOpsSummaryNotifier:
                     f"minute={summary.daily_minute_status}",
                     "補填: "
                     f"daily={summary.backfill_daily_status} "
-                    f"({summary.backfill_daily_processed}件), "
+                    f"({summary.backfill_daily_processed}日分), "
                     f"minute={summary.backfill_minute_status} "
-                    f"({summary.backfill_minute_processed}件)",
+                    f"({summary.backfill_minute_processed}日分)",
                     f"予算到達: {'あり' if summary.budget_exhausted else 'なし'}",
                     f"終了コード: {summary.exit_code}",
                 ],

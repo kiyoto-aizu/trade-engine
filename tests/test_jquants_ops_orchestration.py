@@ -150,7 +150,10 @@ def test_summary_is_sent_alongside_existing_critical_notification(tmp_path):
     assert result["summary_notification_failed"] is False
 
 
-def test_summary_failure_is_recorded_without_changing_success_exit(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("failure_point", ["summary_build", "notifier"])
+def test_summary_failure_is_recorded_without_changing_success_exit(
+    tmp_path, monkeypatch, capsys, failure_point,
+):
     from src.entrypoints import run_jquants_ops as cli
     job, _, _ = ops(tmp_path, summary_notifier=lambda _: False)
 
@@ -162,6 +165,14 @@ def test_summary_failure_is_recorded_without_changing_success_exit(tmp_path, mon
     monkeypatch.setattr(cli, "_preflight", lambda: True)
     monkeypatch.setattr(cli, "_build_ops", lambda: job)
     monkeypatch.setattr(cli, "datetime", FixedDateTime)
+    if failure_point == "summary_build":
+        from src.application import jquants_ops_orchestration
+        monkeypatch.setattr(
+            jquants_ops_orchestration, "build_ops_summary",
+            lambda *args, **kwargs: (_ for _ in ()).throw(ValueError(SECRET)),
+        )
+    else:
+        job.summary_notifier = lambda _: (_ for _ in ()).throw(RuntimeError(SECRET))
 
     assert cli.main(["--execute"]) == 0
     output = capsys.readouterr()
@@ -169,6 +180,40 @@ def test_summary_failure_is_recorded_without_changing_success_exit(tmp_path, mon
     assert "JQUANTS_DAILY_SUMMARY_NOTIFY_FAILED" in output.err
     assert SECRET not in output.out + output.err
     assert "SLACK_NOTIFY_FAILED" in (tmp_path / "metrics" / "ops" / "events.jsonl").read_text()
+
+
+def test_lock_skip_sends_one_summary_with_skipped_stages(tmp_path):
+    summaries = []
+    job, state, calls = ops(
+        tmp_path, summary_notifier=lambda summary: summaries.append(summary) or True,
+    )
+
+    with state.global_lock():
+        result = job.run(NOW, scheduled=True)
+
+    assert result["exit_code"] == 2
+    assert result["status"] == "LOCK_SKIPPED"
+    assert len(summaries) == 1
+    assert summaries[0].overall_status == "LOCK_SKIPPED"
+    assert summaries[0].calendar_status == "LOCK_SKIPPED"
+    assert summaries[0].daily_daily_status == "SKIPPED"
+    assert summaries[0].backfill_daily_status == "SKIPPED"
+    assert not any(call[0] == "build" for call in calls)
+
+
+def test_backfill_flag_summary_reports_blocked_and_skipped_datasets(tmp_path):
+    summaries = []
+    job, state, _ = ops(
+        tmp_path, summary_notifier=lambda summary: summaries.append(summary) or True,
+    )
+    state.set_stop_flag("BACKFILL_FLAG", "DISK_FLOOR", DAY)
+
+    result = job.run(NOW)
+
+    assert result["exit_code"] == 2
+    assert len(summaries) == 1
+    assert summaries[0].backfill_daily_status == "BLOCKED_BY_FLAG"
+    assert summaries[0].backfill_minute_status == "SKIPPED"
 
 
 def test_ops_event_day_is_jst_execution_day_and_target_is_separate(tmp_path):
@@ -448,7 +493,7 @@ def test_summary_transport_uses_shared_daily_format_without_sensitive_values():
     )
     assert "【詳細】" in message
     assert "実行日: 2026-10-30 / 全体状態: BUDGET_EXHAUSTED" in message
-    assert "daily=COMPLETED (1218件), minute=BUDGET_EXHAUSTED (25件)" in message
+    assert "daily=COMPLETED (1218日分), minute=BUDGET_EXHAUSTED (25日分)" in message
     assert "予算到達: あり" in message
     assert "終了コード: 0" in message
     assert SECRET not in message
