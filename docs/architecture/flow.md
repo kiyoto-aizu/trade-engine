@@ -60,7 +60,7 @@ flowchart LR
 | フィルタリング結果 | フィルタリング | 取引、分足バックフィル、バックテスト、分析 | `data/filtering/{日付}.json` | JSON |
 | 注文履歴・口座状態 | 取引 | 取引の再起動後復元、分析 | `data/trading/` | JSON、非常停止フラグ |
 | 判定イベント | 取引、バックテスト | 取引・週次/月次分析・戦略レビュー | `data/state/filter_decision_events.sqlite3`、`data/backtest/filter_events/` | SQLite |
-| 日足キャッシュ | 日次分析（`refresh_cache_with_retries`→`update_cache`、120日・最大3回リトライ）、`run_trend_check --refresh-cache`、`update_daily_bar_cache`、バックテストv2単日・複数日検証 | 日次分析・答え合わせ、トレンドチェック、バックテストv2単日・複数日検証 | `data/cache/yahoo_daily/{symbol}.json`（指数は`^N225.json`・`^VIX.json`） | 日付（`YYYY-MM-DD`）をキーとするJSON辞書。値は`open`/`high`/`low`/`close`/`volume`。`volume`キーがない旧形式は再取得対象 |
+| 日足キャッシュ | 日次分析（`refresh_cache_with_retries`→`update_cache`、120日・最大3回リトライ。VIXは米国直近確定営業日を基準に取得・更新確認）、`run_trend_check --refresh-cache`、`update_daily_bar_cache`、バックテストv2単日・複数日検証 | 日次分析・答え合わせ、トレンドチェック、バックテストv2単日・複数日検証 | `data/cache/yahoo_daily/{symbol}.json`（指数は`^N225.json`・`^VIX.json`） | 日付（`YYYY-MM-DD`）をキーとするJSON辞書。値は`open`/`high`/`low`/`close`/`volume`。`volume`キーがない旧形式は再取得対象 |
 | 分足データ | 分足バックフィル | 分足バックテスト、戦略レビュー | `data/minute_bars_parquet/symbol=.../date=.../data.parquet` | Parquet |
 | 運用レポート | 取引、日次・週次・月次分析 | 日次・週次・月次分析、日記、戦略レビュー | `data/reports/daily/`、`weekly/`、`monthly/` | JSON |
 | トレンド答え合わせ結果 | 日次分析・答え合わせ | 日次・週次・月次分析 | `data/analysis/trend_check.sqlite3`、`data/reports/trend_check/` | SQLite、JSON |

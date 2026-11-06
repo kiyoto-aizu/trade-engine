@@ -34,6 +34,7 @@ from src.application.trend_check_usecase import (
     symbols_for_date,
 )
 from src.domain.no_trade_reason import NO_CANDIDATE, OTHER, describe_no_trade_reason
+from src.domain.us_market_calendar import previous_us_equity_trading_day
 from src.infrastructure.logging_config import configure_logging
 from src.infrastructure.calendar.japanese_calendar import is_trading_day
 from src.entrypoints.run_trend_check import run_daily_safely
@@ -68,7 +69,14 @@ def refresh_cache_with_retries(
         return True, []
 
     current = now or datetime.now()
-    expected = min(trade_date, latest_confirmed_trading_day(current)).isoformat()
+    expected_date = min(trade_date, latest_confirmed_trading_day(current))
+    expected_by_symbol = {
+        symbol: expected_date.isoformat()
+        for symbol in symbols
+    }
+    if "^VIX" in expected_by_symbol:
+        expected_by_symbol["^VIX"] = previous_us_equity_trading_day(expected_date).isoformat()
+    expected = expected_date.isoformat()
     latest_by_symbol: dict[str, str] = {}
     remaining = symbols
     if retries < 1:
@@ -81,7 +89,7 @@ def refresh_cache_with_retries(
             latest_by_symbol = {}
         remaining = [
             symbol for symbol in symbols
-            if latest_by_symbol.get(symbol, "") < expected
+            if latest_by_symbol.get(symbol, "") < expected_by_symbol[symbol]
         ]
         if not remaining:
             logger.info("日足キャッシュ更新完了: 対象=%d銘柄 / 最新日=%s", len(symbols), expected)

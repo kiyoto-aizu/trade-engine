@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import config
+from src.domain.us_market_calendar import previous_us_equity_trading_day
 from src.infrastructure.calendar.japanese_calendar import is_trading_day
 from src.infrastructure.market_data.yahoo_daily_bar_cache import fetch_yahoo_dated_ohlc_cached
 
@@ -44,13 +45,26 @@ def discover_symbols(cache_dir: Path) -> list[str]:
 def update_cache(cache_dir: Path, symbols: list[str], days: int, now: datetime) -> dict[str, str]:
     """キャッシュを更新し、銘柄ごとの最新日を返す。"""
     latest = latest_confirmed_trading_day(now)
-    history = fetch_yahoo_dated_ohlc_cached(
-        symbols,
-        days=days,
-        cache_dir=cache_dir,
-        earliest_needed_date=now.date() - timedelta(days=max(days - EARLIEST_MARGIN_DAYS, 1)),
-        latest_needed_date=latest,
-    )
+    earliest = now.date() - timedelta(days=max(days - EARLIEST_MARGIN_DAYS, 1))
+    vix_symbols = [symbol for symbol in symbols if symbol == "^VIX"]
+    other_symbols = [symbol for symbol in symbols if symbol != "^VIX"]
+    history = {}
+    if other_symbols:
+        history.update(fetch_yahoo_dated_ohlc_cached(
+            other_symbols,
+            days=days,
+            cache_dir=cache_dir,
+            earliest_needed_date=earliest,
+            latest_needed_date=latest,
+        ))
+    if vix_symbols:
+        history.update(fetch_yahoo_dated_ohlc_cached(
+            vix_symbols,
+            days=days,
+            cache_dir=cache_dir,
+            earliest_needed_date=earliest,
+            latest_needed_date=previous_us_equity_trading_day(now.date()),
+        ))
     return {symbol: max(bars) for symbol, bars in history.items() if bars}
 
 
