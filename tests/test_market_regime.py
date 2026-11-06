@@ -211,7 +211,7 @@ def test_use_case_uses_explicit_as_of_date_for_expected_nikkei_date(monkeypatch)
     vix = _bars([20.0])
     monkeypatch.setattr(
         market_regime_usecase,
-        "previous_us_equity_trading_day",
+        "expected_vix_session_date",
         lambda target: vix[-1].date,
     )
 
@@ -233,7 +233,7 @@ def test_use_case_returns_latest_market_regime_values(monkeypatch):
     )
     vix = _bars([20.0])
     monkeypatch.setattr(
-        "src.application.market_regime_usecase.previous_us_equity_trading_day",
+        "src.application.market_regime_usecase.expected_vix_session_date",
         lambda today: vix[-1].date,
     )
     monkeypatch.setattr(
@@ -262,7 +262,7 @@ def test_use_case_applies_adx_relief_to_danger_regime(monkeypatch):
     )
     vix = _bars([30.0])
     monkeypatch.setattr(
-        "src.application.market_regime_usecase.previous_us_equity_trading_day",
+        "src.application.market_regime_usecase.expected_vix_session_date",
         lambda today: vix[-1].date,
     )
     monkeypatch.setattr(
@@ -292,7 +292,7 @@ def test_use_case_retries_until_nikkei_reaches_previous_trading_day(monkeypatch)
     stale_bars = current_bars[:-1]
     vix = _bars([20.0])
     monkeypatch.setattr(
-        "src.application.market_regime_usecase.previous_us_equity_trading_day",
+        "src.application.market_regime_usecase.expected_vix_session_date",
         lambda today: vix[-1].date,
     )
 
@@ -319,7 +319,7 @@ def test_use_case_retries_until_nikkei_reaches_previous_trading_day(monkeypatch)
 def test_use_case_retries_when_nikkei_history_has_a_missing_trading_day(monkeypatch):
     expected_date = date(2026, 10, 13)
     monkeypatch.setattr(
-        "src.application.market_regime_usecase.previous_us_equity_trading_day",
+        "src.application.market_regime_usecase.expected_vix_session_date",
         lambda today: expected_date,
     )
     complete_bars = _trading_bars(
@@ -356,7 +356,7 @@ def test_use_case_retries_when_nikkei_history_has_a_missing_trading_day(monkeypa
 def test_use_case_continues_when_nikkei_history_gap_persists(monkeypatch):
     expected_date = date(2026, 10, 13)
     monkeypatch.setattr(
-        "src.application.market_regime_usecase.previous_us_equity_trading_day",
+        "src.application.market_regime_usecase.expected_vix_session_date",
         lambda today: expected_date,
     )
     complete_bars = _trading_bars(
@@ -401,7 +401,7 @@ def test_use_case_retries_until_vix_reaches_previous_us_trading_day(monkeypatch)
         lambda today: date(2026, 10, 13),
     )
     monkeypatch.setattr(
-        "src.application.market_regime_usecase.previous_us_equity_trading_day",
+        "src.application.market_regime_usecase.expected_vix_session_date",
         lambda today: expected_vix_date,
     )
     nikkei = _trading_bars(
@@ -442,7 +442,7 @@ def test_use_case_returns_danger_when_vix_never_reaches_previous_us_trading_day(
         lambda today: expected_nikkei_date,
     )
     monkeypatch.setattr(
-        "src.application.market_regime_usecase.previous_us_equity_trading_day",
+        "src.application.market_regime_usecase.expected_vix_session_date",
         lambda today: expected_vix_date,
     )
     nikkei = _trading_bars(
@@ -555,7 +555,7 @@ def test_use_case_fills_missing_previous_day_from_minute_bar_fallback(monkeypatc
     full_bars = _trading_bars([100.0 + index for index in range(29)], previous_day)
     vix = _bars([20.0])
     monkeypatch.setattr(
-        "src.application.market_regime_usecase.previous_us_equity_trading_day",
+        "src.application.market_regime_usecase.expected_vix_session_date",
         lambda today: vix[-1].date,
     )
     requested = []

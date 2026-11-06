@@ -12,7 +12,14 @@ def test_latest_confirmed_trading_day_excludes_unfinished_today():
 def test_update_cache_passes_latest_and_returns_latest_dates(tmp_path, monkeypatch):
     captured = {}
 
-    def fake_cached(symbols, days, cache_dir, earliest_needed_date, latest_needed_date):
+    def fake_cached(
+        symbols,
+        days,
+        cache_dir,
+        earliest_needed_date,
+        latest_needed_date,
+        **kwargs,
+    ):
         captured.update(symbols=symbols, latest=latest_needed_date)
         return {"3133": {"2026-10-01": object(), "2026-09-30": object()}}
 
@@ -26,8 +33,15 @@ def test_update_cache_passes_latest_and_returns_latest_dates(tmp_path, monkeypat
 def test_update_cache_uses_us_trading_day_for_vix(tmp_path, monkeypatch):
     calls = []
 
-    def fake_cached(symbols, days, cache_dir, earliest_needed_date, latest_needed_date):
-        calls.append((symbols, latest_needed_date))
+    def fake_cached(
+        symbols,
+        days,
+        cache_dir,
+        earliest_needed_date,
+        latest_needed_date,
+        **kwargs,
+    ):
+        calls.append((symbols, latest_needed_date, kwargs))
         return {symbol: {"2026-11-03": object()} for symbol in symbols}
 
     monkeypatch.setattr(cli, "fetch_yahoo_dated_ohlc_cached", fake_cached)
@@ -39,6 +53,34 @@ def test_update_cache_uses_us_trading_day_for_vix(tmp_path, monkeypatch):
     )
 
     assert calls == [
-        (["AAA", "^N225"], date(2026, 11, 4)),
-        (["^VIX"], date(2026, 11, 3)),
+        (["AAA", "^N225"], date(2026, 11, 4), {"latest_allowed_date": date(2026, 11, 4)}),
+        (
+            ["^VIX"],
+            date(2026, 11, 3),
+            {"latest_allowed_date": date(2026, 11, 3), "refresh_latest_date": True},
+        ),
+    ]
+
+
+def test_update_cache_handles_vix_only_and_without_vix(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_cached(
+        symbols,
+        days,
+        cache_dir,
+        earliest_needed_date,
+        latest_needed_date,
+        **kwargs,
+    ):
+        calls.append((symbols, kwargs))
+        return {symbol: {"2026-11-03": object()} for symbol in symbols}
+
+    monkeypatch.setattr(cli, "fetch_yahoo_dated_ohlc_cached", fake_cached)
+    cli.update_cache(tmp_path, ["^VIX"], 120, datetime(2026, 11, 4, 16, 32))
+    cli.update_cache(tmp_path, ["AAA"], 120, datetime(2026, 11, 4, 16, 32))
+
+    assert calls == [
+        (["^VIX"], {"latest_allowed_date": date(2026, 11, 3), "refresh_latest_date": True}),
+        (["AAA"], {"latest_allowed_date": date(2026, 11, 4)}),
     ]

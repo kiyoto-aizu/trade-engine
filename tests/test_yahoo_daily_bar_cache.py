@@ -147,6 +147,115 @@ def test_index_cache_without_open_is_refetched(tmp_path, monkeypatch):
     assert calls == [["^N225"]]
     assert history["^N225"]["2026-09-25"].open == 100.0
 
+
+def test_cache_update_excludes_newer_bars_and_refreshes_latest_date(tmp_path, monkeypatch):
+    yahoo_daily_bar_cache._save_cache(
+        tmp_path,
+        "^VIX",
+        {
+            "2026-11-02": DailyBar(open=18.0, high=20.0, low=17.0, close=19.0, volume=0.0),
+            "2026-11-03": DailyBar(open=19.0, high=22.0, low=18.0, close=20.0, volume=0.0),
+            "2026-11-04": DailyBar(open=20.0, high=22.0, low=19.0, close=21.0, volume=0.0),
+        },
+    )
+    fetched_latest = DailyBar(open=19.0, high=21.0, low=18.0, close=20.5, volume=0.0)
+    calls = []
+
+    def fake_fetch(symbols, days):
+        calls.append(symbols)
+        return {
+            "^VIX": {
+                "2026-11-03": fetched_latest,
+                "2026-11-04": DailyBar(open=20.0, high=23.0, low=19.0, close=22.0, volume=0.0),
+            }
+        }
+
+    monkeypatch.setattr(yahoo_daily_bar_cache, "fetch_yahoo_dated_ohlc", fake_fetch)
+    history = yahoo_daily_bar_cache.fetch_yahoo_dated_ohlc_cached(
+        ["^VIX"],
+        days=120,
+        cache_dir=tmp_path,
+        earliest_needed_date=date(2026, 7, 7),
+        latest_needed_date=date(2026, 11, 3),
+        latest_allowed_date=date(2026, 11, 3),
+        refresh_latest_date=True,
+    )
+
+    assert calls == [["^VIX"]]
+    assert max(history["^VIX"]) == "2026-11-03"
+    assert history["^VIX"]["2026-11-03"].close == 20.5
+    saved = json.loads((tmp_path / "^VIX.json").read_text(encoding="utf-8"))
+    assert max(saved) == "2026-11-03"
+    assert saved["2026-11-03"]["close"] == 20.5
+
+
+def test_forced_latest_refresh_does_not_accept_cached_bar_on_fetch_failure(tmp_path, monkeypatch):
+    yahoo_daily_bar_cache._save_cache(
+        tmp_path,
+        "^VIX",
+        {
+            "2026-11-02": DailyBar(open=18.0, high=20.0, low=17.0, close=19.0, volume=0.0),
+            "2026-11-03": DailyBar(open=19.0, high=22.0, low=18.0, close=20.0, volume=0.0),
+        },
+    )
+    monkeypatch.setattr(
+        yahoo_daily_bar_cache,
+        "fetch_yahoo_dated_ohlc",
+        lambda symbols, days: {},
+    )
+
+    history = yahoo_daily_bar_cache.fetch_yahoo_dated_ohlc_cached(
+        ["^VIX"],
+        days=120,
+        cache_dir=tmp_path,
+        earliest_needed_date=date(2026, 7, 7),
+        latest_needed_date=date(2026, 11, 3),
+        latest_allowed_date=date(2026, 11, 3),
+        refresh_latest_date=True,
+    )
+
+    assert max(history["^VIX"]) == "2026-11-02"
+    saved = json.loads((tmp_path / "^VIX.json").read_text(encoding="utf-8"))
+    assert "2026-11-03" not in saved
+
+
+def test_cache_reuse_persists_removal_of_bars_after_allowed_date(tmp_path, monkeypatch):
+    yahoo_daily_bar_cache._save_cache(
+        tmp_path,
+        "3133",
+        {
+            "2026-11-02": DailyBar(open=18.0, high=20.0, low=17.0, close=19.0, volume=100.0),
+            "2026-11-03": DailyBar(open=19.0, high=22.0, low=18.0, close=20.0, volume=100.0),
+            "2026-11-04": DailyBar(open=20.0, high=22.0, low=19.0, close=21.0, volume=100.0),
+        },
+    )
+    calls = []
+
+    def fake_fetch(symbols, days):
+        calls.append(symbols)
+        return {}
+
+    monkeypatch.setattr(
+        yahoo_daily_bar_cache,
+        "fetch_yahoo_dated_ohlc",
+        fake_fetch,
+    )
+
+    history = yahoo_daily_bar_cache.fetch_yahoo_dated_ohlc_cached(
+        ["3133"],
+        days=120,
+        cache_dir=tmp_path,
+        earliest_needed_date=date(2026, 11, 2),
+        latest_needed_date=date(2026, 11, 3),
+        latest_allowed_date=date(2026, 11, 3),
+    )
+
+    assert max(history["3133"]) == "2026-11-03"
+    assert calls == []
+    saved = json.loads((tmp_path / "3133.json").read_text(encoding="utf-8"))
+    assert max(saved) == "2026-11-03"
+
+
 def _write_raw(tmp_path, symbol, payload):
     (tmp_path / f"{symbol}.json").write_text(json.dumps(payload), encoding="utf-8")
 

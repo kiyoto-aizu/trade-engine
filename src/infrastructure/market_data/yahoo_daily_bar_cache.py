@@ -64,17 +64,38 @@ def fetch_yahoo_dated_ohlc_cached(
     cache_dir: Path,
     earliest_needed_date: date,
     latest_needed_date: date | None = None,
+    latest_allowed_date: date | None = None,
+    refresh_latest_date: bool = False,
 ) -> dict[str, dict[str, DailyBar]]:
-    """必要期間を含むキャッシュを返し、不足銘柄のみYahooから取得する。"""
+    """必要期間を含むキャッシュを返し、不足銘柄のみYahooから取得する.
+
+    latest_allowed_date excludes newer bars from both cache and fetch results.
+    refresh_latest_date forces a fetch for the latest required date so a previously
+    cached in-progress bar cannot be treated as final after the session closes.
+    """
     result: dict[str, dict[str, DailyBar]] = {}
     symbols_to_fetch: list[str] = []
     cached_by_symbol: dict[str, dict[str, DailyBar]] = {}
+    cache_needs_save: dict[str, bool] = {}
     earliest_text = earliest_needed_date.isoformat()
     latest_text = latest_needed_date.isoformat() if latest_needed_date else None
+    latest_allowed_text = latest_allowed_date.isoformat() if latest_allowed_date else None
+    if refresh_latest_date and latest_text is None:
+        raise ValueError("最新日を強制更新する場合はlatest_needed_dateが必要です")
 
     for raw_symbol in symbols:
         symbol = str(raw_symbol)
         cached, has_volume_key = _load_cache_with_status(cache_dir, symbol)
+        if latest_allowed_text is not None:
+            bounded_cache = {
+                target_date: bar
+                for target_date, bar in cached.items()
+                if target_date <= latest_allowed_text
+            }
+            cache_needs_save[symbol] = len(bounded_cache) != len(cached)
+            cached = bounded_cache
+        else:
+            cache_needs_save[symbol] = False
         cached_by_symbol[symbol] = cached
         cached_dates = cached.keys()
         covers_earliest = bool(cached) and min(cached_dates) <= earliest_text
@@ -82,7 +103,15 @@ def fetch_yahoo_dated_ohlc_cached(
         has_required_ohlc = not symbol.startswith("^") or all(
             bar.open is not None for bar in cached.values()
         )
-        if covers_earliest and covers_latest and has_required_ohlc and has_volume_key:
+        if (
+            covers_earliest
+            and covers_latest
+            and has_required_ohlc
+            and has_volume_key
+            and not refresh_latest_date
+        ):
+            if cache_needs_save[symbol]:
+                _save_cache(cache_dir, symbol, cached)
             result[symbol] = cached
         else:
             symbols_to_fetch.append(symbol)
@@ -91,8 +120,18 @@ def fetch_yahoo_dated_ohlc_cached(
         fetched = fetch_yahoo_dated_ohlc(symbols_to_fetch, days=days)
         for symbol in symbols_to_fetch:
             fresh_history = fetched.get(symbol, {})
+            if latest_allowed_text is not None:
+                fresh_history = {
+                    target_date: bar
+                    for target_date, bar in fresh_history.items()
+                    if target_date <= latest_allowed_text
+                }
             merged = {**cached_by_symbol[symbol], **fresh_history}
-            if fresh_history:
+            if refresh_latest_date and latest_text is not None and latest_text not in fresh_history:
+                if latest_text in merged:
+                    merged.pop(latest_text)
+                    cache_needs_save[symbol] = True
+            if fresh_history or cache_needs_save[symbol]:
                 _save_cache(cache_dir, symbol, merged)
             if merged:
                 result[symbol] = merged
