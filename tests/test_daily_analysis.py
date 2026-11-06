@@ -87,6 +87,59 @@ def test_daily_cache_refresh_always_includes_market_indices(monkeypatch, tmp_pat
     assert calls == [["AAA", "^N225", "^VIX"]]
 
 
+def test_daily_cache_refresh_accepts_latest_us_trading_day_for_vix(monkeypatch, tmp_path):
+    paths = _paths(tmp_path)
+    monkeypatch.setattr(run_daily_analysis, "symbols_for_date", lambda *_: ["AAA"])
+    monkeypatch.setattr(run_daily_analysis, "price_band_symbols_for_update", lambda *_: [])
+    calls = []
+
+    def update(cache_dir, symbols, days, now):
+        calls.append(list(symbols))
+        return {
+            "AAA": "2026-11-04",
+            "^N225": "2026-11-04",
+            "^VIX": "2026-11-03",
+        }
+
+    success, missing = run_daily_analysis.refresh_cache_with_retries(
+        date(2026, 11, 4),
+        paths,
+        now=datetime(2026, 11, 4, 16, 32),
+        update=update,
+        sleeper=lambda _: None,
+    )
+
+    assert success is True
+    assert missing == []
+    assert calls == [["AAA", "^N225", "^VIX"]]
+
+
+def test_daily_cache_refresh_keeps_stale_vix_as_missing(monkeypatch, tmp_path, caplog):
+    paths = _paths(tmp_path)
+    monkeypatch.setattr(run_daily_analysis, "symbols_for_date", lambda *_: ["AAA"])
+    monkeypatch.setattr(run_daily_analysis, "price_band_symbols_for_update", lambda *_: [])
+
+    def update(cache_dir, symbols, days, now):
+        return {
+            "AAA": "2026-11-04",
+            "^N225": "2026-11-04",
+            "^VIX": "2026-11-02",
+        }
+
+    success, missing = run_daily_analysis.refresh_cache_with_retries(
+        date(2026, 11, 4),
+        paths,
+        retries=1,
+        now=datetime(2026, 11, 4, 16, 32),
+        update=update,
+        sleeper=lambda _: None,
+    )
+
+    assert success is False
+    assert missing == ["^VIX"]
+    assert "VIX目標日=2026-11-03" in caplog.text
+
+
 def test_daily_notification_marks_failed_daily_refresh_as_undecidable():
     lines = daily_notification_lines(
         {"order_count": 1, "realized_profit_loss": 100},

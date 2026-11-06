@@ -1,5 +1,10 @@
 """Scheduled US equity-market trading dates used for VIX freshness checks."""
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+JAPAN_TIMEZONE = ZoneInfo("Asia/Tokyo")
+US_EASTERN_TIMEZONE = ZoneInfo("America/New_York")
+US_EQUITY_CLOSE = time(16, 0)
 
 
 def _nth_weekday(year: int, month: int, weekday: int, occurrence: int) -> date:
@@ -65,3 +70,28 @@ def previous_us_equity_trading_day(day: date) -> date:
     while not is_us_equity_trading_day(candidate):
         candidate -= timedelta(days=1)
     return candidate
+
+
+def expected_vix_session_date(reference_date: date) -> date:
+    """Return the latest scheduled US session strictly before a reference date."""
+    return previous_us_equity_trading_day(reference_date)
+
+
+def latest_confirmed_vix_date(now: datetime) -> date:
+    """Return the latest US session whose regular close has passed.
+
+    Naive datetimes are interpreted as Japan local time, matching the runtime's
+    local timestamps. Aware datetimes are converted by their represented instant.
+    """
+    local_now = (
+        now.replace(tzinfo=JAPAN_TIMEZONE)
+        if now.tzinfo is None
+        else now
+    )
+    us_now = local_now.astimezone(US_EASTERN_TIMEZONE)
+    if (
+        is_us_equity_trading_day(us_now.date())
+        and us_now.time().replace(tzinfo=None) >= US_EQUITY_CLOSE
+    ):
+        return us_now.date()
+    return expected_vix_session_date(us_now.date())

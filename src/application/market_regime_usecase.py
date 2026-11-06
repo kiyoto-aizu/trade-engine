@@ -18,7 +18,7 @@ from src.domain.market_volatility import (
     calculate_previous_day_changes,
     calculate_realized_volatility_series,
 )
-from src.domain.us_market_calendar import previous_us_equity_trading_day
+from src.domain.us_market_calendar import expected_vix_session_date
 from src.infrastructure.calendar.japanese_calendar import is_trading_day
 
 logger = logging.getLogger(__name__)
@@ -202,7 +202,7 @@ class MarketRegimeUseCase:
                     ",".join(map(str, missing_nikkei_dates)),
                 )
 
-            expected_vix_date = previous_us_equity_trading_day(reference_date)
+            expected_vix_date = expected_vix_session_date(reference_date)
             vix_bars, actual_vix_date, _ = self._get_daily_bars_for_date(
                 "^VIX", expected_vix_date, VIX_DAILY_BAR_MAX_ATTEMPTS
             )
