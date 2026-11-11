@@ -1,4 +1,5 @@
 from datetime import date
+import zipfile
 
 from src.config.task_schedule import ScheduledTask
 from src.entrypoints import run_daily_task_check
@@ -64,6 +65,40 @@ def test_build_task_check_ignores_previous_day_markers(tmp_path):
 
     assert "⚠️ フィルタリング (09:30) ログ記録なし・要確認" in message
     assert needs_attention is True
+
+
+def test_build_task_check_fills_missing_local_logs_from_archive(monkeypatch, tmp_path):
+    log_root = tmp_path / "application"
+    local_directory = log_root / "202609"
+    local_directory.mkdir(parents=True)
+    local_log = local_directory / "trade_project.log"
+    local_log.write_text(
+        "2026-09-28 09:31:00,000 INFO: 【フィルタリング】終了\n",
+        encoding="utf-8",
+    )
+    legacy_log = log_root / "trade_project.log.2026-09-28"
+    legacy_log.write_text(
+        "2026-09-28 09:30:00,000 INFO: 【フィルタリング】開始\n",
+        encoding="utf-8",
+    )
+    archive_path = tmp_path / "D" / "logs" / "application" / "202609.zip"
+    archive_path.parent.mkdir(parents=True)
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(
+            "trade_project.log.2026-09-28",
+            "2026-09-28 09:30:00,000 INFO: 【フィルタリング】異常終了\n",
+        )
+    monkeypatch.setattr(run_daily_task_check.config, "LOG_DIRECTORY", log_root)
+    monkeypatch.setattr(run_daily_task_check.config, "LOG_FILE_PATH", local_log)
+    monkeypatch.setattr(
+        run_daily_task_check.config,
+        "LOG_ARCHIVE_DIRECTORY",
+        archive_path.parent.parent,
+    )
+
+    message, _ = build_task_check_message(date(2026, 9, 28))
+
+    assert "✅ フィルタリング (09:30)" in message
 
 
 def test_build_task_check_reports_measured_duration(tmp_path):

@@ -4,20 +4,35 @@ function Initialize-StderrLogging {
         [Parameter(Mandatory)]
         [string]$ProjectRoot,
         [Parameter(Mandatory)]
-        [string]$ScriptName,
-        [int]$RetentionDays = 30
+        [string]$ScriptName
     )
 
-    $logDir = Join-Path $ProjectRoot 'data\logs\jobs'
-    if (-not (Test-Path $logDir)) {
-        New-Item -ItemType Directory -Path $logDir | Out-Null
+    $currentMonth = (Get-Date).ToString('yyyyMM')
+    $logsRoot = Join-Path $ProjectRoot 'data\logs'
+    $archiveRoot = 'D:\logs'
+    $python = Join-Path $ProjectRoot '.venv\Scripts\python.exe'
+
+    if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
+        throw "Python virtual environment was not found: $python"
     }
 
-    $cutoff = (Get-Date).Date.AddDays(-$RetentionDays)
-    Get-ChildItem -Path $logDir -Filter "${ScriptName}_stderr_*.log" -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTime -lt $cutoff } |
-        Remove-Item -Force
+    Push-Location $ProjectRoot
+    try {
+        & $python -m src.infrastructure.monthly_log_storage `
+            --logs-root $logsRoot `
+            --archive-root $archiveRoot `
+            --current-month $currentMonth `
+            --apply
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning 'Monthly log archival failed. Existing logs were retained where transfer was incomplete; task logging will continue.'
+        }
+    }
+    finally {
+        Pop-Location
+    }
 
     $dateText = (Get-Date).ToString('yyyy-MM-dd')
+    $logDir = Join-Path $logsRoot "jobs\$currentMonth"
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
     return (Join-Path $logDir "${ScriptName}_stderr_${dateText}.log")
 }

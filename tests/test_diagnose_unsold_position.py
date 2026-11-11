@@ -1,4 +1,5 @@
 import json
+import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
@@ -6,8 +7,10 @@ import pytest
 
 from scripts.analysis.diagnose_unsold_position import (
     CODE_A, CODE_B, CODE_C, CODE_UNKNOWN, ClassificationInput, LogRecord, Obs, Paths,
-    classify, collect_log_facts, diagnose, parse_judgment, render_markdown, simulate_exit_path, write_reports,
+    classify, collect_log_facts, diagnose, parse_judgment, read_log_records, render_markdown,
+    simulate_exit_path, write_reports,
 )
+from src.config import config
 from src.domain.volatility import VolatilityLevel
 
 SYMBOL = "8944"
@@ -172,6 +175,34 @@ def _build_paths(tmp_path: Path, *, prices, held=True, average_costs=None, extra
 
 def _run(paths: Paths, minutes: int):
     return diagnose(SYMBOL, DAY, paths, now=datetime(2026, 10, 6, 9, 36 + minutes, 40))
+
+
+def test_read_log_records_fills_missing_local_file_from_archive(monkeypatch, tmp_path):
+    log_directory = tmp_path / "logs"
+    month_directory = log_directory / "202610"
+    month_directory.mkdir(parents=True)
+    (month_directory / "trade_project.log").write_text(
+        "2026-10-06 09:36:20,100 INFO src.application.trading_usecase: "
+        "売買判定: 銘柄=8944 | 現在値=265.0\n",
+        encoding="utf-8",
+    )
+    archive_path = tmp_path / "D" / "logs" / "application" / "202610.zip"
+    archive_path.parent.mkdir(parents=True)
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(
+            "trade_project.log.2026-10-06",
+            "2026-10-06 09:37:20,100 INFO src.application.trading_usecase: "
+            "売買判定: 銘柄=8944 | 現在値=266.0\n",
+        )
+    monkeypatch.setattr(config, "LOG_ARCHIVE_DIRECTORY", archive_path.parent.parent)
+
+    records, files = read_log_records(log_directory, "2026-10-06")
+
+    assert len(records) == 2
+    assert files == [
+        "trade_project.log",
+        f"{archive_path}!trade_project.log.2026-10-06",
+    ]
 
 
 def test_diagnose_a_when_price_is_flat(tmp_path):

@@ -1,4 +1,5 @@
 import logging
+import zipfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -79,12 +80,43 @@ def build_task_check_message(
     log_path: Path | None = None,
     reports_directory: Path | None = None,
 ) -> tuple[str, bool]:
-    log_file = log_path or Path(config.LOG_FILE_PATH)
+    if log_path is not None:
+        try:
+            log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            log_text = ""
+    else:
+        month = target_date.strftime("%Y%m")
+        name = Path(config.LOG_FILE_PATH).name
+        local_directory = Path(config.LOG_DIRECTORY) / month
+        log_names = (name, f"{name}.{target_date.isoformat()}")
+        archived_logs = Path(config.LOG_ARCHIVE_DIRECTORY) / "application" / f"{month}.zip"
+        local_logs = {}
+        for log_name in log_names:
+            for path in (local_directory / log_name, Path(config.LOG_DIRECTORY) / log_name):
+                if path.exists():
+                    local_logs[log_name] = path
+                    break
+        missing_names = set(log_names) - local_logs.keys()
+        archived_text = {}
+        if missing_names and archived_logs.exists():
+            try:
+                with zipfile.ZipFile(archived_logs) as archive:
+                    names = set(archive.namelist())
+                    archived_text = {
+                        log_name: archive.read(log_name).decode("utf-8", errors="replace")
+                        for log_name in missing_names
+                        if log_name in names
+                    }
+            except (OSError, zipfile.BadZipFile, KeyError) as error:
+                raise OSError(f"Could not read archived application log {archived_logs}: {error}") from error
+        log_text = "\n".join(
+            local_logs[log_name].read_text(encoding="utf-8", errors="replace")
+            if log_name in local_logs else archived_text.get(log_name, "")
+            for log_name in log_names
+        )
+
     report_dir = reports_directory or PROJECT_ROOT / "data" / "reports" / "daily"
-    try:
-        log_text = log_file.read_text(encoding="utf-8", errors="replace")
-    except FileNotFoundError:
-        log_text = ""
     log_text = "\n".join(
         line for line in log_text.splitlines()
         if line[:10] == target_date.isoformat()

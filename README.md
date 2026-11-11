@@ -123,7 +123,7 @@ data/
 | `data/analysis/` | ADX、ATR比率、市場ボラティリティ、VIXなど | 分析結果と取引前の市場レジーム判定を確認します。 |
 | `data/backtest/latest/`、`runs/`、`comparisons/`、`fixtures/` | 最新結果、日時付き履歴、比較結果、固定入力 | 売買ルール変更後の比較と週次・月次レポートの集計に使います。 |
 | `data/filtering/` | 日付別の抽出銘柄と出来高急騰率など | 当日の取引対象を決定し、時系列バックテストでその日の対象銘柄を再現するために使います。 |
-| `data/logs/application/`、`tests/`、`jobs/` | アプリ、pytest、バッチ標準エラーのログ | 処理失敗の原因調査と定期タスクの実行確認に使います。 |
+| `data/logs/{application,tests,jobs}/<YYYYMM>/` | 月別のアプリ、pytest、バッチ標準エラーログ | 当月・先月をローカルに保持し、2か月前以前は検証後に `D:\logs\<種類>\<YYYYMM>.zip` へアーカイブします。 |
 | `data/minute_bars/` | 日付・銘柄ごとのJSON形式の分足データ | 既存のJSON分足データを保管・参照する互換用フォルダです。新規保存はParquet形式を使います。 |
 | `data/minute_bars_parquet/` | 銘柄・日付単位のParquet形式の分足データ | 分足バックテストの価格系列として読み込み、分足バックフィルの出力先として使います。 |
 | `data/notes/operations/`、`diary/` | 手動の運用メモ、生成日記 | 日々の作業・検証記録と日記作成に使います。 |

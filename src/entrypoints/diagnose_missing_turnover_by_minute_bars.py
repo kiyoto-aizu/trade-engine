@@ -12,6 +12,7 @@ FILTER_TURNOVER_MISSING の銘柄が 09:00〜09:30 に実際に売買されて�
 import argparse
 import json
 import re
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -29,12 +30,18 @@ LOG_DIRECTORY = Path(config.SCREENING_RESULT_DIRECTORY).parent / "logs" / "jobs"
 OUTPUT_DIRECTORY = Path(config.SCREENING_RESULT_DIRECTORY).parent / "analysis"
 
 
-def parse_log_missing(path: Path) -> dict[str, list[str]]:
+def parse_log_missing(path: Path, archive_member: str | None = None) -> dict[str, list[str]]:
     """UTF-16ログから評価対象外の銘柄を理由区分ごと(turnover / current_price / other)に返す。"""
     result: dict[str, list[str]] = {"turnover": [], "current_price": [], "other": []}
     if not path.exists():
         return result
-    text = path.read_bytes().decode("utf-16", errors="replace")
+    if archive_member is None:
+        text = path.read_bytes().decode("utf-16", errors="replace")
+    else:
+        with zipfile.ZipFile(path, "r") as archive:
+            if archive_member not in archive.namelist():
+                return result
+            text = archive.read(archive_member).decode("utf-16", errors="replace")
     for line in text.splitlines():
         match = _LINE.search(line)
         if not match:
@@ -129,7 +136,17 @@ def collect_targets(dates, log_directory, diagnostics_directory):
     kabu_values: dict = {}
     notes: list[str] = []
     for day in dates:
-        log = parse_log_missing(Path(log_directory) / f"run_filtering_stderr_{day}.log")
+        log_name = f"run_filtering_stderr_{day}.log"
+        month = day[:4] + day[5:7]
+        local_month_log = Path(log_directory) / month / log_name
+        legacy_log = Path(log_directory) / log_name
+        archived_month = Path(config.LOG_ARCHIVE_DIRECTORY) / "jobs" / f"{month}.zip"
+        if local_month_log.exists():
+            log = parse_log_missing(local_month_log)
+        elif legacy_log.exists():
+            log = parse_log_missing(legacy_log)
+        else:
+            log = parse_log_missing(archived_month, archive_member=log_name)
         missing, price_missing = list(log["turnover"]), list(log["current_price"])
         evaluated: list[str] = []
         records = load_diagnostics(diagnostics_directory, day)

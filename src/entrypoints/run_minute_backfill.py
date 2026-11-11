@@ -15,7 +15,6 @@ import csv
 import json
 import logging
 from datetime import date, datetime, timedelta
-from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from time import perf_counter
 
@@ -24,6 +23,7 @@ from src.application.minute_bar_backfill_usecase import MinuteBarBackfillUseCase
 from src.config import config
 from src.config.budget_summary import log_budget_summary
 from src.infrastructure.market_data.get_intraday_bars import get_yahoo_intraday_bars
+from src.infrastructure.logging_config import configure_logging as configure_shared_logging
 from src.infrastructure.notification.slack_notify import format_result_notification, notify_analysis, process_notification
 from src.infrastructure.persistence.parquet_minute_bar_repository import ParquetMinuteBarRepository
 
@@ -170,25 +170,7 @@ def write_quality_csv(
 
 def configure_logging() -> None:
     """標準出力と日次ローテーションするファイルへログを出力します。"""
-    logging.root.handlers.clear()
-    log_level = getattr(logging, config.LOG_LEVEL, logging.INFO)
-    logging.root.setLevel(log_level)
-
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s')
-
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-    logging.root.addHandler(stream_handler)
-
-    file_handler = TimedRotatingFileHandler(
-        config.LOG_FILE_PATH,
-        when='midnight',
-        interval=1,
-        backupCount=config.LOG_BACKUP_COUNT,
-        encoding='utf-8',
-    )
-    file_handler.setFormatter(formatter)
-    logging.root.addHandler(file_handler)
+    configure_shared_logging()
 
 
 def main(
