@@ -1,4 +1,5 @@
 from datetime import date
+import struct
 import zipfile
 
 import pytest
@@ -47,6 +48,33 @@ def test_existing_archive_mismatch_keeps_local_logs(tmp_path):
         archive.writestr("trade_project.log", b"different log")
 
     with pytest.raises(FileExistsError, match="local logs retained"):
+        prepare_monthly_log_storage(
+            logs_root,
+            archive_root,
+            current_date=date(2026, 12, 1),
+            categories=("application",),
+        )
+
+    assert local_log.read_bytes() == b"original log"
+
+
+def test_corrupt_archive_member_keeps_local_logs(tmp_path):
+    logs_root = tmp_path / "data" / "logs"
+    archive_root = tmp_path / "D" / "logs"
+    month_directory = logs_root / "application" / "202610"
+    month_directory.mkdir(parents=True)
+    local_log = month_directory / "trade_project.log"
+    local_log.write_bytes(b"original log")
+    archive_path = archive_root / "application" / "202610.zip"
+    archive_path.parent.mkdir(parents=True)
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("trade_project.log", b"original log" + b"x" * 512)
+    archive_bytes = bytearray(archive_path.read_bytes())
+    filename_length, extra_length = struct.unpack_from("<HH", archive_bytes, 26)
+    archive_bytes[30 + filename_length + extra_length] = 0xFF
+    archive_path.write_bytes(archive_bytes)
+
+    with pytest.raises(OSError, match="Invalid log archive"):
         prepare_monthly_log_storage(
             logs_root,
             archive_root,

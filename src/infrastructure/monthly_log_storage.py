@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 import zipfile
+import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -17,6 +18,14 @@ LOG_CATEGORIES = ("jobs", "application", "tests")
 _LOG_FILE_PATTERN = re.compile(r"\.log(?:\..*)?$", re.IGNORECASE)
 _DATE_PATTERN = re.compile(r"(?<!\d)(20\d{2})[-.]?(\d{2})[-.]?(\d{2})(?!\d)")
 _MONTH_PATTERN = re.compile(r"^\d{6}$")
+_ARCHIVE_CONTENT_ERRORS = (
+    zipfile.BadZipFile,
+    zlib.error,
+    EOFError,
+    RuntimeError,
+    NotImplementedError,
+)
+LOG_ARCHIVE_READ_ERRORS = (OSError, KeyError, *_ARCHIVE_CONTENT_ERRORS)
 
 
 @dataclass(frozen=True)
@@ -152,7 +161,7 @@ def _zip_hashes(path: Path) -> dict[str, str]:
                         digest.update(chunk)
                 hashes[item.filename] = digest.hexdigest()
             return hashes
-    except zipfile.BadZipFile as error:
+    except _ARCHIVE_CONTENT_ERRORS as error:
         raise OSError(f"Invalid log archive: {path}") from error
 
 
