@@ -34,7 +34,8 @@ def test_required_env_helper_raises_when_missing():
 
 
 def test_pytest_logs_are_stored_under_data_logs_tests():
-    assert Path(config.LOG_FILE_PATH) == config.LOG_DIRECTORY / 'pytest.log'
+    assert Path(config.LOG_FILE_PATH) == config.LOG_MONTH_DIRECTORY / 'pytest.log'
+    assert config.LOG_MONTH_DIRECTORY.name.isdigit()
     assert config.LOG_DIRECTORY.name == 'tests'
     assert config.LOG_DIRECTORY.parent.name == 'logs'
     assert config.LOG_DIRECTORY.parent.parent.name == 'data'

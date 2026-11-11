@@ -1677,7 +1677,10 @@ class TradingUseCase:
         messages = []
         timeout_events = []
         retry_outcomes = {}
-        for path in Path(config.LOG_DIRECTORY).glob("trade_project.log*"):
+        log_month_directory = Path(config.LOG_DIRECTORY) / datetime.now().strftime("%Y%m")
+        log_paths = set(log_month_directory.glob("trade_project.log*"))
+        log_paths.update(Path(config.LOG_DIRECTORY).glob("trade_project.log*"))
+        for path in sorted(log_paths):
             try:
                 for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
                     if not line.startswith(today):

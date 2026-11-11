@@ -8,7 +8,7 @@
 
 import os
 import sys
-from datetime import time
+from datetime import datetime, time
 from pathlib import Path
 
 from src.domain.enums import OrderSide  # noqa: F401  # config.OrderSide として再エクスポート（重複定義を避ける）
@@ -520,13 +520,16 @@ BASE_URL = f"http://localhost:{API_PORT}/kabusapi"
 
 # ログは実行元ごとに保存先を分ける
 _LOG_CATEGORY = "tests" if _is_test_runtime() else "application"
-LOG_DIRECTORY = _repo_root / "data" / "logs" / _LOG_CATEGORY
-LOG_DIRECTORY.mkdir(parents=True, exist_ok=True)
+LOG_ROOT_DIRECTORY = _repo_root / "data" / "logs"
+LOG_DIRECTORY = LOG_ROOT_DIRECTORY / _LOG_CATEGORY
+LOG_ARCHIVE_DIRECTORY = Path(r"D:\logs")
+LOG_MONTH_DIRECTORY = LOG_DIRECTORY / datetime.now().strftime("%Y%m")
+LOG_MONTH_DIRECTORY.mkdir(parents=True, exist_ok=True)
 _LOG_FILE_NAME = "pytest.log" if _is_test_runtime() else "trade_project.log"
-LOG_FILE_PATH = str(LOG_DIRECTORY / _LOG_FILE_NAME)
+LOG_FILE_PATH = str(LOG_MONTH_DIRECTORY / _LOG_FILE_NAME)
 
-# 保持する日次ログの世代数
-LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", str(5)))
+# 31世代で、1か月分の日次ローテーションログを保持する
+LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", str(31)))
 
 # ログレベル (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()

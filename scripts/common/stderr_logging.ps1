@@ -4,20 +4,13 @@ function Initialize-StderrLogging {
         [Parameter(Mandatory)]
         [string]$ProjectRoot,
         [Parameter(Mandatory)]
-        [string]$ScriptName,
-        [int]$RetentionDays = 30
+        [string]$ScriptName
     )
 
-    $logDir = Join-Path $ProjectRoot 'data\logs\jobs'
-    if (-not (Test-Path $logDir)) {
-        New-Item -ItemType Directory -Path $logDir | Out-Null
-    }
-
-    $cutoff = (Get-Date).Date.AddDays(-$RetentionDays)
-    Get-ChildItem -Path $logDir -Filter "${ScriptName}_stderr_*.log" -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTime -lt $cutoff } |
-        Remove-Item -Force
-
+    $currentMonth = (Get-Date).ToString('yyyyMM')
+    $logsRoot = Join-Path $ProjectRoot 'data\logs'
     $dateText = (Get-Date).ToString('yyyy-MM-dd')
+    $logDir = Join-Path $logsRoot "jobs\$currentMonth"
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
     return (Join-Path $logDir "${ScriptName}_stderr_${dateText}.log")
 }

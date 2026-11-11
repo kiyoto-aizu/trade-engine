@@ -13,12 +13,10 @@ if (-not (Test-Path -LiteralPath $python)) {
 $env:TRADING_MODE = 'paper'
 $env:ENABLE_LIVE_ORDERING = 'false'
 
-$logDir = Join-Path $projectRoot 'data\logs\jobs'
-if (-not (Test-Path -LiteralPath $logDir)) {
-    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
-}
+$scriptsRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $scriptsRoot 'common\stderr_logging.ps1')
+$stderrLog = Initialize-StderrLogging -ProjectRoot $projectRoot -ScriptName 'run_trading'
 $dateText = (Get-Date).ToString('yyyy-MM-dd')
-$stderrLog = Join-Path $logDir "run_trading_stderr_$dateText.log"
 
 $ErrorActionPreference = 'Continue'
 Push-Location $projectRoot

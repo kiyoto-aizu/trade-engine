@@ -107,7 +107,7 @@
 
 | 環境変数名 | 既定値 | 必須か | 説明（直前コメント） |
 |---|---|---|---|
-| `LOG_BACKUP_COUNT` | str(5) | 任意 | 保持する日次ログの世代数 |
+| `LOG_BACKUP_COUNT` | str(31) | 任意 | 月別フォルダに1か月分の日次ローテーションログを保持（実効値は31以上） |
 | `LOG_LEVEL` | "INFO" | 任意 | ログレベル (DEBUG, INFO, WARNING, ERROR, CRITICAL) |
 
 ## その他

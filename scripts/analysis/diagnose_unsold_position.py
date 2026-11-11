@@ -20,6 +20,7 @@ import json
 import re
 import sqlite3
 import sys
+import zipfile
 from bisect import bisect_right
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time, timedelta
@@ -362,18 +363,43 @@ class LogRecord:
 
 
 def read_log_records(log_dir: Path, day: str) -> tuple[list[LogRecord], list[str]]:
-    """当日の行だけを返す。当日分は trade_project.log、過去日は日付付きの回転ファイルにある。"""
+    """当日の行だけを返す。ローカル月別ログを優先し、なければ月別ZIPを読む。"""
     records, files = [], []
-    for name in ("trade_project.log", f"trade_project.log.{day}"):
-        path = log_dir / name
-        if not path.exists():
-            continue
+    month = day[:4] + day[5:7]
+    names = ("trade_project.log", f"trade_project.log.{day}")
+    month_directory = log_dir / month
+    sources = []
+    for name in names:
+        for path in (month_directory / name, log_dir / name):
+            if path.exists():
+                sources.append((path, name))
+                break
+
+    local_names = {name for _, name in sources}
+    for path, name in sources:
         files.append(name)
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             matched = _RECORD_RE.match(line)
             if matched and matched.group(1).startswith(day):
                 records.append(LogRecord(datetime.strptime(matched.group(1), "%Y-%m-%d %H:%M:%S"),
                                          matched.group(2), matched.group(3), matched.group(4)))
+    archive_path = Path(config.LOG_ARCHIVE_DIRECTORY) / "application" / f"{month}.zip"
+    if archive_path.exists():
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            available = set(archive.namelist())
+            for name in names:
+                if name in local_names or name not in available:
+                    continue
+                files.append(f"{archive_path}!{name}")
+                for line in archive.read(name).decode("utf-8", errors="replace").splitlines():
+                    matched = _RECORD_RE.match(line)
+                    if matched and matched.group(1).startswith(day):
+                        records.append(LogRecord(
+                            datetime.strptime(matched.group(1), "%Y-%m-%d %H:%M:%S"),
+                            matched.group(2),
+                            matched.group(3),
+                            matched.group(4),
+                        ))
     records.sort(key=lambda record: record.at)
     return records, files
 

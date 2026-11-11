@@ -1,10 +1,15 @@
 import logging
+import zipfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from src.config import config
 from src.config.task_schedule import ScheduledTask, tasks_for_date
 from src.infrastructure.logging_config import configure_logging
+from src.infrastructure.monthly_log_storage import (
+    LOG_ARCHIVE_READ_ERRORS,
+    prepare_monthly_log_storage,
+)
 from src.infrastructure.notification.slack_notify import notify_critical, notify_daily
 
 logger = logging.getLogger(__name__)
@@ -79,12 +84,45 @@ def build_task_check_message(
     log_path: Path | None = None,
     reports_directory: Path | None = None,
 ) -> tuple[str, bool]:
-    log_file = log_path or Path(config.LOG_FILE_PATH)
+    archive_read_failed = False
+    if log_path is not None:
+        try:
+            log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            log_text = ""
+    else:
+        month = target_date.strftime("%Y%m")
+        name = Path(config.LOG_FILE_PATH).name
+        local_directory = Path(config.LOG_DIRECTORY) / month
+        log_names = (name, f"{name}.{target_date.isoformat()}")
+        archived_logs = Path(config.LOG_ARCHIVE_DIRECTORY) / "application" / f"{month}.zip"
+        local_logs = {}
+        for log_name in log_names:
+            for path in (local_directory / log_name, Path(config.LOG_DIRECTORY) / log_name):
+                if path.exists():
+                    local_logs[log_name] = path
+                    break
+        missing_names = set(log_names) - local_logs.keys()
+        archived_text = {}
+        if missing_names and archived_logs.exists():
+            try:
+                with zipfile.ZipFile(archived_logs) as archive:
+                    names = set(archive.namelist())
+                    archived_text = {
+                        log_name: archive.read(log_name).decode("utf-8", errors="replace")
+                        for log_name in missing_names
+                        if log_name in names
+                    }
+            except LOG_ARCHIVE_READ_ERRORS as error:
+                logger.warning("アーカイブ済みアプリケーションログを読み込めません: %s: %s", archived_logs, error)
+                archive_read_failed = True
+        log_text = "\n".join(
+            local_logs[log_name].read_text(encoding="utf-8", errors="replace")
+            if log_name in local_logs else archived_text.get(log_name, "")
+            for log_name in log_names
+        )
+
     report_dir = reports_directory or PROJECT_ROOT / "data" / "reports" / "daily"
-    try:
-        log_text = log_file.read_text(encoding="utf-8", errors="replace")
-    except FileNotFoundError:
-        log_text = ""
     log_text = "\n".join(
         line for line in log_text.splitlines()
         if line[:10] == target_date.isoformat()
@@ -93,10 +131,13 @@ def build_task_check_message(
     tasks = tasks_for_date(target_date)
     heading = f"【本日のタスク実行結果】{target_date:%Y-%m-%d}({"月火水木金土日"[target_date.weekday()]})"
     if not tasks:
-        return f"{heading}\n本日の実行予定タスクはありません。", False
+        message = f"{heading}\n本日の実行予定タスクはありません。"
+        if log_path is None and archive_read_failed:
+            message += "\n⚠️ アーカイブログを読み込めず、一部の実行結果を確認できませんでした。"
+        return message, log_path is None and archive_read_failed
 
     lines = [heading]
-    needs_attention = False
+    needs_attention = log_path is None and archive_read_failed
     for task in tasks:
         status, detail = classify_task_run(task, target_date, log_text, report_dir)
         needs_attention = needs_attention or status != "✅"
@@ -107,6 +148,8 @@ def build_task_check_message(
         if duration is not None:
             line += f" 実績所要時間: {format_duration(duration)}"
         lines.append(line)
+    if log_path is None and archive_read_failed:
+        lines.append("⚠️ アーカイブログを読み込めず、一部の実行結果を確認できませんでした。")
     return "\n".join(lines), needs_attention
 
 
@@ -116,10 +159,22 @@ def main(
     reports_directory: Path | None = None,
 ) -> None:
     configure_logging()
+    archive_maintenance_failed = False
+    try:
+        prepare_monthly_log_storage(
+            config.LOG_ROOT_DIRECTORY,
+            config.LOG_ARCHIVE_DIRECTORY,
+        )
+    except (OSError, ValueError) as error:
+        logger.warning("月別ログの移行・アーカイブに失敗しました。既存ログを保持して処理を続けます: %s", error)
+        archive_maintenance_failed = True
     effective_date = target_date or date.today()
     message, needs_attention = build_task_check_message(
         effective_date, log_path=log_path, reports_directory=reports_directory,
     )
+    if archive_maintenance_failed:
+        message += "\n⚠️ 月別ログの移行・アーカイブに失敗しました。処理結果を確認してください。"
+        needs_attention = True
     logger.info("本日のタスク実行結果をSlackへ通知します。")
     notify_daily(message)
     if needs_attention:

@@ -24,16 +24,16 @@
 | 板売買代金診断 | 銘柄 | 入力 | `--symbols`、または最新スクリーニング結果JSON | `--symbols` はカンマ区切り。未指定時は `SCREENING_RESULT_DIRECTORY` の最新結果 |
 | 板売買代金診断 | 認証・板データ | 入力 | `--token` または共有済みトークン、kabu `/board/{symbol}@1` | トークンは新規発行しない。レスポンスは現在値、売買高・売買代金、時刻、VWAP等 |
 | 板売買代金診断 | 調査結果 | 出力 | 標準出力、JSON | 既定JSONはスクリーニング結果ディレクトリの親にある `analysis/` |
-| 分足欠損診断 | 欠損候補・評価済み銘柄 | 入力 | スクリーニング結果ディレクトリの親にある `logs/jobs/run_filtering_stderr_<日付>.log`、`FILTERING_DIAGNOSTICS_DIRECTORY/<日付>_*.json` | ログはUTF-16、診断JSONはUTF-8。診断JSONがあれば欠損理由区分を優先 |
+| 分足欠損診断 | 欠損候補・評価済み銘柄 | 入力 | スクリーニング結果ディレクトリの親にある `logs/jobs/<YYYYMM>/run_filtering_stderr_<日付>.log` または `D:\logs\jobs\<YYYYMM>.zip`、`FILTERING_DIAGNOSTICS_DIRECTORY/<日付>_*.json` | ログはUTF-16、診断JSONはUTF-8。診断JSONがあれば欠損理由区分を優先 |
 | 分足欠損診断 | 分足・日足売買代金 | 入力 | Yahoo Finance intraday chart API、同じ親の `cache/yahoo_daily/<銘柄>.json` | 1分足は既定7日分を取得。日足API失敗時はキャッシュを読む |
 | 分足欠損診断 | 再現用母集団・採用銘柄 | 入力 | スクリーニング／フィルタ結果JSON、または診断JSON | 既定は `SCREENING_RESULT_DIRECTORY`、`FILTERING_RESULT_DIRECTORY` |
 | 分足欠損診断 | 調査・再現結果 | 出力 | 標準出力、JSON | 既定JSONはスクリーニング結果ディレクトリの親にある `analysis/` |
 | 日次タスク計画 | 対象日・予定 | 入力 | `date.today()`、`tasks_for_date()` | CLI引数はなく、関数呼び出しでは対象日を注入可能 |
 | 日次タスク計画 | 予定メッセージ | 出力 | Slack `daily`、アプリケーションログ | 実行タスクなしの日も理由または「予定なし」を通知 |
-| 日次タスク確認 | 対象日・実行記録 | 入力 | `date.today()`、`LOG_FILE_PATH` | ログはUTF-8読込（不正バイト置換）、対象日先頭10文字に絞る |
+| 日次タスク確認 | 対象日・実行記録 | 入力 | `date.today()`、`data/logs/application/<YYYYMM>/trade_project.log` または月別ZIP | ログはUTF-8読込（不正バイト置換）、対象日先頭10文字に絞る |
 | 日次タスク確認 | 取引レポート | 入力 | `data/reports/daily/<日付>.json` | 既定パス。取引タスクの完了判定に存在確認を使う |
 | 日次タスク確認 | 実行結果メッセージ | 出力 | Slack `daily`、要確認時は `critical` にも通知 | 予定がない日は `daily` のみ |
-| Windowsタスクrunner | stderr・終了コード | 出力 | `data/logs/jobs/<runner名>_stderr_<実行日>.log`、プロセス終了コード | runnerはプロジェクト `.venv\Scripts\python.exe` でentrypointを実行。古い同名stderrログを30日保持で整理 |
+| Windowsタスクrunner | stderr・終了コード | 出力 | `data/logs/jobs/<YYYYMM>/<runner名>_stderr_<実行日>.log`、プロセス終了コード | runnerはプロジェクト `.venv\Scripts\python.exe` でentrypointを実行。ローカルは当月・先月を保持し、2か月前以前は `D:\logs\jobs\<YYYYMM>.zip` へSHA-256検証後にアーカイブ |
 
 ## 4. 処理フロー
 
@@ -149,7 +149,7 @@ flowchart TD
 | `SCREENING_RESULT_DIRECTORY` | 板診断の既定銘柄入力、両診断の出力先・各出力パスの基準 | `data/screening` |
 | `FILTERING_DIAGNOSTICS_DIRECTORY` | 分足欠損診断が読むフィルタ診断JSON | `data/filtering_diagnostics` |
 | `FILTERING_RESULT_DIRECTORY` | 分足シミュレーションが読む当日採用結果 | `data/filtering` |
-| `LOG_FILE_PATH` | 日次タスク確認が読むアプリケーションログ | 設定生成先。リポジトリ既定のログファイル |
+| `LOG_FILE_PATH` | 日次タスク確認が読む月別アプリケーションログ | `data/logs/application/<YYYYMM>/trade_project.log` |
 | 市場開始・終了時刻 | 板診断JSONに記録する場中／場外の判定 | 09:00–15:30 |
 | `DAILY_ANALYSIS_START_TIME` | 平日予定表に表示する日次分析開始時刻 | `16:30` |
 | `--symbols` | 板診断のカンマ区切り対象銘柄 | 最新スクリーニング結果 |
@@ -162,7 +162,7 @@ flowchart TD
 | 登録スクリプト `-At` | 予定通知／実行確認のWindowsタスク起動時刻 | `07:00`／`18:00` |
 | 登録スクリプト `-TaskName` | Windowsタスク名 | `trade-engine-daily-task-plan`／`trade-engine-daily-task-check` |
 
-分足診断のログ入力ディレクトリはスクリーニング結果ディレクトリの親にある `logs/jobs`、結果JSONは同じ親の `analysis`。日次レポートは実行確認entrypointの既定でプロジェクトルート `data/reports/daily` を参照する。
+分足診断のログ入力ディレクトリはスクリーニング結果ディレクトリの親にある `logs/jobs/<YYYYMM>`（対象月がアーカイブ済みの場合は `D:\logs\jobs\<YYYYMM>.zip`）、結果JSONは同じ親の `analysis`。日次レポートは実行確認entrypointの既定でプロジェクトルート `data/reports/daily` を参照する。
 
 ## 9. 決定事項と変更履歴
 

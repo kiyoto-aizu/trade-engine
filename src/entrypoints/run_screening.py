@@ -7,11 +7,11 @@
 import argparse
 import logging
 from datetime import date
-from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from src.config import config
 from src.config.budget_summary import log_budget_summary
+from src.infrastructure.logging_config import configure_logging as configure_shared_logging
 from src.infrastructure.kabu.get_token import get_api_token
 from src.infrastructure.kabu.regulation_repository import RegulationRepository
 from src.infrastructure.kabu.primaryexchange_repository import PrimaryExchangeRepository
@@ -36,25 +36,7 @@ def notify_result(message: str) -> None:
 
 def configure_logging() -> None:
     """ロギングを設定します。"""
-    logging.root.handlers.clear()
-    log_level = getattr(logging, config.LOG_LEVEL, logging.INFO)
-    logging.root.setLevel(log_level)
-
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s')
-
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-    logging.root.addHandler(stream_handler)
-
-    file_handler = TimedRotatingFileHandler(
-        config.LOG_FILE_PATH,
-        when='midnight',
-        interval=1,
-        backupCount=config.LOG_BACKUP_COUNT,
-        encoding='utf-8',
-    )
-    file_handler.setFormatter(formatter)
-    logging.root.addHandler(file_handler)
+    configure_shared_logging()
 
 
 def _run_screening() -> None:
