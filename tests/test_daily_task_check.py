@@ -216,6 +216,11 @@ def test_main_sends_attention_summary_to_daily_and_critical(monkeypatch, tmp_pat
     critical_messages = []
     call_order = []
     monkeypatch.setattr(run_daily_task_check, "configure_logging", lambda: call_order.append("logging"))
+    monkeypatch.setattr(
+        run_daily_task_check,
+        "build_task_check_message",
+        lambda *args, **kwargs: ("全タスク正常終了", False),
+    )
 
     def fail_archive(*args):
         call_order.append("archive")
@@ -237,5 +242,7 @@ def test_main_sends_attention_summary_to_daily_and_critical(monkeypatch, tmp_pat
 
     assert len(daily_messages) == 1
     assert len(critical_messages) == 1
+    assert "月別ログの移行・アーカイブに失敗しました" in daily_messages[0]
     assert critical_messages[0].startswith("【本日のタスク実行要確認】")
+    assert "月別ログの移行・アーカイブに失敗しました" in critical_messages[0]
     assert call_order == ["logging", "archive"]

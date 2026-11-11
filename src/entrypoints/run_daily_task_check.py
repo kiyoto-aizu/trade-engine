@@ -159,6 +159,7 @@ def main(
     reports_directory: Path | None = None,
 ) -> None:
     configure_logging()
+    archive_maintenance_failed = False
     try:
         prepare_monthly_log_storage(
             config.LOG_ROOT_DIRECTORY,
@@ -166,10 +167,14 @@ def main(
         )
     except (OSError, ValueError) as error:
         logger.warning("月別ログの移行・アーカイブに失敗しました。既存ログを保持して処理を続けます: %s", error)
+        archive_maintenance_failed = True
     effective_date = target_date or date.today()
     message, needs_attention = build_task_check_message(
         effective_date, log_path=log_path, reports_directory=reports_directory,
     )
+    if archive_maintenance_failed:
+        message += "\n⚠️ 月別ログの移行・アーカイブに失敗しました。処理結果を確認してください。"
+        needs_attention = True
     logger.info("本日のタスク実行結果をSlackへ通知します。")
     notify_daily(message)
     if needs_attention:
