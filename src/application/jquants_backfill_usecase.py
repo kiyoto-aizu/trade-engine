@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
+import math
 from pathlib import Path
 from time import monotonic
 from typing import Any, Protocol
@@ -129,8 +130,17 @@ class JQuantsBackfillUseCase:
         today_provider: Callable[[], date] = jst_today,
         volume_probe: Callable[[Path | str], tuple[int, int]] = measure_volume,
         budget_seconds: float = DAILY_BUDGET_SECONDS,
+        approved_budget_date: date | None = None,
+        approved_total_budget_seconds: float | None = None,
         clock: Callable[[], float] = monotonic,
     ) -> None:
+        if (approved_budget_date is None) != (approved_total_budget_seconds is None):
+            raise ValueError("approved budget date and total must be specified together")
+        if approved_total_budget_seconds is not None and (
+            not math.isfinite(approved_total_budget_seconds)
+            or approved_total_budget_seconds <= DAILY_BUDGET_SECONDS
+        ):
+            raise ValueError("approved total budget must be finite and exceed the daily budget")
         self._planner = planner
         self._ingestion = ingestion
         self._state = state
@@ -139,6 +149,8 @@ class JQuantsBackfillUseCase:
         self._today_provider = today_provider
         self._volume_probe = volume_probe
         self._budget_seconds = budget_seconds
+        self._approved_budget_date = approved_budget_date
+        self._approved_total_budget_seconds = approved_total_budget_seconds
         self._clock = clock
         self._max_days: int | None = None
     def run(
@@ -161,6 +173,8 @@ class JQuantsBackfillUseCase:
     ) -> BackfillResult:
         self._max_days = max_days
         today = today or self._today_provider()
+        if self._approved_budget_date is not None and self._approved_budget_date != today:
+            raise ValueError("approved budget date must match the execution day")
         result = BackfillResult(dataset, BackfillOutcome.COMPLETED)
         blocked = self._blocked_outcome(dataset, today)
         if blocked is not None:
@@ -201,7 +215,7 @@ class JQuantsBackfillUseCase:
                 # The range rolled over after planning; skip without sending a request.
                 result.skipped_out_of_range.append(day)
                 continue
-            if result.spent_seconds >= effective_budget_seconds(budget["limit_seconds"], held) or (
+            if result.spent_seconds >= effective_budget_seconds(self._budget_limit(budget), held) or (
                 self._max_days is not None and len(result.processed) >= self._max_days
             ):
                 result.outcome = BackfillOutcome.BUDGET_EXHAUSTED
@@ -227,6 +241,16 @@ class JQuantsBackfillUseCase:
             result.outcome = BackfillOutcome.COMPLETED_WITH_REVIEW
         return result
 
+    def _budget_limit(self, budget: dict[str, Any]) -> float:
+        # Approval is invocation-local; persisted limits and spent time stay unchanged.
+        if (
+            self._approved_budget_date is not None
+            and self._approved_total_budget_seconds is not None
+            and budget["date"] == self._approved_budget_date.isoformat()
+        ):
+            return self._approved_total_budget_seconds
+        return budget["limit_seconds"]
+
     def _process_day(self, result, dataset, day, now, sizes, held) -> tuple[bool, bool]:
         disk = self._check_disk(sizes)
         if disk is None:
@@ -243,7 +267,7 @@ class JQuantsBackfillUseCase:
         # A newly observed Hold reduces the *shared* allowance before starting this date.
         active_budget = self._state.load()["shared_budget"]
         if active_budget["spent_seconds"] >= effective_budget_seconds(
-            active_budget["limit_seconds"], held,
+            self._budget_limit(active_budget), held,
         ):
             result.outcome = BackfillOutcome.BUDGET_EXHAUSTED
             return held, True

@@ -6,6 +6,7 @@ Without --execute nothing is fetched: only the plan counts and stop state are pr
 
 import argparse
 import json
+import math
 import sqlite3
 import sys
 from datetime import date, timedelta
@@ -48,6 +49,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-days", type=int)
     parser.add_argument("--budget-seconds", type=float, help="Override the daily time budget")
     parser.add_argument("--execute", action="store_true", help="Fetch from the real API")
+    parser.add_argument("--approved-budget-date", type=_date_argument,
+                        help="Human-approved JST execution date for a one-off extension")
+    parser.add_argument("--approved-total-budget-seconds", type=float,
+                        help="Human-approved cumulative budget; checked between target days")
     parser.add_argument(
         "--clear-stop-flag", action="store_true",
         help="Human-only: remove the stop flag after the cause is confirmed",
@@ -57,6 +62,18 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--max-days must be positive")
     if args.budget_seconds is not None and not 0 < args.budget_seconds <= DAILY_BUDGET_SECONDS:
         parser.error("--budget-seconds must be positive and at most the daily budget")
+    if (args.approved_budget_date is None) != (args.approved_total_budget_seconds is None):
+        parser.error("approved budget date and total must be specified together")
+    if args.approved_total_budget_seconds is not None:
+        if (
+            not math.isfinite(args.approved_total_budget_seconds)
+            or args.approved_total_budget_seconds <= DAILY_BUDGET_SECONDS
+        ):
+            parser.error("approved total budget must be finite and exceed the daily budget")
+        if not args.execute or args.clear_stop_flag or args.budget_seconds is not None:
+            parser.error("approved budget requires --execute and cannot combine with other budget options")
+        if args.approved_budget_date != jst_today():
+            parser.error("approved budget date must match today's JST date")
     state = JQuantsBackfillStateStore(config.JQUANTS_BACKFILL_STATE_DIRECTORY)
     try:
         if args.clear_stop_flag:
@@ -99,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
                 raw_directory=raw_store.raw_directory,
                 canonical_directory=canonical_store.directory,
                 **({} if args.budget_seconds is None else {"budget_seconds": args.budget_seconds}),
+                approved_budget_date=args.approved_budget_date,
+                approved_total_budget_seconds=args.approved_total_budget_seconds,
             )
             result = usecase.run_locked(args.dataset, start, end, max_days=args.max_days, today=today)
     except BackfillLockedError:
