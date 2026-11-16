@@ -174,6 +174,74 @@ def test_retry_hold_shrinks_budget(tmp_path):
     assert len(ingestion.calls) == 1
 
 
+def test_approved_budget_preserves_spent_time_and_normal_limit(tmp_path):
+    ingestion = FakeIngestion()
+    usecase, state = _usecase(
+        tmp_path, FakePlanner(_plan(*days(3))), ingestion,
+        approved_budget_date=TODAY, approved_total_budget_seconds=7202,
+    )
+    budget = state.budget(TODAY)
+    saved = state.load()
+    saved["shared_budget"]["spent_seconds"] = 7200
+    state.save(saved)
+
+    result = usecase.run("minute", START, TODAY)
+
+    assert len(ingestion.calls) == 2
+    assert result.outcome is BackfillOutcome.BUDGET_EXHAUSTED
+    assert result.spent_seconds == 7202
+    assert state.load()["shared_budget"]["limit_seconds"] == budget["limit_seconds"] == 7200
+    assert state.load()["shared_budget"]["in_progress"] is None
+    normal, _ = _usecase(tmp_path, FakePlanner(_plan(START)), FakeIngestion())
+    assert normal.run("minute", START, TODAY).processed == []
+    assert usecase.run("minute", START, TODAY).processed == []
+
+
+def test_approved_budget_still_honors_hold_and_expiry(tmp_path):
+    ingestion = FakeIngestion()
+    usecase, state = _usecase(
+        tmp_path, FakePlanner(_plan(START)), ingestion,
+        approved_budget_date=TODAY, approved_total_budget_seconds=14400,
+    )
+    state.budget(TODAY)
+    saved = state.load()
+    saved["shared_budget"].update(spent_seconds=7200, held=True)
+    state.save(saved)
+    assert usecase.run("minute", START, TODAY).processed == []
+    with pytest.raises(ValueError, match="execution day"):
+        usecase.run_locked("minute", START, TODAY, today=TODAY + timedelta(days=1))
+    assert state.load()["shared_budget"]["date"] == TODAY.isoformat()
+
+
+def test_approved_budget_finishes_current_day_before_stopping(tmp_path):
+    ingestion = FakeIngestion({START.isoformat(): {"elapsed": 5}})
+    usecase, state = _usecase(
+        tmp_path, FakePlanner(_plan(*days(2))), ingestion,
+        approved_budget_date=TODAY, approved_total_budget_seconds=7202,
+    )
+    state.budget(TODAY)
+    saved = state.load()
+    saved["shared_budget"]["spent_seconds"] = 7200
+    state.save(saved)
+
+    result = usecase.run("minute", START, TODAY)
+
+    assert ingestion.calls == [START.isoformat()]
+    assert result.outcome is BackfillOutcome.BUDGET_EXHAUSTED
+    assert result.spent_seconds == 7205
+    assert result.remaining_targets == 1
+    assert state.load()["shared_budget"]["in_progress"] is None
+
+
+@pytest.mark.parametrize("total", [float("nan"), float("inf"), 7200, -1])
+def test_approved_budget_rejects_invalid_ceiling(tmp_path, total):
+    with pytest.raises(ValueError, match="finite"):
+        _usecase(
+            tmp_path, FakePlanner(_plan(START)), FakeIngestion(),
+            approved_budget_date=TODAY, approved_total_budget_seconds=total,
+        )
+
+
 def test_max_days(tmp_path):
     ingestion = FakeIngestion()
     usecase, _ = _usecase(tmp_path, FakePlanner(_plan(*days(5))), ingestion)
@@ -625,3 +693,18 @@ def test_entrypoint_rejects_non_positive_limits(flag, value):
 
     with pytest.raises(SystemExit):
         entry.main(["--dataset", "daily", flag, value])
+
+
+@pytest.mark.parametrize("options", [
+    ["--approved-total-budget-seconds", "21600"],
+    ["--approved-budget-date", "2026-10-29"],
+    ["--approved-budget-date", "2026-10-29", "--approved-total-budget-seconds", "nan", "--execute"],
+    ["--approved-budget-date", "2026-10-29", "--approved-total-budget-seconds", "21600"],
+    ["--approved-budget-date", "2026-10-28", "--approved-total-budget-seconds", "21600", "--execute"],
+])
+def test_entrypoint_rejects_unscoped_or_invalid_approval(monkeypatch, options):
+    from src.entrypoints import run_jquants_backfill as entry
+
+    monkeypatch.setattr(entry, "jst_today", lambda: TODAY)
+    with pytest.raises(SystemExit):
+        entry.main(["--dataset", "minute", *options])
