@@ -55,7 +55,8 @@ def main() -> None:
                  AVG(CASE WHEN down_move > up_move THEN down_move ELSE 0 END)
                    OVER (ORDER BY date ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS minus_dm14,
                  AVG(tr) OVER (ORDER BY date ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS tr14,
-                 MAX(h) OVER (ORDER BY date ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS high252
+                 MAX(h) OVER (ORDER BY date ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS high252,
+                 ROW_NUMBER() OVER (ORDER BY date) AS rn
           FROM n1
         ), n3 AS (
           SELECT *,
@@ -71,7 +72,7 @@ def main() -> None:
                n4.sma25 AS mkt_sma25,
                n4.c / n4.sma25 - 1 AS mkt_sma25_gap,
                n4.sma25 / lag(n4.sma25, 5) OVER (ORDER BY n4.date) - 1 AS mkt_sma25_slope5,
-               n4.c / n4.high252 - 1 AS mkt_dd252,
+               CASE WHEN n4.rn > 252 THEN n4.c / n4.high252 - 1 END AS mkt_dd252,
                n4.adx14_sma AS mkt_adx14_sma,
                topix.c AS topix_close,
                topix.o AS topix_open,
@@ -150,8 +151,8 @@ def main() -> None:
                THEN 100.0 * avg_gain14 / (avg_gain14 + avg_loss14) END AS rsi14_sma,
           va_avg20_prev, va_avg20, va_prev,
           va / NULLIF(va_avg20_prev, 0) AS va_surge,
-          adj_c / NULLIF(high252, 0) - 1 AS off_high252,
-          adj_c / NULLIF(high60, 0) - 1 AS off_high60,
+          CASE WHEN rn > 252 THEN adj_c / NULLIF(high252, 0) - 1 END AS off_high252,
+          CASE WHEN rn > 60 THEN adj_c / NULLIF(high60, 0) - 1 END AS off_high60,
           (5 - down_in_5) AS up_days_in_5,
           -- 将来リターン（entry = t+1 の調整後始値）
           o_t1, date_t1, date_t20, fwd_days_avail,

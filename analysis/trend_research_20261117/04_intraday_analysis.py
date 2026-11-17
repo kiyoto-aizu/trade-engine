@@ -28,8 +28,10 @@ WITH prev AS (
          p.va_avg20, p.va_surge AS prev_va_surge, p.ul AS prev_ul,
          p.off_high252, p.up_days_in_5
   FROM panel p
+  JOIN bars_daily b1 ON b1.code = p.code AND b1.date = p.date_t1
   WHERE substr(p.code, 1, 4) IN (SELECT symbol FROM universe_master)
     AND p.price_close <= 900 AND p.va_avg20 > 0 AND p.date_t1 IS NOT NULL
+    AND COALESCE(b1.adj_factor, 1) = 1  -- 分割・併合当日は生値比が破綻するため除外
 ), ranked AS (
   SELECT *,
          rank() OVER (PARTITION BY prev_date ORDER BY prev_va DESC) AS r_va,
@@ -177,16 +179,23 @@ def main() -> None:
     """)
 
     # --- 翌日以降への持ち越し効果（現行はEOD決済）: 上位10のt+1以降 ---
+    # エントリーは選択情報（朝サージ）確定後の 9:35 とし、t→t+h は調整後終値比で接続する
     out["swing_vs_daytrade_top10"] = q(con, """
+        WITH fwd AS (
+          SELECT code, date, adj_c,
+                 lead(adj_c, 5) OVER (PARTITION BY code ORDER BY date) / adj_c AS r5,
+                 lead(adj_c, 20) OVER (PARTITION BY code ORDER BY date) / adj_c AS r20
+          FROM bars_daily WHERE c IS NOT NULL AND adj_c IS NOT NULL AND adj_c > 0
+        )
         SELECT s.mperiod,
                COUNT(*) AS n,
                ROUND(AVG(s.ret_0935_1525), 5) AS daytrade_mean,
-               ROUND(AVG(p.fwd_ret5), 5) AS hold5_mean,
-               ROUND(quantile_cont(p.fwd_ret5, 0.5), 5) AS hold5_med,
-               ROUND(AVG(p.fwd_ret20), 5) AS hold20_mean,
-               ROUND(quantile_cont(p.fwd_ret20, 0.5), 5) AS hold20_med
+               ROUND(AVG((s.close_last / s.entry_0935_close) * f.r5 - 1), 5) AS hold5_mean,
+               ROUND(quantile_cont((s.close_last / s.entry_0935_close) * f.r5 - 1, 0.5), 5) AS hold5_med,
+               ROUND(AVG((s.close_last / s.entry_0935_close) * f.r20 - 1), 5) AS hold20_mean,
+               ROUND(quantile_cont((s.close_last / s.entry_0935_close) * f.r20 - 1, 0.5), 5) AS hold20_med
         FROM sel s
-        JOIN panel p ON p.code = s.code AND p.date = s.prev_date
+        JOIN fwd f ON f.code = s.code AND f.date = s.date
         WHERE s.r_surge <= 10
         GROUP BY 1 ORDER BY 1
     """)

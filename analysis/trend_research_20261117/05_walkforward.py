@@ -40,8 +40,10 @@ def main() -> None:
                  p.price_close AS prev_close, p.va AS prev_va, p.ret1 AS prev_ret1,
                  p.ret20, p.rsi14_sma, p.va_avg20, p.ul AS prev_ul
           FROM panel p
+          JOIN bars_daily b1 ON b1.code = p.code AND b1.date = p.date_t1
           WHERE substr(p.code, 1, 4) IN (SELECT symbol FROM universe_master)
             AND p.price_close <= 900 AND p.va_avg20 > 0 AND p.date_t1 IS NOT NULL
+            AND COALESCE(b1.adj_factor, 1) = 1  -- 分割・併合当日は生値のバンド比較が破綻するため除外
         ), ranked AS (
           SELECT *,
                  rank() OVER (PARTITION BY prev_date ORDER BY prev_va DESC) AS r_va,
