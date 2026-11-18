@@ -20,7 +20,7 @@
     },
     {
       "period": "P4",
-      "rows": 917085,
+      "rows": 917070,
       "codes": 3712,
       "days": 251
     }
@@ -64,7 +64,7 @@
     },
     {
       "period": "P4",
-      "n": 917085,
+      "n": 917070,
       "overnight_mean": 0.0009,
       "overnight_med": 0.0,
       "overnight_p1": -0.04848,
@@ -78,8 +78,9 @@
   "survivorship": {
     "daily_codes_not_in_master": 1301,
     "master_not_in_daily": 7,
-    "disappeared_codes_total": 572,
-    "disappeared_codes_excluded_by_master": 544
+    "historical_master_delisted_rows": 28,
+    "disappeared_codes_10_sessions_before_end": 738,
+    "disappeared_nonmaster_codes_10_sessions_before_end": 710
   },
   "survivorship::fwd_distribution_all_codes": [
     {
@@ -109,6 +110,96 @@
       "ex20_med": -0.0145,
       "trend10_rate": 0.0963,
       "crash10_rate": 0.13
+    }
+  ],
+  "survivorship::window_coverage": [
+    {
+      "period": "P1",
+      "cohort": "master_asof",
+      "candidate_rows": 1553598,
+      "usable_20d_rows": 1460931,
+      "unavailable_20d_rows": 92667,
+      "rows_without_20_stock_observations": 0,
+      "rows_with_stock_index_endpoint_mismatch": 92667,
+      "codes_not_at_data_end": 59,
+      "rows_censored_before_data_end": 0
+    },
+    {
+      "period": "P1",
+      "cohort": "outside_master_asof",
+      "candidate_rows": 333276,
+      "usable_20d_rows": 298201,
+      "unavailable_20d_rows": 35075,
+      "rows_without_20_stock_observations": 2976,
+      "rows_with_stock_index_endpoint_mismatch": 32099,
+      "codes_not_at_data_end": 518,
+      "rows_censored_before_data_end": 2976
+    },
+    {
+      "period": "P2",
+      "cohort": "master_asof",
+      "candidate_rows": 859455,
+      "usable_20d_rows": 822016,
+      "unavailable_20d_rows": 37439,
+      "rows_without_20_stock_observations": 0,
+      "rows_with_stock_index_endpoint_mismatch": 37439,
+      "codes_not_at_data_end": 60,
+      "rows_censored_before_data_end": 0
+    },
+    {
+      "period": "P2",
+      "cohort": "outside_master_asof",
+      "candidate_rows": 165782,
+      "usable_20d_rows": 150896,
+      "unavailable_20d_rows": 14886,
+      "rows_without_20_stock_observations": 1852,
+      "rows_with_stock_index_endpoint_mismatch": 13034,
+      "codes_not_at_data_end": 370,
+      "rows_censored_before_data_end": 1852
+    },
+    {
+      "period": "P3",
+      "cohort": "master_asof",
+      "candidate_rows": 875429,
+      "usable_20d_rows": 840291,
+      "unavailable_20d_rows": 35138,
+      "rows_without_20_stock_observations": 0,
+      "rows_with_stock_index_endpoint_mismatch": 35138,
+      "codes_not_at_data_end": 60,
+      "rows_censored_before_data_end": 0
+    },
+    {
+      "period": "P3",
+      "cohort": "outside_master_asof",
+      "candidate_rows": 149696,
+      "usable_20d_rows": 134811,
+      "unavailable_20d_rows": 14885,
+      "rows_without_20_stock_observations": 2258,
+      "rows_with_stock_index_endpoint_mismatch": 12627,
+      "codes_not_at_data_end": 283,
+      "rows_censored_before_data_end": 2256
+    },
+    {
+      "period": "P4",
+      "cohort": "master_asof",
+      "candidate_rows": 917070,
+      "usable_20d_rows": 813761,
+      "unavailable_20d_rows": 103309,
+      "rows_without_20_stock_observations": 70415,
+      "rows_with_stock_index_endpoint_mismatch": 32894,
+      "codes_not_at_data_end": 60,
+      "rows_censored_before_data_end": 1140
+    },
+    {
+      "period": "P4",
+      "cohort": "outside_master_asof",
+      "candidate_rows": 136278,
+      "usable_20d_rows": 111659,
+      "unavailable_20d_rows": 24619,
+      "rows_without_20_stock_observations": 12976,
+      "rows_with_stock_index_endpoint_mismatch": 11643,
+      "codes_not_at_data_end": 172,
+      "rows_censored_before_data_end": 3066
     }
   ],
   "survivorship::price_band_all_codes": [

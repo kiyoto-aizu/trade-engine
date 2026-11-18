@@ -4,7 +4,7 @@
 出力: data/analysis/trend_research_20261117/03_trend_analysis.json
 
 定義（計算前に固定）:
-  - 対象: universe_master に存在する銘柄（東証P/S/G の普通株）かつ o_t1 が存在する行
+  - 対象: 日付時点で universe_master に上場している東証P/S/G の普通株、かつ o_t1 が存在する行
   - 期間分割: P1=2021-11-04..2023-10-31, P2=..2024-10-31, P3=..2025-10-31, P4=..2026-11-16
   - 将来リターン: fwd_ret{5,10,20} = adj_c(t+h)/adj_o(t+1)-1、超過 = 同一窓の TOPIX 連動ETF比
   - トレンド率: 超過リターンが閾値以上の行の割合（閾値感度 3/5/8/10/15%）
@@ -22,6 +22,12 @@ CASE WHEN date < DATE '2023-11-01' THEN 'P1'
      WHEN date < DATE '2024-11-01' THEN 'P2'
      WHEN date < DATE '2025-11-01' THEN 'P3'
      ELSE 'P4' END
+"""
+
+MASTER_JOIN = """JOIN universe_master um
+  ON substr(p.code, 1, 4) = um.symbol
+ AND p.date >= um.listed_from
+ AND (um.listed_to IS NULL OR p.date <= um.listed_to)
 """
 
 BASE_VIEW = f"""
@@ -48,8 +54,8 @@ SELECT p.*,
 FROM panel p
 JOIN market_fwd mf USING (date)
 JOIN market_state ms USING (date)
-WHERE substr(p.code, 1, 4) IN (SELECT symbol FROM universe_master)
-  AND substr(p.code, 5, 1) = '0'  -- 普通株のみ（優先株等の末尾非0を除外）
+{MASTER_JOIN}
+WHERE substr(p.code, 5, 1) = '0'  -- 普通株のみ（優先株等の末尾非0を除外）
   AND p.o_t1 IS NOT NULL AND p.rn > 25 AND p.va_avg20_prev > 0
 """
 
@@ -95,7 +101,7 @@ def main() -> None:
     """)
 
     # --- 生存者バイアスの定量化（マスタ絞りの影響） ---
-    # マスタ外コードのうち、データ末尾より10営業日以上前に消滅したコード（上場廃止の近似）
+    # データ末尾から10市場営業日以上前にデータが途絶えたコード（上場廃止の近似）
     out["survivorship"] = {
         "daily_codes_not_in_master": con.sql(
             "SELECT COUNT(DISTINCT code) FROM bars_daily WHERE substr(code,1,4) NOT IN (SELECT symbol FROM universe_master)"
@@ -103,33 +109,90 @@ def main() -> None:
         "master_not_in_daily": con.sql(
             "SELECT COUNT(DISTINCT symbol) FROM universe_master WHERE symbol NOT IN (SELECT substr(code,1,4) FROM bars_daily)"
         ).fetchone()[0],
-        "disappeared_codes_total": con.sql(
+        "historical_master_delisted_rows": con.sql(
+            "SELECT COUNT(*) FROM universe_master WHERE listed_to IS NOT NULL"
+        ).fetchone()[0],
+        "disappeared_codes_10_sessions_before_end": con.sql(
             """
-            SELECT COUNT(*) FROM (
-              SELECT code, MAX(date) AS last_d FROM bars_daily WHERE substr(code,5,1)='0' GROUP BY 1
-            ) WHERE last_d < DATE '2026-10-31'
+            WITH last_seen AS (
+              SELECT code, MAX(date) AS last_d
+              FROM bars_daily
+              WHERE substr(code,5,1)='0' AND c IS NOT NULL AND adj_c IS NOT NULL AND adj_c > 0
+              GROUP BY 1
+            ), calendar AS (SELECT DISTINCT date FROM market_state)
+            SELECT COUNT(*) FROM last_seen l
+            WHERE (SELECT COUNT(*) FROM calendar c WHERE c.date > l.last_d) >= 10
             """
         ).fetchone()[0],
-        "disappeared_codes_excluded_by_master": con.sql(
+        "disappeared_nonmaster_codes_10_sessions_before_end": con.sql(
             """
-            SELECT COUNT(*) FROM (
-              SELECT code, MAX(date) AS last_d FROM bars_daily WHERE substr(code,5,1)='0' GROUP BY 1
-            ) WHERE last_d < DATE '2026-10-31'
-              AND substr(code,1,4) NOT IN (SELECT symbol FROM universe_master)
+            WITH last_seen AS (
+              SELECT code, MAX(date) AS last_d
+              FROM bars_daily
+              WHERE substr(code,5,1)='0' AND c IS NOT NULL AND adj_c IS NOT NULL AND adj_c > 0
+              GROUP BY 1
+            ), calendar AS (SELECT DISTINCT date FROM market_state)
+            SELECT COUNT(*) FROM last_seen l
+            WHERE (SELECT COUNT(*) FROM calendar c WHERE c.date > l.last_d) >= 10
+              AND NOT EXISTS (
+                SELECT 1 FROM universe_master um
+                WHERE um.symbol = substr(l.code,1,4)
+              )
             """
         ).fetchone()[0],
     }
-    # マスタ絞りなし（末尾0の全コード。ETF・REIT等を含む点に注意）での主要集計の再現
-    con.execute(BASE_VIEW.replace(
-        "substr(p.code, 1, 4) IN (SELECT symbol FROM universe_master)\n  AND substr(p.code, 5, 1) = '0'",
-        "substr(p.code, 5, 1) = '0'",
-    ).replace("TEMP VIEW v AS", "TEMP VIEW v_all AS"))
+    # マスタ絞りなし（末尾0の全コード。ETF・REIT等を含む感度分析）
+    con.execute(
+        BASE_VIEW.replace(MASTER_JOIN, "")
+        .replace("TEMP VIEW v AS", "TEMP VIEW v_all AS")
+    )
     out["survivorship::fwd_distribution_all_codes"] = q(con, """
         SELECT period, COUNT(*) AS n,
                ROUND(quantile_cont(ex20, 0.5), 4) AS ex20_med,
                ROUND(AVG((ex20 >= 0.10)::INT), 4) AS trend10_rate,
                ROUND(AVG((ex20 <= -0.10)::INT), 4) AS crash10_rate
         FROM v_all WHERE ex20 IS NOT NULL GROUP BY 1 ORDER BY 1
+    """)
+    out["survivorship::window_coverage"] = q(con, f"""
+        WITH last_seen AS (
+          SELECT code, MAX(date) AS last_date
+          FROM bars_daily
+          WHERE c IS NOT NULL AND adj_c IS NOT NULL AND adj_c > 0
+          GROUP BY 1
+        ), candidates AS (
+          SELECT p.code, p.date, {PERIOD_SQL} AS period,
+                 p.date_t20, p.fwd_ret20, p.fwd_days_avail,
+                 mf.idx_date_t20,
+                 CASE WHEN um.symbol IS NOT NULL THEN 'master_asof' ELSE 'outside_master_asof' END AS cohort,
+                 ls.last_date, (SELECT MAX(date) FROM bars_daily) AS data_end
+          FROM panel p
+          JOIN market_fwd mf USING (date)
+          JOIN last_seen ls USING (code)
+          LEFT JOIN universe_master um
+            ON substr(p.code, 1, 4) = um.symbol
+           AND p.date >= um.listed_from
+           AND (um.listed_to IS NULL OR p.date <= um.listed_to)
+          WHERE substr(p.code, 5, 1) = '0'
+            AND p.o_t1 IS NOT NULL AND p.rn > 25 AND p.va_avg20_prev > 0
+        )
+        SELECT period, cohort, COUNT(*) AS candidate_rows,
+               COUNT(*) FILTER (
+                 WHERE date_t20 = idx_date_t20 AND fwd_ret20 IS NOT NULL
+               ) AS usable_20d_rows,
+               COUNT(*) FILTER (
+                 WHERE date_t20 IS NULL OR date_t20 <> idx_date_t20 OR fwd_ret20 IS NULL
+               ) AS unavailable_20d_rows,
+               COUNT(*) FILTER (WHERE fwd_days_avail < 20) AS rows_without_20_stock_observations,
+               COUNT(*) FILTER (
+                 WHERE date_t20 IS NOT NULL AND idx_date_t20 IS NOT NULL
+                   AND date_t20 <> idx_date_t20
+               ) AS rows_with_stock_index_endpoint_mismatch,
+               COUNT(DISTINCT code) FILTER (WHERE last_date < data_end) AS codes_not_at_data_end,
+               COUNT(*) FILTER (
+                 WHERE last_date < data_end AND fwd_days_avail < 20
+               ) AS rows_censored_before_data_end
+        FROM candidates
+        GROUP BY 1, 2 ORDER BY 1, 2
     """)
     out["survivorship::price_band_all_codes"] = q(con, """
         SELECT period,
