@@ -28,10 +28,11 @@ BASE_VIEW = f"""
 CREATE OR REPLACE TEMP VIEW v AS
 SELECT p.*,
        {PERIOD_SQL} AS period,
-       p.fwd_ret5 - mf.idx_fwd_ret5 AS ex5,
-       p.fwd_ret10 - mf.idx_fwd_ret10 AS ex10,
-       p.fwd_ret20 - mf.idx_fwd_ret20 AS ex20,
-       p.fwd_intraday1 - mf.idx_fwd_intraday1 AS ex1,
+       -- 超過リターンは銘柄側と指数側の窓終端日付が一致する行のみ（出来値なし日による窓ずれを排除）
+       CASE WHEN p.date_t5 = mf.idx_date_t5 THEN p.fwd_ret5 - mf.idx_fwd_ret5 END AS ex5,
+       CASE WHEN p.date_t10 = mf.idx_date_t10 THEN p.fwd_ret10 - mf.idx_fwd_ret10 END AS ex10,
+       CASE WHEN p.date_t20 = mf.idx_date_t20 THEN p.fwd_ret20 - mf.idx_fwd_ret20 END AS ex20,
+       CASE WHEN p.date_t1 = mf.idx_date_t1 THEN p.fwd_intraday1 - mf.idx_fwd_intraday1 END AS ex1,
        ms.regime_vol_base, ms.mkt_vol20, ms.mkt_sma25_slope5, ms.mkt_sma25_gap,
        ms.mkt_dd252, ms.mkt_adx14_sma, ms.mkt_ret1, ms.mkt_bigmove_prev,
        CASE WHEN p.price_close <= 270 THEN 'a:<=270'
@@ -48,6 +49,7 @@ FROM panel p
 JOIN market_fwd mf USING (date)
 JOIN market_state ms USING (date)
 WHERE substr(p.code, 1, 4) IN (SELECT symbol FROM universe_master)
+  AND substr(p.code, 5, 1) = '0'  -- 普通株のみ（優先株等の末尾非0を除外）
   AND p.o_t1 IS NOT NULL AND p.rn > 25 AND p.va_avg20_prev > 0
 """
 
@@ -76,6 +78,71 @@ def main() -> None:
     out: dict = {}
 
     out["universe"] = q(con, "SELECT period, COUNT(*) AS rows, COUNT(DISTINCT code) AS codes, COUNT(DISTINCT date) AS days FROM v GROUP BY 1 ORDER BY 1")
+
+    # --- オーバーナイト/日中ドリフトの分解（提案の根拠。分布・損失側も併記） ---
+    out["overnight_vs_intraday"] = q(con, """
+        SELECT period, COUNT(*) AS n,
+               ROUND(AVG(gap_t1), 5) AS overnight_mean,
+               ROUND(quantile_cont(gap_t1, 0.5), 5) AS overnight_med,
+               ROUND(quantile_cont(gap_t1, 0.01), 5) AS overnight_p1,
+               ROUND(quantile_cont(gap_t1, 0.05), 5) AS overnight_p5,
+               ROUND(AVG((gap_t1 <= -0.10)::INT), 5) AS overnight_le_m10pct,
+               ROUND(AVG(fwd_intraday1), 5) AS intraday_mean,
+               ROUND(quantile_cont(fwd_intraday1, 0.5), 5) AS intraday_med,
+               ROUND(quantile_cont(fwd_intraday1, 0.05), 5) AS intraday_p5
+        FROM v WHERE gap_t1 IS NOT NULL AND fwd_intraday1 IS NOT NULL
+        GROUP BY 1 ORDER BY 1
+    """)
+
+    # --- 生存者バイアスの定量化（マスタ絞りの影響） ---
+    # マスタ外コードのうち、データ末尾より10営業日以上前に消滅したコード（上場廃止の近似）
+    out["survivorship"] = {
+        "daily_codes_not_in_master": con.sql(
+            "SELECT COUNT(DISTINCT code) FROM bars_daily WHERE substr(code,1,4) NOT IN (SELECT symbol FROM universe_master)"
+        ).fetchone()[0],
+        "master_not_in_daily": con.sql(
+            "SELECT COUNT(DISTINCT symbol) FROM universe_master WHERE symbol NOT IN (SELECT substr(code,1,4) FROM bars_daily)"
+        ).fetchone()[0],
+        "disappeared_codes_total": con.sql(
+            """
+            SELECT COUNT(*) FROM (
+              SELECT code, MAX(date) AS last_d FROM bars_daily WHERE substr(code,5,1)='0' GROUP BY 1
+            ) WHERE last_d < DATE '2026-10-31'
+            """
+        ).fetchone()[0],
+        "disappeared_codes_excluded_by_master": con.sql(
+            """
+            SELECT COUNT(*) FROM (
+              SELECT code, MAX(date) AS last_d FROM bars_daily WHERE substr(code,5,1)='0' GROUP BY 1
+            ) WHERE last_d < DATE '2026-10-31'
+              AND substr(code,1,4) NOT IN (SELECT symbol FROM universe_master)
+            """
+        ).fetchone()[0],
+    }
+    # マスタ絞りなし（末尾0の全コード。ETF・REIT等を含む点に注意）での主要集計の再現
+    con.execute(BASE_VIEW.replace(
+        "substr(p.code, 1, 4) IN (SELECT symbol FROM universe_master)\n  AND substr(p.code, 5, 1) = '0'",
+        "substr(p.code, 5, 1) = '0'",
+    ).replace("TEMP VIEW v AS", "TEMP VIEW v_all AS"))
+    out["survivorship::fwd_distribution_all_codes"] = q(con, """
+        SELECT period, COUNT(*) AS n,
+               ROUND(quantile_cont(ex20, 0.5), 4) AS ex20_med,
+               ROUND(AVG((ex20 >= 0.10)::INT), 4) AS trend10_rate,
+               ROUND(AVG((ex20 <= -0.10)::INT), 4) AS crash10_rate
+        FROM v_all WHERE ex20 IS NOT NULL GROUP BY 1 ORDER BY 1
+    """)
+    out["survivorship::price_band_all_codes"] = q(con, """
+        SELECT period,
+               CASE WHEN price_close <= 270 THEN 'a:<=270' WHEN price_close <= 450 THEN 'b:270-450'
+                    WHEN price_close <= 900 THEN 'c:450-900' WHEN price_close <= 3000 THEN 'd:900-3000'
+                    ELSE 'e:>3000' END AS bin,
+               COUNT(*) AS n,
+               ROUND(quantile_cont(ex20, 0.5), 4) AS ex20_med,
+               ROUND(AVG((ex20 >= 0.10)::INT), 4) AS trend10_rate,
+               ROUND(AVG((ex20 <= -0.10)::INT), 4) AS crash10_rate,
+               ROUND(AVG(fwd_intraday1), 5) AS intraday_mean
+        FROM v_all WHERE ex20 IS NOT NULL GROUP BY 1, 2 ORDER BY 1, 2
+    """)
 
     out["fwd_distribution"] = q(con, """
         SELECT period,

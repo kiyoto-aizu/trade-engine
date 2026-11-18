@@ -1,0 +1,38 @@
+{
+  "actual_files": {
+    "screening_days": 48,
+    "screening_range": [
+      "2026-08-31",
+      "2026-11-17"
+    ],
+    "filtering_days": 48,
+    "filtering_range": [
+      "2026-09-01",
+      "2026-11-18"
+    ]
+  },
+  "screening_overlap": {
+    "days": 48,
+    "mean_overlap": 0.1752,
+    "p25": 0.1,
+    "median": 0.14,
+    "p75": 0.18
+  },
+  "filtering_overlap": {
+    "days": 47,
+    "mean_overlap": 0.1839,
+    "median": 0.2
+  },
+  "filtering_in_approx_top50": {
+    "days": 47,
+    "mean_overlap": 0.265,
+    "median": 0.3
+  },
+  "actual_filtering_performance": {
+    "n": 428,
+    "days": 45,
+    "ret_mean": -0.00563,
+    "ret_med": 0.0,
+    "win": 0.3551
+  }
+}

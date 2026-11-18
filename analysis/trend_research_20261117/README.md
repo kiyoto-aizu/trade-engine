@@ -7,7 +7,8 @@
   - `D:\jquants\canonical\daily\date=*/generations/<CURRENT>/part-00000.parquet`（J-Quants 日足、世代は各 `CURRENT` ファイルで解決）
   - `D:\jquants\canonical\minute\date=*/...`（J-Quants 分足）
   - `data/universe/listed_securities.csv`（時点整合マスタ、listed_from/listed_to 付き）
-- 出力: `data/analysis/trend_research_20261117/`（DuckDB ファイル・JSON/CSV 集計・報告書）。既存ファイルは上書きしない。
+  - `data/screening/*.json`、`data/filtering/*.json`、`data/state/market_regime_daily.sqlite3`（07・06、読み取りのみ）
+- 出力: `data/analysis/trend_research_20261117/`（DuckDB ファイル・JSON 集計・報告書）。**本調査の出力（trend_research.duckdb と 0*_*.json）は再実行時に再作成する**。本調査の出力以外の既存ファイル（他の調査成果物・本番データ）には書き込まない。
 - 実行環境: リポジトリの `.venv`（Python 3.14, duckdb のみ。pandas/numpy 不使用）。
 - 制約: 既存データへの書き込みなし。外部 API 呼び出しなし。依存パッケージ追加なし。
 
@@ -19,6 +20,8 @@
 .venv\Scripts\python.exe analysis\trend_research_20261117\03_trend_analysis.py
 .venv\Scripts\python.exe analysis\trend_research_20261117\04_intraday_analysis.py
 .venv\Scripts\python.exe analysis\trend_research_20261117\05_walkforward.py
+.venv\Scripts\python.exe analysis\trend_research_20261117\06_supplement.py
+.venv\Scripts\python.exe analysis\trend_research_20261117\07_fidelity_check.py
 ```
 
 ## 指標定義の注意

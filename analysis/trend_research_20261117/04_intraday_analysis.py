@@ -30,6 +30,7 @@ WITH prev AS (
   FROM panel p
   JOIN bars_daily b1 ON b1.code = p.code AND b1.date = p.date_t1
   WHERE substr(p.code, 1, 4) IN (SELECT symbol FROM universe_master)
+    AND substr(p.code, 5, 1) = '0'  -- 普通株のみ
     AND p.price_close <= 900 AND p.va_avg20 > 0 AND p.date_t1 IS NOT NULL
     AND COALESCE(b1.adj_factor, 1) = 1  -- 分割・併合当日は生値比が破綻するため除外
 ), ranked AS (
@@ -42,8 +43,8 @@ WITH prev AS (
   FROM ranked
 )
 SELECT s.*, m.va_morning, m.vo_morning, m.entry_0935_close, m.close_1525, m.close_last,
-       m.high_after_0935, m.low_after_0935, m.time_of_high, m.time_of_low,
-       m.open_day, m.bars,
+       m.high_after_0935, m.low_after_0935, m.time_of_high_after_0935, m.time_of_low_after_0935,
+       m.open_day, m.bars, m.entry_time, m.last_time,
        m.va_morning / s.va_avg20 AS morning_surge,
        m.entry_0935_close / s.prev_close - 1 AS morning_move,
        m.open_day / s.prev_close - 1 AS gap_open,
@@ -57,14 +58,27 @@ JOIN minute_day_summary m ON m.code = s.code AND m.date = s.date
 JOIN market_state ms ON ms.date = s.date
 WHERE s.r_merge <= 50;
 
+-- 順位付けは朝9:30時点で判明する情報（va_morning）のみで行い、
+-- 約定可能性（9:45までにエントリー約定・15:00以降に最終足）は選択後に filled として判定する
 CREATE OR REPLACE TEMP VIEW sel AS
 SELECT *,
        rank() OVER (PARTITION BY date ORDER BY morning_surge DESC NULLS LAST) AS r_surge,
        rank() OVER (PARTITION BY date ORDER BY va_morning DESC NULLS LAST) AS r_va_morning,
        rank() OVER (PARTITION BY date ORDER BY prev_ret1 DESC NULLS LAST) AS r_prev_up,
+       CASE WHEN entry_0935_close IS NOT NULL AND close_1525 IS NOT NULL
+                 AND entry_time <= TIME '09:45' AND last_time::TIME >= TIME '15:00'
+            THEN 1 ELSE 0 END AS filled,
        CASE WHEN date < DATE '2025-11-16' THEN 'M1(24/11-25/11)' ELSE 'M2(25/11-26/11)' END AS mperiod
 FROM cand
-WHERE va_morning IS NOT NULL AND entry_0935_close IS NOT NULL AND close_1525 IS NOT NULL;
+WHERE va_morning IS NOT NULL;
+
+-- 除外→上位10（本番実装形に合わせ、除外後に順位を振り直して補充する形）
+CREATE OR REPLACE TEMP VIEW sel_excl AS
+SELECT *,
+       rank() OVER (PARTITION BY date ORDER BY morning_surge DESC NULLS LAST) AS r_surge_excl
+FROM sel
+WHERE morning_move IS NOT NULL AND morning_move <= 0.02
+  AND prev_ul = 0 AND (ret20 IS NULL OR ret20 < 0.25);
 """
 
 OUTCOME = """
@@ -100,7 +114,19 @@ def main() -> None:
         FROM sel GROUP BY 1 ORDER BY 1
     """)
 
-    # --- 現行相当: 朝サージ上位10 vs 代替選択 ---
+    # --- 約定可能性（順位付け後に判定。順位には将来情報を使わない） ---
+    out["fill_rates"] = q(con, """
+        SELECT mperiod,
+               COUNT(*) FILTER (r_surge <= 10) AS top10_rows,
+               ROUND(AVG(filled) FILTER (r_surge <= 10), 4) AS top10_fill_rate,
+               ROUND(AVG(filled), 4) AS all_fill_rate,
+               COUNT(*) FILTER (r_surge <= 10 AND entry_0935_close IS NULL) AS top10_no_entry_bar,
+               COUNT(*) FILTER (r_surge <= 10 AND entry_time > TIME '09:45') AS top10_late_entry,
+               COUNT(*) FILTER (r_surge <= 10 AND (close_1525 IS NULL OR last_time::TIME < TIME '15:00')) AS top10_stale_exit
+        FROM sel GROUP BY 1 ORDER BY 1
+    """)
+
+    # --- 現行相当: 朝サージ上位10 vs 代替選択（成績は filled=1 のみで集計） ---
     variants = {
         "V0_top10_surge": "r_surge <= 10",
         "V1_rank11_30_surge": "r_surge BETWEEN 11 AND 30",
@@ -114,8 +140,20 @@ def main() -> None:
     for name, cond in variants.items():
         out[f"variant::{name}"] = q(con, f"""
             SELECT mperiod, {OUTCOME}
-            FROM sel WHERE {cond} GROUP BY 1 ORDER BY 1
+            FROM sel WHERE filled = 1 AND ({cond}) GROUP BY 1 ORDER BY 1
         """)
+
+    # --- 除外→上位10（本番実装形: 除外後に順位を振り直して10銘柄を補充） ---
+    out["variant::V5b_exclude_then_top10"] = q(con, f"""
+        SELECT mperiod, {OUTCOME}
+        FROM sel_excl WHERE filled = 1 AND r_surge_excl <= 10 GROUP BY 1 ORDER BY 1
+    """)
+    out["V5b_candidates_per_day"] = q(con, """
+        SELECT mperiod, COUNT(DISTINCT date) AS days,
+               ROUND(COUNT(*) FILTER (r_surge_excl <= 10) * 1.0 / COUNT(DISTINCT date), 2) AS selected_per_day,
+               ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT date), 1) AS eligible_per_day
+        FROM sel_excl GROUP BY 1 ORDER BY 1
+    """)
 
     # --- サージ順位と成績の関係 ---
     out["surge_rank_buckets"] = q(con, f"""
@@ -124,14 +162,14 @@ def main() -> None:
                     WHEN r_surge <= 20 THEN 'c:11-20' WHEN r_surge <= 35 THEN 'd:21-35'
                     ELSE 'e:36-50' END AS bucket,
                {OUTCOME}
-        FROM sel GROUP BY 1, 2 ORDER BY 1, 2
+        FROM sel WHERE filled = 1 GROUP BY 1, 2 ORDER BY 1, 2
     """)
     out["surge_level_buckets"] = q(con, f"""
         SELECT CASE WHEN morning_surge < 0.1 THEN 'a:<0.1' WHEN morning_surge < 0.2 THEN 'b:0.1-0.2'
                     WHEN morning_surge < 0.4 THEN 'c:0.2-0.4' WHEN morning_surge < 0.8 THEN 'd:0.4-0.8'
                     ELSE 'e:>=0.8' END AS bucket,
                {OUTCOME}
-        FROM sel GROUP BY 1 ORDER BY 1
+        FROM sel WHERE filled = 1 GROUP BY 1 ORDER BY 1
     """)
 
     # --- 朝の値動き（ギャップ・9:35までの上昇率）との交互作用 ---
@@ -140,31 +178,31 @@ def main() -> None:
                     WHEN morning_move < 0.02 THEN 'c:0-2%' WHEN morning_move < 0.05 THEN 'd:2-5%'
                     WHEN morning_move < 0.10 THEN 'e:5-10%' ELSE 'f:>=10%' END AS bucket,
                {OUTCOME}
-        FROM sel WHERE r_surge <= 10 GROUP BY 1 ORDER BY 1
+        FROM sel WHERE filled = 1 AND r_surge <= 10 GROUP BY 1 ORDER BY 1
     """)
 
     # --- 市場状態別（選択後） ---
     out["regime_effect_top10"] = q(con, f"""
         SELECT regime_vol_base AS regime, {OUTCOME}
-        FROM sel WHERE r_surge <= 10 GROUP BY 1 ORDER BY 1
+        FROM sel WHERE filled = 1 AND r_surge <= 10 GROUP BY 1 ORDER BY 1
     """)
     out["mkt_trend_effect_top10"] = q(con, f"""
         SELECT CASE WHEN mkt_sma25_slope5 > 0.005 THEN 'a:上昇' WHEN mkt_sma25_slope5 > -0.005 THEN 'b:横ばい' ELSE 'c:下落' END AS mkt,
                {OUTCOME}
-        FROM sel WHERE r_surge <= 10 GROUP BY 1 ORDER BY 1
+        FROM sel WHERE filled = 1 AND r_surge <= 10 GROUP BY 1 ORDER BY 1
     """)
 
-    # --- 高値・安値の時刻分布（上位10） ---
+    # --- 高値の時刻分布（上位10、9:35以降の高値のみ。エントリー前の朝高値は含めない） ---
     out["time_of_high_top10"] = q(con, """
-        SELECT CASE WHEN time_of_high < TIME '10:00' THEN 'a:9:35-10:00未満'
-                    WHEN time_of_high < TIME '11:00' THEN 'b:10-11時'
-                    WHEN time_of_high < TIME '12:45' THEN 'c:11-12:45'
-                    WHEN time_of_high < TIME '14:00' THEN 'd:12:45-14時'
+        SELECT CASE WHEN time_of_high_after_0935 < TIME '10:00' THEN 'a:9:35-10:00未満'
+                    WHEN time_of_high_after_0935 < TIME '11:00' THEN 'b:10-11時'
+                    WHEN time_of_high_after_0935 < TIME '12:45' THEN 'c:11-12:45'
+                    WHEN time_of_high_after_0935 < TIME '14:00' THEN 'd:12:45-14時'
                     ELSE 'e:14時以降' END AS bucket,
                COUNT(*) AS n,
                ROUND(AVG(ret_0935_1525), 5) AS ret_mean,
                ROUND(AVG((ret_0935_1525 > 0)::INT), 4) AS win
-        FROM sel WHERE r_surge <= 10 GROUP BY 1 ORDER BY 1
+        FROM sel WHERE filled = 1 AND r_surge <= 10 GROUP BY 1 ORDER BY 1
     """)
 
     # --- エントリー時刻の比較（9:00寄付き vs 9:35） ---
@@ -175,7 +213,7 @@ def main() -> None:
                ROUND(quantile_cont(ret_0900_1525, 0.5), 5) AS ret_0900_med,
                ROUND(quantile_cont(ret_0935_1525, 0.5), 5) AS ret_0935_med,
                ROUND(AVG(entry_0935_close / open_day - 1), 5) AS drift_0900_0935
-        FROM sel WHERE r_surge <= 10 GROUP BY 1 ORDER BY 1
+        FROM sel WHERE filled = 1 AND r_surge <= 10 GROUP BY 1 ORDER BY 1
     """)
 
     # --- 翌日以降への持ち越し効果（現行はEOD決済）: 上位10のt+1以降 ---
@@ -196,7 +234,7 @@ def main() -> None:
                ROUND(quantile_cont((s.close_last / s.entry_0935_close) * f.r20 - 1, 0.5), 5) AS hold20_med
         FROM sel s
         JOIN fwd f ON f.code = s.code AND f.date = s.date
-        WHERE s.r_surge <= 10
+        WHERE s.filled = 1 AND s.r_surge <= 10
         GROUP BY 1 ORDER BY 1
     """)
 

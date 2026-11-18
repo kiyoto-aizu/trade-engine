@@ -10,6 +10,9 @@
   - RSIゲートは Cutler 近似 RSI(t-1) >= 55 を使用（本番は Wilder。値がずれるため傾向比較用）
   - イグジット: 15:25 までの最後の分足終値（EOD決済近似）。ATRトレーリングは含まない（限界として報告）
   - コスト: 往復 手数料0.055%×2 + スリッページ5bps×2 = 約0.21%（現行バックテスト既定と同一）
+  - 注意: 本スクリプトの「四半期別安定性」は学習/検証の分割ではなく、全期間で設計した条件の
+    期間別一貫性の確認である（インサンプル）。採用判断には未使用期間での再確認が必要。
+    主要バリアントには日単位クラスタのブートストラップ95%CIを併記する。
 """
 from __future__ import annotations
 
@@ -42,6 +45,7 @@ def main() -> None:
           FROM panel p
           JOIN bars_daily b1 ON b1.code = p.code AND b1.date = p.date_t1
           WHERE substr(p.code, 1, 4) IN (SELECT symbol FROM universe_master)
+            AND substr(p.code, 5, 1) = '0'  -- 普通株のみ
             AND p.price_close <= 900 AND p.va_avg20 > 0 AND p.date_t1 IS NOT NULL
             AND COALESCE(b1.adj_factor, 1) = 1  -- 分割・併合当日は生値のバンド比較が破綻するため除外
         ), ranked AS (
@@ -53,21 +57,25 @@ def main() -> None:
           SELECT *, rank() OVER (PARTITION BY prev_date ORDER BY (r_va + r_up)) AS r_merge
           FROM ranked
         ), sma AS (
+          -- SMA5は調整後終値で計算し、t-1時点の生値スケールへ換算する（窓内に分割があっても破綻しない）
           SELECT code, date AS prev_date,
-                 AVG(c) OVER (PARTITION BY code ORDER BY date ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS sma5_raw,
+                 AVG(adj_c) OVER (PARTITION BY code ORDER BY date ROWS BETWEEN 4 PRECEDING AND CURRENT ROW)
+                   * (c / adj_c) AS sma5_scaled,
                  COUNT(c) OVER (PARTITION BY code ORDER BY date ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS n5
-          FROM bars_daily WHERE c IS NOT NULL
+          FROM bars_daily WHERE c IS NOT NULL AND adj_c IS NOT NULL AND adj_c > 0
         )
         SELECT s.*, m.va_morning / s.va_avg20 AS morning_surge,
-               m.entry_0935_close, m.close_1525, m.open_day,
+               m.entry_0935_close, m.close_1525, m.open_day, m.entry_time, m.last_time,
                m.entry_0935_close / s.prev_close - 1 AS morning_move,
-               ROUND(sma.sma5_raw * 1.01, 1) AS upper_band,
-               sma.n5
+               ROUND(sma.sma5_scaled * 1.01, 1) AS upper_band,
+               sma.n5,
+               CASE WHEN m.entry_0935_close IS NOT NULL AND m.close_1525 IS NOT NULL
+                         AND m.entry_time <= TIME '09:45' AND m.last_time::TIME >= TIME '15:00'
+                    THEN 1 ELSE 0 END AS filled
         FROM screened s
         JOIN minute_day_summary m ON m.code = s.code AND m.date = s.date
         JOIN sma ON sma.code = s.code AND sma.prev_date = s.prev_date
-        WHERE s.r_merge <= 50 AND m.va_morning IS NOT NULL
-          AND m.entry_0935_close IS NOT NULL AND m.close_1525 IS NOT NULL AND sma.n5 = 5
+        WHERE s.r_merge <= 50 AND m.va_morning IS NOT NULL AND sma.n5 = 5
     """)
     con.execute("""
         CREATE OR REPLACE TEMP TABLE top10 AS
@@ -96,16 +104,25 @@ def main() -> None:
 
     con.execute(f"""
         CREATE OR REPLACE TEMP VIEW sim AS
-        SELECT t.*, br.cross_time, br.cross_close,
+        SELECT t.*, br.cross_time,
+               -- 約定価格はバンド価格と到達バー終値の高い方（高値だけ触れて下げたバーでの有利約定を防ぐ保守化）
+               GREATEST(t.upper_band, br.cross_close) AS entry_breakout,
                CASE WHEN t.rsi14_sma >= 55 THEN 1 ELSE 0 END AS rsi_ok,
-               CASE WHEN br.cross_time IS NOT NULL THEN t.close_1525 / br.cross_close - 1 END AS ret_breakout,
-               CASE WHEN br.cross_time IS NOT NULL THEN t.close_1525 / br.cross_close - 1 - {ROUND_TRIP_COST} END AS ret_breakout_net,
-               t.close_1525 / t.entry_0935_close - 1 AS ret_0935,
-               t.close_1525 / t.entry_0935_close - 1 - {ROUND_TRIP_COST} AS ret_0935_net,
+               CASE WHEN br.cross_time IS NOT NULL AND t.filled = 1
+                    THEN t.close_1525 / GREATEST(t.upper_band, br.cross_close) - 1 END AS ret_breakout,
+               CASE WHEN br.cross_time IS NOT NULL AND t.filled = 1
+                    THEN t.close_1525 / GREATEST(t.upper_band, br.cross_close) - 1 - {ROUND_TRIP_COST} END AS ret_breakout_net,
+               CASE WHEN t.filled = 1 THEN t.close_1525 / t.entry_0935_close - 1 END AS ret_0935,
+               CASE WHEN t.filled = 1 THEN t.close_1525 / t.entry_0935_close - 1 - {ROUND_TRIP_COST} END AS ret_0935_net,
                CASE WHEN t.date < DATE '2025-11-16' THEN 'M1' ELSE 'M2' END AS mperiod,
                year(t.date)::VARCHAR || 'Q' || quarter(t.date)::VARCHAR AS yq
         FROM top10 t
         LEFT JOIN breakout br ON br.code = t.code AND br.date = t.date
+    """)
+
+    out["fill_rates"] = q(con, """
+        SELECT mperiod, COUNT(*) AS top10_rows, ROUND(AVG(filled), 4) AS fill_rate
+        FROM sim GROUP BY 1 ORDER BY 1
     """)
 
     out["gate_trigger_rates"] = q(con, """
@@ -163,6 +180,7 @@ def main() -> None:
         out["quarterly_stability"].append({"variant": label, "rows": rows})
 
     # --- 日足5年プロキシ: スクリーニング段階の選択ルール比較（P1..P4） ---
+    # 順位付けは前日時点情報のみで行い、将来情報（fwd_intraday1 の有無）は集計時に扱う
     con.execute("""
         CREATE OR REPLACE TEMP VIEW daily_proxy AS
         WITH prev AS (
@@ -176,15 +194,25 @@ def main() -> None:
           JOIN market_state ms USING (date)
           JOIN market_fwd mf USING (date)
           WHERE substr(p.code, 1, 4) IN (SELECT symbol FROM universe_master)
-            AND p.va_avg20 > 0 AND p.fwd_intraday1 IS NOT NULL
+            AND substr(p.code, 5, 1) = '0'
+            AND p.va_avg20 > 0
         ), ranked AS (
           SELECT *,
                  rank() OVER (PARTITION BY date ORDER BY va DESC) AS r_va,
-                 rank() OVER (PARTITION BY date ORDER BY ret1 DESC NULLS LAST) AS r_up
+                 rank() OVER (PARTITION BY date ORDER BY ret1 DESC NULLS LAST) AS r_up,
+                 rank() OVER (PARTITION BY date, (price_close > 450) ORDER BY va DESC) AS r_va_band,
+                 rank() OVER (PARTITION BY date, (price_close > 450) ORDER BY ret1 DESC NULLS LAST) AS r_up_band
           FROM prev WHERE price_close <= 900
         )
-        SELECT *, rank() OVER (PARTITION BY date ORDER BY (r_va + r_up)) AS r_merge
+        SELECT *,
+               rank() OVER (PARTITION BY date ORDER BY (r_va + r_up)) AS r_merge,
+               rank() OVER (PARTITION BY date, (price_close > 450) ORDER BY (r_va_band + r_up_band)) AS r_merge_band
         FROM ranked
+    """)
+    out["daily_proxy_unfilled"] = q(con, """
+        SELECT period, COUNT(*) FILTER (r_merge <= 50) AS top50_rows,
+               ROUND(AVG((fwd_intraday1 IS NULL)::INT) FILTER (r_merge <= 50), 4) AS top50_no_fwd_rate
+        FROM daily_proxy GROUP BY 1 ORDER BY 1
     """)
     out["daily_proxy_screening"] = []
     for label, cond in [
@@ -193,26 +221,61 @@ def main() -> None:
         ("S2_上位50+UL/mom25除外", "r_merge <= 50 AND ul = 0 AND (ret20 IS NULL OR ret20 < 0.25)"),
         ("S3_上位50+ギャップ2%超除外", "r_merge <= 50 AND gap_t1 <= 0.02"),
         ("S4_S2+S3複合", "r_merge <= 50 AND ul = 0 AND (ret20 IS NULL OR ret20 < 0.25) AND gap_t1 <= 0.02"),
-        ("S5_価格帯450-900のみ上位50", "r_merge <= 50 AND price_close > 450"),
-        ("S6_価格帯<=270のみ上位50", "r_merge <= 50 AND price_close <= 270"),
+        ("S5_価格帯450-900のみ上位50(帯内で再ランキング)", "price_close > 450 AND r_merge_band <= 50"),
+        ("S6_価格帯<=270のみ上位50(帯内で再ランキング)", "price_close <= 270 AND r_merge_band <= 50"),
     ]:
         rows = q(con, f"""
-            SELECT period, COUNT(*) AS n, COUNT(DISTINCT date) AS days,
+            SELECT period, COUNT(fwd_intraday1) AS n, COUNT(DISTINCT date) AS days,
                    ROUND(AVG(fwd_intraday1 - 0.0021), 5) AS net_mean,
                    ROUND(quantile_cont(fwd_intraday1 - 0.0021, 0.5), 5) AS net_med,
                    ROUND(AVG((fwd_intraday1 > 0.0021)::INT), 4) AS net_win,
                    ROUND(AVG(fwd_intraday1 - idx_fwd_intraday1), 5) AS ex1_mean
-            FROM daily_proxy WHERE {cond} GROUP BY 1 ORDER BY 1
+            FROM daily_proxy WHERE ({cond}) AND fwd_intraday1 IS NOT NULL GROUP BY 1 ORDER BY 1
         """)
         out["daily_proxy_screening"].append({"variant": label, "rows": rows})
 
     # レジーム別（日足プロキシ・上位50）
     out["daily_proxy_by_regime"] = q(con, """
-        SELECT period, regime_vol_base AS regime, COUNT(*) AS n, COUNT(DISTINCT date) AS days,
+        SELECT period, regime_vol_base AS regime, COUNT(fwd_intraday1) AS n, COUNT(DISTINCT date) AS days,
                ROUND(AVG(fwd_intraday1 - 0.0021), 5) AS net_mean,
                ROUND(AVG((fwd_intraday1 > 0.0021)::INT), 4) AS net_win
-        FROM daily_proxy WHERE r_merge <= 50 GROUP BY 1, 2 ORDER BY 1, 2
+        FROM daily_proxy WHERE r_merge <= 50 AND fwd_intraday1 IS NOT NULL GROUP BY 1, 2 ORDER BY 1, 2
     """)
+
+    # --- 日単位クラスタのブートストラップCI（同日の銘柄間相関を考慮） ---
+    # 1トレード平均（コスト後）の日次平均を単位に、日を復元抽出して平均の95%CIを推定
+    import random
+
+    random.seed(20261118)
+
+    def bootstrap_ci(day_means: list[float], n_boot: int = 2000) -> dict:
+        if not day_means:
+            return {"days": 0}
+        n = len(day_means)
+        stats = []
+        for _ in range(n_boot):
+            s = [day_means[random.randrange(n)] for _ in range(n)]
+            stats.append(sum(s) / n)
+        stats.sort()
+        return {
+            "days": n,
+            "mean": round(sum(day_means) / n, 5),
+            "ci_lo": round(stats[int(0.025 * n_boot)], 5),
+            "ci_hi": round(stats[int(0.975 * n_boot)], 5),
+        }
+
+    out["bootstrap_ci_daily_mean"] = []
+    for label, cond, col in [
+        ("A_全候補_0935", "ret_0935_net IS NOT NULL", "ret_0935_net"),
+        ("C_ブレイクアウト+RSI55", "cross_time IS NOT NULL AND rsi_ok=1 AND ret_breakout_net IS NOT NULL", "ret_breakout_net"),
+        ("G_除外付きブレイクアウト",
+         "cross_time IS NOT NULL AND rsi_ok=1 AND morning_move <= 0.02 AND prev_ul = 0 AND (ret20 IS NULL OR ret20 < 0.25) AND ret_breakout_net IS NOT NULL",
+         "ret_breakout_net"),
+    ]:
+        day_means = [r[0] for r in con.sql(
+            f"SELECT AVG({col}) FROM sim WHERE {cond} GROUP BY date"
+        ).fetchall() if r[0] is not None]
+        out["bootstrap_ci_daily_mean"].append({"variant": label, **bootstrap_ci(day_means)})
 
     write_json("05_walkforward.json", out)
     con.close()

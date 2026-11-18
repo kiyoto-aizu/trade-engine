@@ -139,6 +139,8 @@ def main() -> None:
                  MIN(adj_l) OVER (w ROWS BETWEEN 1 FOLLOWING AND 20 FOLLOWING) AS lmin_20,
                  COUNT(*) OVER (w ROWS BETWEEN 1 FOLLOWING AND 20 FOLLOWING) AS fwd_days_avail,
                  lead(date, 1) OVER w AS date_t1,
+                 lead(date, 5) OVER w AS date_t5,
+                 lead(date, 10) OVER w AS date_t10,
                  lead(date, 20) OVER w AS date_t20
           FROM f1 WINDOW w AS (PARTITION BY code ORDER BY date)
         )
@@ -155,7 +157,7 @@ def main() -> None:
           CASE WHEN rn > 60 THEN adj_c / NULLIF(high60, 0) - 1 END AS off_high60,
           (5 - down_in_5) AS up_days_in_5,
           -- 将来リターン（entry = t+1 の調整後始値）
-          o_t1, date_t1, date_t20, fwd_days_avail,
+          o_t1, date_t1, date_t5, date_t10, date_t20, fwd_days_avail,
           o_t1 / NULLIF(c, 0) / (adj_c / c) - 1 AS gap_t1,  -- 調整比率を打ち消し生値ベースのギャップ
           c_t1 / NULLIF(o_t1, 0) - 1 AS fwd_intraday1,
           h_t1 / NULLIF(o_t1, 0) - 1 AS fwd_mfe1,
@@ -179,6 +181,10 @@ def main() -> None:
         """
         CREATE TABLE market_fwd AS
         SELECT date,
+               lead(date, 1) OVER w AS idx_date_t1,
+               lead(date, 5) OVER w AS idx_date_t5,
+               lead(date, 10) OVER w AS idx_date_t10,
+               lead(date, 20) OVER w AS idx_date_t20,
                lead(topix_open, 1) OVER w AS idx_o_t1,
                lead(topix_close, 1) OVER w / NULLIF(lead(topix_open, 1) OVER w, 0) - 1 AS idx_fwd_intraday1,
                lead(topix_close, 5) OVER w / NULLIF(lead(topix_open, 1) OVER w, 0) - 1 AS idx_fwd_ret5,

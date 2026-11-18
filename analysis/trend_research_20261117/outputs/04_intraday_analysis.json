@@ -1,0 +1,790 @@
+{
+  "candidate_counts": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "days": 252,
+      "cand_rows": 12567,
+      "surge_mean": 0.72,
+      "surge_med": 0.287
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "days": 243,
+      "cand_rows": 12087,
+      "surge_mean": 0.665,
+      "surge_med": 0.266
+    }
+  ],
+  "fill_rates": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "top10_rows": 2520,
+      "top10_fill_rate": 0.9845,
+      "all_fill_rate": 0.9892,
+      "top10_no_entry_bar": 0,
+      "top10_late_entry": 39,
+      "top10_stale_exit": 0
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "top10_rows": 2430,
+      "top10_fill_rate": 0.9724,
+      "all_fill_rate": 0.9872,
+      "top10_no_entry_bar": 0,
+      "top10_late_entry": 67,
+      "top10_stale_exit": 0
+    }
+  ],
+  "variant::V0_top10_surge": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "n": 2481,
+      "days": 252,
+      "ret_mean": -0.00667,
+      "ret_med": -0.00365,
+      "ret_p10": -0.06897,
+      "ret_p90": 0.05199,
+      "win": 0.4031,
+      "mfe_mean": 0.0441,
+      "mfe_med": 0.02401,
+      "mae_mean": -0.04433,
+      "mae_med": -0.02817
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "n": 2363,
+      "days": 243,
+      "ret_mean": -0.00621,
+      "ret_med": -0.00342,
+      "ret_p10": -0.07327,
+      "ret_p90": 0.05583,
+      "win": 0.4109,
+      "mfe_mean": 0.04294,
+      "mfe_med": 0.02576,
+      "mae_mean": -0.04272,
+      "mae_med": -0.02793
+    }
+  ],
+  "variant::V1_rank11_30_surge": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "n": 4996,
+      "days": 252,
+      "ret_mean": -0.00091,
+      "ret_med": -0.00116,
+      "ret_p10": -0.03264,
+      "ret_p90": 0.02903,
+      "win": 0.4195,
+      "mfe_mean": 0.02426,
+      "mfe_med": 0.0127,
+      "mae_mean": -0.02208,
+      "mae_med": -0.01465
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "n": 4805,
+      "days": 243,
+      "ret_mean": -0.0013,
+      "ret_med": -0.00072,
+      "ret_p10": -0.03271,
+      "ret_p90": 0.02895,
+      "win": 0.4196,
+      "mfe_mean": 0.02184,
+      "mfe_med": 0.01233,
+      "mae_mean": -0.02147,
+      "mae_med": -0.01434
+    }
+  ],
+  "variant::V2_top10_prev_gainers": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "n": 2475,
+      "days": 252,
+      "ret_mean": -0.00789,
+      "ret_med": -0.00633,
+      "ret_p10": -0.07441,
+      "ret_p90": 0.0556,
+      "win": 0.3891,
+      "mfe_mean": 0.04777,
+      "mfe_med": 0.02609,
+      "mae_mean": -0.04794,
+      "mae_med": -0.03299
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "n": 2367,
+      "days": 243,
+      "ret_mean": -0.0085,
+      "ret_med": -0.00758,
+      "ret_p10": -0.07653,
+      "ret_p90": 0.05608,
+      "win": 0.3781,
+      "mfe_mean": 0.04438,
+      "mfe_med": 0.02697,
+      "mae_mean": -0.0463,
+      "mae_med": -0.03203
+    }
+  ],
+  "variant::V3_top10_va_morning": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "n": 2493,
+      "days": 252,
+      "ret_mean": -0.00616,
+      "ret_med": -0.00119,
+      "ret_p10": -0.06398,
+      "ret_p90": 0.04344,
+      "win": 0.4204,
+      "mfe_mean": 0.03447,
+      "mfe_med": 0.01698,
+      "mae_mean": -0.03758,
+      "mae_med": -0.01919
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "n": 2378,
+      "days": 243,
+      "ret_mean": -0.00582,
+      "ret_med": -0.00057,
+      "ret_p10": -0.05778,
+      "ret_p90": 0.03726,
+      "win": 0.4281,
+      "mfe_mean": 0.02959,
+      "mfe_med": 0.01451,
+      "mae_mean": -0.03318,
+      "mae_med": -0.01641
+    }
+  ],
+  "variant::V4_top10_surge_nogap2": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "n": 1514,
+      "days": 251,
+      "ret_mean": -0.00193,
+      "ret_med": -0.00335,
+      "ret_p10": -0.05298,
+      "ret_p90": 0.04167,
+      "win": 0.3956,
+      "mfe_mean": 0.04055,
+      "mfe_med": 0.02021,
+      "mae_mean": -0.03182,
+      "mae_med": -0.02116
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "n": 1466,
+      "days": 243,
+      "ret_mean": -0.00221,
+      "ret_med": -0.00187,
+      "ret_p10": -0.05539,
+      "ret_p90": 0.04545,
+      "win": 0.4086,
+      "mfe_mean": 0.04048,
+      "mfe_med": 0.02341,
+      "mae_mean": -0.0327,
+      "mae_med": -0.02197
+    }
+  ],
+  "variant::V5_top10_surge_no_ul_mom25": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "n": 1330,
+      "days": 252,
+      "ret_mean": -0.00144,
+      "ret_med": 0.0,
+      "ret_p10": -0.04111,
+      "ret_p90": 0.0388,
+      "win": 0.4083,
+      "mfe_mean": 0.03142,
+      "mfe_med": 0.01659,
+      "mae_mean": -0.02836,
+      "mae_med": -0.01854
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "n": 1382,
+      "days": 242,
+      "ret_mean": -0.00033,
+      "ret_med": 0.0,
+      "ret_p10": -0.04342,
+      "ret_p90": 0.04476,
+      "win": 0.4385,
+      "mfe_mean": 0.03385,
+      "mfe_med": 0.0206,
+      "mae_mean": -0.02862,
+      "mae_med": -0.01865
+    }
+  ],
+  "variant::V6_top10_surge_liq50M": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "n": 1843,
+      "days": 252,
+      "ret_mean": -0.00846,
+      "ret_med": -0.00442,
+      "ret_p10": -0.0817,
+      "ret_p90": 0.05539,
+      "win": 0.3983,
+      "mfe_mean": 0.04587,
+      "mfe_med": 0.02627,
+      "mae_mean": -0.04769,
+      "mae_med": -0.02996
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "n": 1758,
+      "days": 243,
+      "ret_mean": -0.00859,
+      "ret_med": -0.00393,
+      "ret_p10": -0.0808,
+      "ret_p90": 0.05567,
+      "win": 0.4039,
+      "mfe_mean": 0.04387,
+      "mfe_med": 0.02652,
+      "mae_mean": -0.04608,
+      "mae_med": -0.0303
+    }
+  ],
+  "variant::V7_all_candidates": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "n": 12431,
+      "days": 252,
+      "ret_mean": -0.00185,
+      "ret_med": -0.00124,
+      "ret_p10": -0.03535,
+      "ret_p90": 0.02973,
+      "win": 0.4181,
+      "mfe_mean": 0.0265,
+      "mfe_med": 0.01344,
+      "mae_mean": -0.02446,
+      "mae_med": -0.01469
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "n": 11932,
+      "days": 243,
+      "ret_mean": -0.00216,
+      "ret_med": -0.00137,
+      "ret_p10": -0.03621,
+      "ret_p90": 0.02997,
+      "win": 0.422,
+      "mfe_mean": 0.02445,
+      "mfe_med": 0.01307,
+      "mae_mean": -0.02396,
+      "mae_med": -0.01476
+    }
+  ],
+  "variant::V5b_exclude_then_top10": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "n": 2487,
+      "days": 252,
+      "ret_mean": 9e-05,
+      "ret_med": 0.0,
+      "ret_p10": -0.0287,
+      "ret_p90": 0.02822,
+      "win": 0.4077,
+      "mfe_mean": 0.02234,
+      "mfe_med": 0.01263,
+      "mae_mean": -0.01942,
+      "mae_med": -0.01355
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "n": 2391,
+      "days": 243,
+      "ret_mean": -0.00056,
+      "ret_med": 0.0,
+      "ret_p10": -0.03279,
+      "ret_p90": 0.03196,
+      "win": 0.4074,
+      "mfe_mean": 0.02352,
+      "mfe_med": 0.01379,
+      "mae_mean": -0.02124,
+      "mae_med": -0.01538
+    }
+  ],
+  "V5b_candidates_per_day": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "days": 252,
+      "selected_per_day": 9.98,
+      "eligible_per_day": 33.1
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "days": 243,
+      "selected_per_day": 10.0,
+      "eligible_per_day": 33.8
+    }
+  ],
+  "surge_rank_buckets": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "bucket": "a:1-5",
+      "n": 1238,
+      "days": 252,
+      "ret_mean": -0.00989,
+      "ret_med": -0.00607,
+      "ret_p10": -0.09039,
+      "ret_p90": 0.06231,
+      "win": 0.4023,
+      "mfe_mean": 0.05193,
+      "mfe_med": 0.02948,
+      "mae_mean": -0.05559,
+      "mae_med": -0.03914
+    },
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "bucket": "b:6-10",
+      "n": 1243,
+      "days": 252,
+      "ret_mean": -0.00346,
+      "ret_med": -0.00221,
+      "ret_p10": -0.05293,
+      "ret_p90": 0.04424,
+      "win": 0.4039,
+      "mfe_mean": 0.0363,
+      "mfe_med": 0.01912,
+      "mae_mean": -0.0331,
+      "mae_med": -0.02062
+    },
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "bucket": "c:11-20",
+      "n": 2494,
+      "days": 252,
+      "ret_mean": -0.00158,
+      "ret_med": -0.00147,
+      "ret_p10": -0.03622,
+      "ret_p90": 0.03229,
+      "win": 0.4082,
+      "mfe_mean": 0.0266,
+      "mfe_med": 0.01461,
+      "mae_mean": -0.02473,
+      "mae_med": -0.01625
+    },
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "bucket": "d:21-35",
+      "n": 3754,
+      "days": 252,
+      "ret_mean": -0.00032,
+      "ret_med": 0.0,
+      "ret_p10": -0.02762,
+      "ret_p90": 0.02474,
+      "win": 0.4286,
+      "mfe_mean": 0.02099,
+      "mfe_med": 0.01105,
+      "mae_mean": -0.01847,
+      "mae_med": -0.01257
+    },
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "bucket": "e:36-50",
+      "n": 3702,
+      "days": 252,
+      "ret_mean": -0.00034,
+      "ret_med": -0.00113,
+      "ret_p10": -0.02543,
+      "ret_p90": 0.02326,
+      "win": 0.4241,
+      "mfe_mean": 0.02023,
+      "mfe_med": 0.01112,
+      "mae_mean": -0.01705,
+      "mae_med": -0.01176
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "bucket": "a:1-5",
+      "n": 1175,
+      "days": 243,
+      "ret_mean": -0.01066,
+      "ret_med": -0.00752,
+      "ret_p10": -0.09495,
+      "ret_p90": 0.0648,
+      "win": 0.4128,
+      "mfe_mean": 0.04978,
+      "mfe_med": 0.03067,
+      "mae_mean": -0.05413,
+      "mae_med": -0.03704
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "bucket": "b:6-10",
+      "n": 1188,
+      "days": 243,
+      "ret_mean": -0.00181,
+      "ret_med": 0.0,
+      "ret_p10": -0.05075,
+      "ret_p90": 0.04549,
+      "win": 0.4091,
+      "mfe_mean": 0.03616,
+      "mfe_med": 0.02164,
+      "mae_mean": -0.03144,
+      "mae_med": -0.0206
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "bucket": "c:11-20",
+      "n": 2399,
+      "days": 243,
+      "ret_mean": -0.00166,
+      "ret_med": -0.00136,
+      "ret_p10": -0.03595,
+      "ret_p90": 0.03238,
+      "win": 0.4089,
+      "mfe_mean": 0.02477,
+      "mfe_med": 0.01404,
+      "mae_mean": -0.02428,
+      "mae_med": -0.01646
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "bucket": "d:21-35",
+      "n": 3619,
+      "days": 243,
+      "ret_mean": -0.0011,
+      "ret_med": -0.00107,
+      "ret_p10": -0.02906,
+      "ret_p90": 0.02445,
+      "win": 0.4264,
+      "mfe_mean": 0.01822,
+      "mfe_med": 0.01043,
+      "mae_mean": -0.0181,
+      "mae_med": -0.01243
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "bucket": "e:36-50",
+      "n": 3551,
+      "days": 243,
+      "ret_mean": -0.00089,
+      "ret_med": -0.0013,
+      "ret_p10": -0.02745,
+      "ret_p90": 0.02341,
+      "win": 0.4337,
+      "mfe_mean": 0.01827,
+      "mfe_med": 0.01055,
+      "mae_mean": -0.01722,
+      "mae_med": -0.01174
+    }
+  ],
+  "surge_level_buckets": [
+    {
+      "bucket": "a:<0.1",
+      "n": 2781,
+      "days": 485,
+      "ret_mean": 0.00026,
+      "ret_med": -0.00035,
+      "ret_p10": -0.02761,
+      "ret_p90": 0.02557,
+      "win": 0.4272,
+      "mfe_mean": 0.02197,
+      "mfe_med": 0.01222,
+      "mae_mean": -0.01753,
+      "mae_med": -0.01245
+    },
+    {
+      "bucket": "b:0.1-0.2",
+      "n": 6059,
+      "days": 495,
+      "ret_mean": -0.00067,
+      "ret_med": -0.00085,
+      "ret_p10": -0.02453,
+      "ret_p90": 0.02187,
+      "win": 0.4341,
+      "mfe_mean": 0.01746,
+      "mfe_med": 0.00982,
+      "mae_mean": -0.01638,
+      "mae_med": -0.01105
+    },
+    {
+      "bucket": "c:0.2-0.4",
+      "n": 6649,
+      "days": 495,
+      "ret_mean": -0.00089,
+      "ret_med": -0.00118,
+      "ret_p10": -0.02941,
+      "ret_p90": 0.02495,
+      "win": 0.4243,
+      "mfe_mean": 0.02016,
+      "mfe_med": 0.01111,
+      "mae_mean": -0.01889,
+      "mae_med": -0.01291
+    },
+    {
+      "bucket": "d:0.4-0.8",
+      "n": 4777,
+      "days": 495,
+      "ret_mean": -0.00136,
+      "ret_med": -0.00032,
+      "ret_p10": -0.03817,
+      "ret_p90": 0.03448,
+      "win": 0.4042,
+      "mfe_mean": 0.0279,
+      "mfe_med": 0.01532,
+      "mae_mean": -0.02587,
+      "mae_med": -0.01747
+    },
+    {
+      "bucket": "e:>=0.8",
+      "n": 4097,
+      "days": 495,
+      "ret_mean": -0.00807,
+      "ret_med": -0.00508,
+      "ret_p10": -0.07877,
+      "ret_p90": 0.0575,
+      "win": 0.4057,
+      "mfe_mean": 0.04563,
+      "mfe_med": 0.02632,
+      "mae_mean": -0.04707,
+      "mae_med": -0.03053
+    }
+  ],
+  "morning_move_buckets": [
+    {
+      "bucket": "a:<-2%",
+      "n": 1595,
+      "days": 476,
+      "ret_mean": -0.00316,
+      "ret_med": -0.00362,
+      "ret_p10": -0.06005,
+      "ret_p90": 0.04772,
+      "win": 0.3981,
+      "mfe_mean": 0.04719,
+      "mfe_med": 0.02752,
+      "mae_mean": -0.03541,
+      "mae_med": -0.02586
+    },
+    {
+      "bucket": "b:-2-0%",
+      "n": 583,
+      "days": 356,
+      "ret_mean": -0.00055,
+      "ret_med": -0.0024,
+      "ret_p10": -0.04312,
+      "ret_p90": 0.03677,
+      "win": 0.4237,
+      "mfe_mean": 0.03248,
+      "mfe_med": 0.01439,
+      "mae_mean": -0.02782,
+      "mae_med": -0.01786
+    },
+    {
+      "bucket": "c:0-2%",
+      "n": 802,
+      "days": 402,
+      "ret_mean": -0.00101,
+      "ret_med": -0.00177,
+      "ret_p10": -0.04409,
+      "ret_p90": 0.04071,
+      "win": 0.394,
+      "mfe_mean": 0.03309,
+      "mfe_med": 0.01683,
+      "mae_mean": -0.0292,
+      "mae_med": -0.01779
+    },
+    {
+      "bucket": "d:2-5%",
+      "n": 696,
+      "days": 372,
+      "ret_mean": -0.00729,
+      "ret_med": -0.005,
+      "ret_p10": -0.06312,
+      "ret_p90": 0.04454,
+      "win": 0.4152,
+      "mfe_mean": 0.0378,
+      "mfe_med": 0.02131,
+      "mae_mean": -0.0394,
+      "mae_med": -0.02649
+    },
+    {
+      "bucket": "e:5-10%",
+      "n": 591,
+      "days": 354,
+      "ret_mean": -0.00352,
+      "ret_med": -0.00476,
+      "ret_p10": -0.09251,
+      "ret_p90": 0.08506,
+      "win": 0.4162,
+      "mfe_mean": 0.05733,
+      "mfe_med": 0.03846,
+      "mae_mean": -0.05548,
+      "mae_med": -0.04126
+    },
+    {
+      "bucket": "f:>=10%",
+      "n": 577,
+      "days": 355,
+      "ret_mean": -0.03102,
+      "ret_med": -0.01422,
+      "ret_p10": -0.16336,
+      "ret_p90": 0.07692,
+      "win": 0.4125,
+      "mfe_mean": 0.0519,
+      "mfe_med": 0.03323,
+      "mae_mean": -0.09464,
+      "mae_med": -0.0766
+    }
+  ],
+  "regime_effect_top10": [
+    {
+      "regime": "CAUTION",
+      "n": 2365,
+      "days": 242,
+      "ret_mean": -0.00742,
+      "ret_med": -0.00368,
+      "ret_p10": -0.07229,
+      "ret_p90": 0.05278,
+      "win": 0.4034,
+      "mfe_mean": 0.04236,
+      "mfe_med": 0.0245,
+      "mae_mean": -0.04403,
+      "mae_med": -0.02839
+    },
+    {
+      "regime": "DANGER",
+      "n": 1325,
+      "days": 136,
+      "ret_mean": -0.00643,
+      "ret_med": -0.00268,
+      "ret_p10": -0.07166,
+      "ret_p90": 0.05175,
+      "win": 0.4091,
+      "mfe_mean": 0.04172,
+      "mfe_med": 0.02491,
+      "mae_mean": -0.04148,
+      "mae_med": -0.0271
+    },
+    {
+      "regime": "NORMAL",
+      "n": 1154,
+      "days": 117,
+      "ret_mean": -0.00448,
+      "ret_med": -0.00396,
+      "ret_p10": -0.07249,
+      "ret_p90": 0.06187,
+      "win": 0.4116,
+      "mfe_mean": 0.04801,
+      "mfe_med": 0.02608,
+      "mae_mean": -0.04492,
+      "mae_med": -0.02817
+    }
+  ],
+  "mkt_trend_effect_top10": [
+    {
+      "mkt": "a:上昇",
+      "n": 2379,
+      "days": 243,
+      "ret_mean": -0.0052,
+      "ret_med": -0.00334,
+      "ret_p10": -0.07423,
+      "ret_p90": 0.05889,
+      "win": 0.4149,
+      "mfe_mean": 0.04597,
+      "mfe_med": 0.025,
+      "mae_mean": -0.04397,
+      "mae_med": -0.02808
+    },
+    {
+      "mkt": "b:横ばい",
+      "n": 1552,
+      "days": 158,
+      "ret_mean": -0.00766,
+      "ret_med": -0.00493,
+      "ret_p10": -0.07281,
+      "ret_p90": 0.05373,
+      "win": 0.3956,
+      "mfe_mean": 0.0422,
+      "mfe_med": 0.02435,
+      "mae_mean": -0.04483,
+      "mae_med": -0.02883
+    },
+    {
+      "mkt": "c:下落",
+      "n": 913,
+      "days": 94,
+      "ret_mean": -0.00765,
+      "ret_med": -0.00195,
+      "ret_p10": -0.06333,
+      "ret_p90": 0.04193,
+      "win": 0.4053,
+      "mfe_mean": 0.03945,
+      "mfe_med": 0.025,
+      "mae_mean": -0.04025,
+      "mae_med": -0.0256
+    }
+  ],
+  "time_of_high_top10": [
+    {
+      "bucket": "a:9:35-10:00未満",
+      "n": 1632,
+      "ret_mean": -0.0445,
+      "win": 0.0809
+    },
+    {
+      "bucket": "b:10-11時",
+      "n": 1050,
+      "ret_mean": -0.01512,
+      "win": 0.3124
+    },
+    {
+      "bucket": "c:11-12:45",
+      "n": 581,
+      "ret_mean": 0.0084,
+      "win": 0.5181
+    },
+    {
+      "bucket": "d:12:45-14時",
+      "n": 583,
+      "ret_mean": 0.0179,
+      "win": 0.6312
+    },
+    {
+      "bucket": "e:14時以降",
+      "n": 998,
+      "ret_mean": 0.04203,
+      "win": 0.8437
+    }
+  ],
+  "entry_timing_top10": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "ret_0900_mean": -0.00551,
+      "ret_0935_mean": -0.00667,
+      "ret_0900_med": -0.00898,
+      "ret_0935_med": -0.00365,
+      "drift_0900_0935": 0.0016
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "ret_0900_mean": -0.00567,
+      "ret_0935_mean": -0.00621,
+      "ret_0900_med": -0.00645,
+      "ret_0935_med": -0.00342,
+      "drift_0900_0935": 0.00071
+    }
+  ],
+  "swing_vs_daytrade_top10": [
+    {
+      "mperiod": "M1(24/11-25/11)",
+      "n": 2481,
+      "daytrade_mean": -0.00667,
+      "hold5_mean": -0.00981,
+      "hold5_med": -0.02174,
+      "hold20_mean": -0.00859,
+      "hold20_med": -0.03526
+    },
+    {
+      "mperiod": "M2(25/11-26/11)",
+      "n": 2363,
+      "daytrade_mean": -0.00621,
+      "hold5_mean": -0.0058,
+      "hold5_med": -0.0259,
+      "hold20_mean": 0.01008,
+      "hold20_med": -0.04348
+    }
+  ]
+}

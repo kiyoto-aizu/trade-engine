@@ -148,6 +148,8 @@ def main() -> None:
           min(L) FILTER ((Time AT TIME ZONE 'Asia/Tokyo')::TIME >= TIME '09:35') AS low_after_0935,
           arg_max((Time AT TIME ZONE 'Asia/Tokyo')::TIME, H) AS time_of_high,
           arg_min((Time AT TIME ZONE 'Asia/Tokyo')::TIME, L) AS time_of_low,
+          arg_max((Time AT TIME ZONE 'Asia/Tokyo')::TIME, H) FILTER ((Time AT TIME ZONE 'Asia/Tokyo')::TIME >= TIME '09:35') AS time_of_high_after_0935,
+          arg_min((Time AT TIME ZONE 'Asia/Tokyo')::TIME, L) FILTER ((Time AT TIME ZONE 'Asia/Tokyo')::TIME >= TIME '09:35') AS time_of_low_after_0935,
           max(H) AS high_day,
           min(L) AS low_day
         FROM read_parquet(?)
@@ -197,6 +199,26 @@ def main() -> None:
             SELECT MIN(m_codes/d_codes) AS min_ratio, quantile_cont(m_codes/d_codes, 0.5) AS median_ratio,
                    MAX(m_codes/d_codes) AS max_ratio
             FROM m JOIN d USING (date)
+            """
+        )
+    )[0]
+
+    # 調整後価格の連続性チェック: 分割・併合日(adj_factor<>1)の調整後リターンが
+    # 生値と違い不連続になっていないか（|ret|>50%の行数と、その adj_factor 内訳）
+    report["adj_continuity_check"] = rows_to_dicts(
+        con.sql(
+            """
+            WITH r AS (
+              SELECT code, date, adj_factor,
+                     adj_c / lag(adj_c) OVER (PARTITION BY code ORDER BY date) - 1 AS ret1_adj,
+                     c / lag(c) OVER (PARTITION BY code ORDER BY date) - 1 AS ret1_raw
+              FROM bars_daily WHERE c IS NOT NULL AND adj_c IS NOT NULL
+            )
+            SELECT COUNT(*) FILTER (abs(ret1_adj) > 0.5) AS adj_ret_gt50pct,
+                   COUNT(*) FILTER (abs(ret1_adj) > 0.5 AND COALESCE(adj_factor,1) <> 1) AS adj_ret_gt50pct_on_event_day,
+                   COUNT(*) FILTER (abs(ret1_raw) > 0.5) AS raw_ret_gt50pct,
+                   COUNT(*) FILTER (COALESCE(adj_factor,1) <> 1) AS event_day_rows
+            FROM r
             """
         )
     )[0]
