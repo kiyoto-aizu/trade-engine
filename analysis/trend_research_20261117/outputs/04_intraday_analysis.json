@@ -158,31 +158,31 @@
   "variant::V4_top10_surge_nogap2": [
     {
       "mperiod": "M1(24/11-25/11)",
-      "n": 1514,
+      "n": 1498,
       "days": 251,
-      "ret_mean": -0.00193,
-      "ret_med": -0.00335,
-      "ret_p10": -0.05298,
+      "ret_mean": -0.00245,
+      "ret_med": -0.00359,
+      "ret_p10": -0.05449,
       "ret_p90": 0.04167,
-      "win": 0.3956,
-      "mfe_mean": 0.04055,
-      "mfe_med": 0.02021,
-      "mae_mean": -0.03182,
-      "mae_med": -0.02116
+      "win": 0.3945,
+      "mfe_mean": 0.04044,
+      "mfe_med": 0.01953,
+      "mae_mean": -0.03265,
+      "mae_med": -0.0219
     },
     {
       "mperiod": "M2(25/11-26/11)",
-      "n": 1466,
-      "days": 243,
-      "ret_mean": -0.00221,
-      "ret_med": -0.00187,
-      "ret_p10": -0.05539,
-      "ret_p90": 0.04545,
-      "win": 0.4086,
-      "mfe_mean": 0.04048,
-      "mfe_med": 0.02341,
-      "mae_mean": -0.0327,
-      "mae_med": -0.02197
+      "n": 1456,
+      "days": 242,
+      "ret_mean": -0.0026,
+      "ret_med": -0.00245,
+      "ret_p10": -0.05687,
+      "ret_p90": 0.04552,
+      "win": 0.4038,
+      "mfe_mean": 0.04042,
+      "mfe_med": 0.02305,
+      "mae_mean": -0.03307,
+      "mae_med": -0.02202
     }
   ],
   "variant::V5_top10_surge_no_ul_mom25": [
@@ -278,31 +278,31 @@
   "variant::V5b_exclude_then_top10": [
     {
       "mperiod": "M1(24/11-25/11)",
-      "n": 2487,
+      "n": 2486,
       "days": 252,
-      "ret_mean": 9e-05,
+      "ret_mean": -0.00035,
       "ret_med": 0.0,
-      "ret_p10": -0.0287,
-      "ret_p90": 0.02822,
-      "win": 0.4077,
-      "mfe_mean": 0.02234,
-      "mfe_med": 0.01263,
-      "mae_mean": -0.01942,
-      "mae_med": -0.01355
+      "ret_p10": -0.02899,
+      "ret_p90": 0.02778,
+      "win": 0.4039,
+      "mfe_mean": 0.02235,
+      "mfe_med": 0.01249,
+      "mae_mean": -0.0201,
+      "mae_med": -0.01376
     },
     {
       "mperiod": "M2(25/11-26/11)",
-      "n": 2391,
+      "n": 2387,
       "days": 243,
-      "ret_mean": -0.00056,
+      "ret_mean": -0.00096,
       "ret_med": 0.0,
-      "ret_p10": -0.03279,
-      "ret_p90": 0.03196,
-      "win": 0.4074,
-      "mfe_mean": 0.02352,
-      "mfe_med": 0.01379,
-      "mae_mean": -0.02124,
-      "mae_med": -0.01538
+      "ret_p10": -0.03303,
+      "ret_p90": 0.03162,
+      "win": 0.4018,
+      "mfe_mean": 0.02324,
+      "mfe_med": 0.01361,
+      "mae_mean": -0.02145,
+      "mae_med": -0.01548
     }
   ],
   "V5b_candidates_per_day": [
@@ -310,13 +310,89 @@
       "mperiod": "M1(24/11-25/11)",
       "days": 252,
       "selected_per_day": 9.98,
-      "eligible_per_day": 33.1
+      "eligible_per_day": 33.2
     },
     {
       "mperiod": "M2(25/11-26/11)",
       "days": 243,
       "selected_per_day": 10.0,
-      "eligible_per_day": 33.8
+      "eligible_per_day": 33.9
+    }
+  ],
+  "fill_failure_stress": [
+    {
+      "variant": "V0_top10_surge",
+      "mperiod": "M1(24/11-25/11)",
+      "selected_n": 2520,
+      "filled_n": 2481,
+      "unfilled_n": 39,
+      "filled_only_mean": -0.00667,
+      "mean_if_unfilled_loses_100pct": -0.02204
+    },
+    {
+      "variant": "V0_top10_surge",
+      "mperiod": "M2(25/11-26/11)",
+      "selected_n": 2430,
+      "filled_n": 2363,
+      "unfilled_n": 67,
+      "filled_only_mean": -0.00621,
+      "mean_if_unfilled_loses_100pct": -0.03362
+    },
+    {
+      "variant": "V5b_exclude_then_top10",
+      "mperiod": "M1(24/11-25/11)",
+      "selected_n": 2516,
+      "filled_n": 2486,
+      "unfilled_n": 30,
+      "filled_only_mean": -0.00035,
+      "mean_if_unfilled_loses_100pct": -0.01227
+    },
+    {
+      "variant": "V5b_exclude_then_top10",
+      "mperiod": "M2(25/11-26/11)",
+      "selected_n": 2430,
+      "filled_n": 2387,
+      "unfilled_n": 43,
+      "filled_only_mean": -0.00096,
+      "mean_if_unfilled_loses_100pct": -0.01864
+    }
+  ],
+  "V5b_vs_V0_paired_daily_difference": [
+    {
+      "period": "M1(24/11-25/11)",
+      "paired_days": 252,
+      "v0_daily_mean": -0.00672,
+      "v5b_daily_mean": -0.00034,
+      "difference_mean": 0.00638,
+      "difference_ci95": [
+        0.00355,
+        0.00935
+      ],
+      "bootstrap_method": "10,000 paired trading-date resamples with replacement; seed=20261119"
+    },
+    {
+      "period": "M2(25/11-26/11)",
+      "paired_days": 243,
+      "v0_daily_mean": -0.00618,
+      "v5b_daily_mean": -0.00092,
+      "difference_mean": 0.00526,
+      "difference_ci95": [
+        0.00261,
+        0.00782
+      ],
+      "bootstrap_method": "10,000 paired trading-date resamples with replacement; seed=20261119"
+    },
+    {
+      "period": "ALL",
+      "paired_days": 495,
+      "v0_daily_mean": -0.00646,
+      "v5b_daily_mean": -0.00063,
+      "difference_mean": 0.00583,
+      "difference_ci95": [
+        0.00388,
+        0.00784
+      ],
+      "bootstrap_method": "10,000 paired trading-date resamples with replacement; seed=20261119"
     }
   ],
   "surge_rank_buckets": [
@@ -720,33 +796,33 @@
   "time_of_high_top10": [
     {
       "bucket": "a:9:35-10:00未満",
-      "n": 1632,
-      "ret_mean": -0.0445,
-      "win": 0.0809
+      "n": 1638,
+      "ret_mean": -0.04373,
+      "win": 0.0885
     },
     {
       "bucket": "b:10-11時",
-      "n": 1050,
-      "ret_mean": -0.01512,
-      "win": 0.3124
+      "n": 1034,
+      "ret_mean": -0.01575,
+      "win": 0.3104
     },
     {
       "bucket": "c:11-12:45",
-      "n": 581,
-      "ret_mean": 0.0084,
-      "win": 0.5181
+      "n": 566,
+      "ret_mean": 0.00903,
+      "win": 0.5018
     },
     {
       "bucket": "d:12:45-14時",
-      "n": 583,
-      "ret_mean": 0.0179,
-      "win": 0.6312
+      "n": 592,
+      "ret_mean": 0.01771,
+      "win": 0.625
     },
     {
       "bucket": "e:14時以降",
-      "n": 998,
-      "ret_mean": 0.04203,
-      "win": 0.8437
+      "n": 1014,
+      "ret_mean": 0.04052,
+      "win": 0.8393
     }
   ],
   "entry_timing_top10": [

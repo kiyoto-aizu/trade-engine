@@ -20,7 +20,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from common import connect, current_parquet_paths, rows_to_dicts, write_json
+from common import (
+    ANALYSIS_DATA_CUTOFF,
+    connect,
+    current_parquet_paths,
+    rows_to_dicts,
+    write_json,
+)
 
 ROUND_TRIP_COST = 0.0021  # 0.055%*2 + 5bps*2
 
@@ -32,7 +38,9 @@ def q(con, sql: str) -> list[dict]:
 def main() -> None:
     con = connect()
     con.execute("SET TimeZone='Asia/Tokyo'")
-    minute_paths = [p for _, p in current_parquet_paths("minute")]
+    minute_paths = [
+        p for _, p in current_parquet_paths("minute", ANALYSIS_DATA_CUTOFF)
+    ]
     out: dict = {}
 
     # --- 候補テーブル（04と同一ロジック）を一時テーブル化 ---
@@ -65,8 +73,10 @@ def main() -> None:
           FROM bars_daily WHERE c IS NOT NULL AND adj_c IS NOT NULL AND adj_c > 0
         )
         SELECT s.*, m.va_morning / s.va_avg20 AS morning_surge,
+               m.close_pre0930, m.close_pre0930_time,
                m.entry_0935_close, m.close_1525, m.open_day, m.entry_time, m.last_time,
                m.entry_0935_close / s.prev_close - 1 AS morning_move,
+               m.close_pre0930 / s.prev_close - 1 AS move_at_0930,
                ROUND(sma.sma5_scaled * 1.01, 1) AS upper_band,
                sma.n5,
                CASE WHEN m.entry_0935_close IS NOT NULL AND m.close_1525 IS NOT NULL
@@ -151,9 +161,9 @@ def main() -> None:
         ("C_ブレイクアウト+RSI55", "cross_time IS NOT NULL AND rsi_ok=1", "ret_breakout_net"),
         ("D_ブレイクアウト+RSI55未満", "cross_time IS NOT NULL AND rsi_ok=0", "ret_breakout_net"),
         ("E_非ブレイクアウト(0935)", "cross_time IS NULL", "ret_0935_net"),
-        ("F_ブレイクアウト+朝2%以下", "cross_time IS NOT NULL AND morning_move <= 0.02", "ret_breakout_net"),
+        ("F_ブレイクアウト+朝2%以下", "cross_time IS NOT NULL AND move_at_0930 <= 0.02", "ret_breakout_net"),
         ("G_ブレイクアウト+RSI55+朝2%以下+UL/mom除外",
-         "cross_time IS NOT NULL AND rsi_ok=1 AND morning_move <= 0.02 AND prev_ul = 0 AND (ret20 IS NULL OR ret20 < 0.25)",
+         "cross_time IS NOT NULL AND rsi_ok=1 AND move_at_0930 <= 0.02 AND prev_ul = 0 AND (ret20 IS NULL OR ret20 < 0.25)",
          "ret_breakout_net"),
     ]:
         rows = q(con, f"SELECT mperiod, {outcome(col)} FROM sim WHERE {cond} GROUP BY 1 ORDER BY 1")
@@ -174,7 +184,7 @@ def main() -> None:
     for label, cond, col in [
         ("A_全候補_0935", "TRUE", "ret_0935_net"),
         ("C_ブレイクアウト+RSI55", "cross_time IS NOT NULL AND rsi_ok=1", "ret_breakout_net"),
-        ("G_除外付きブレイクアウト", "cross_time IS NOT NULL AND rsi_ok=1 AND morning_move <= 0.02 AND prev_ul = 0 AND (ret20 IS NULL OR ret20 < 0.25)", "ret_breakout_net"),
+        ("G_除外付きブレイクアウト", "cross_time IS NOT NULL AND rsi_ok=1 AND move_at_0930 <= 0.02 AND prev_ul = 0 AND (ret20 IS NULL OR ret20 < 0.25)", "ret_breakout_net"),
     ]:
         rows = q(con, f"SELECT yq, {outcome(col)} FROM sim WHERE {cond} GROUP BY 1 ORDER BY 1")
         out["quarterly_stability"].append({"variant": label, "rows": rows})
@@ -269,13 +279,39 @@ def main() -> None:
         ("A_全候補_0935", "ret_0935_net IS NOT NULL", "ret_0935_net"),
         ("C_ブレイクアウト+RSI55", "cross_time IS NOT NULL AND rsi_ok=1 AND ret_breakout_net IS NOT NULL", "ret_breakout_net"),
         ("G_除外付きブレイクアウト",
-         "cross_time IS NOT NULL AND rsi_ok=1 AND morning_move <= 0.02 AND prev_ul = 0 AND (ret20 IS NULL OR ret20 < 0.25) AND ret_breakout_net IS NOT NULL",
+         "cross_time IS NOT NULL AND rsi_ok=1 AND move_at_0930 <= 0.02 AND prev_ul = 0 AND (ret20 IS NULL OR ret20 < 0.25) AND ret_breakout_net IS NOT NULL",
          "ret_breakout_net"),
     ]:
         day_means = [r[0] for r in con.sql(
             f"SELECT AVG({col}) FROM sim WHERE {cond} GROUP BY date"
         ).fetchall() if r[0] is not None]
         out["bootstrap_ci_daily_mean"].append({"variant": label, **bootstrap_ci(day_means)})
+
+    # 未約定行を評価対象外とする既定集計に加え、全額損失(-100%)と仮定した極端な下方ストレスを示す。
+    out["fill_failure_stress"] = q(con, """
+        WITH selected AS (
+          SELECT 'A_全候補_0935' AS variant, mperiod, filled, ret_0935_net AS ret
+          FROM sim
+          UNION ALL
+          SELECT 'C_ブレイクアウト+RSI55', mperiod, filled, ret_breakout_net
+          FROM sim WHERE cross_time IS NOT NULL AND rsi_ok = 1
+          UNION ALL
+          SELECT 'G_除外付きブレイクアウト', mperiod, filled, ret_breakout_net
+          FROM sim
+          WHERE cross_time IS NOT NULL AND rsi_ok = 1 AND move_at_0930 <= 0.02
+            AND prev_ul = 0 AND (ret20 IS NULL OR ret20 < 0.25)
+        )
+        SELECT variant, mperiod, COUNT(*) AS selected_n,
+               COUNT(*) FILTER (filled = 1) AS filled_n,
+               COUNT(*) FILTER (filled = 0) AS unfilled_n,
+               ROUND(AVG(ret) FILTER (filled = 1), 5) AS filled_only_net_mean,
+               ROUND(
+                 (COALESCE(SUM(ret) FILTER (filled = 1), 0)
+                   - COUNT(*) FILTER (filled = 0)) / COUNT(*),
+                 5
+               ) AS net_mean_if_unfilled_loses_100pct
+        FROM selected GROUP BY 1, 2 ORDER BY 1, 2
+    """)
 
     write_json("05_walkforward.json", out)
     con.close()

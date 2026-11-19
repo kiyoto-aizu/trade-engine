@@ -15,9 +15,12 @@ OUTPUT_DIR = REPO_ROOT / "data" / "analysis" / "trend_research_20261117"
 DB_PATH = OUTPUT_DIR / "trend_research.duckdb"
 
 CANONICAL_ROOT = Path(os.getenv("JQUANTS_CANONICAL_DIRECTORY", r"D:\jquants\canonical"))
+ANALYSIS_DATA_CUTOFF = "2026-11-17"
 
 
-def current_parquet_paths(kind: str) -> list[tuple[str, str]]:
+def current_parquet_paths(
+    kind: str, through_date: str | None = None
+) -> list[tuple[str, str]]:
     """kind ('daily'|'minute') の date=ディレクトリごとに CURRENT 世代の parquet パスを返す。
 
     戻り値: [(date_str, posix_path), ...]（日付昇順）。CURRENT が無い日付はスキップして警告。
@@ -29,6 +32,8 @@ def current_parquet_paths(kind: str) -> list[tuple[str, str]]:
         if not d.name.startswith("date="):
             continue
         date_str = d.name[5:]
+        if through_date is not None and date_str > through_date:
+            continue
         cur = d / "CURRENT"
         if not cur.is_file():
             skipped.append(date_str)

@@ -11,7 +11,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from common import REPO_ROOT, connect, current_parquet_paths, rows_to_dicts, write_json
+from common import (
+    ANALYSIS_DATA_CUTOFF,
+    REPO_ROOT,
+    connect,
+    current_parquet_paths,
+    rows_to_dicts,
+    write_json,
+)
 
 
 def main() -> None:
@@ -19,8 +26,21 @@ def main() -> None:
     con.execute("SET TimeZone='Asia/Tokyo'")
     report: dict = {}
 
-    daily = current_parquet_paths("daily")
-    minute = current_parquet_paths("minute")
+    available_daily = current_parquet_paths("daily")
+    available_minute = current_parquet_paths("minute")
+    daily = current_parquet_paths("daily", ANALYSIS_DATA_CUTOFF)
+    minute = current_parquet_paths("minute", ANALYSIS_DATA_CUTOFF)
+    report["analysis_data_cutoff"] = ANALYSIS_DATA_CUTOFF
+    report["available_daily_dates"] = {
+        "count": len(available_daily),
+        "first": available_daily[0][0],
+        "last": available_daily[-1][0],
+    }
+    report["available_minute_dates"] = {
+        "count": len(available_minute),
+        "first": available_minute[0][0],
+        "last": available_minute[-1][0],
+    }
     report["daily_dates"] = {"count": len(daily), "first": daily[0][0], "last": daily[-1][0]}
     report["minute_dates"] = {"count": len(minute), "first": minute[0][0], "last": minute[-1][0]}
 
@@ -47,8 +67,14 @@ def main() -> None:
                    MIN(date) AS min_date, MAX(date) AS max_date,
                    COUNT(*) FILTER (c IS NULL) AS null_close,
                    COUNT(*) FILTER (o IS NULL) AS null_open,
+                   COUNT(*) FILTER (o IS NULL OR h IS NULL OR l IS NULL OR c IS NULL) AS null_ohlc,
                    COUNT(*) FILTER (va IS NULL) AS null_va,
                    COUNT(*) FILTER (vo = 0) AS zero_volume,
+                   COUNT(*) FILTER (
+                     h < GREATEST(o, c) OR l > LEAST(o, c) OR h < l
+                   ) AS invalid_ohlc,
+                   COUNT(*) FILTER (o <= 0 OR h <= 0 OR l <= 0 OR c <= 0) AS nonpositive_ohlc,
+                   COUNT(*) FILTER (vo < 0 OR va < 0) AS negative_volume_or_value,
                    COUNT(*) FILTER (ul = 1) AS limit_up,
                    COUNT(*) FILTER (ll = 1) AS limit_down
             FROM bars_daily
@@ -139,6 +165,9 @@ def main() -> None:
           SUM(Vo) AS vo_total,
           SUM(Va) FILTER ((Time AT TIME ZONE 'Asia/Tokyo')::TIME < TIME '09:30') AS va_morning,
           SUM(Vo) FILTER ((Time AT TIME ZONE 'Asia/Tokyo')::TIME < TIME '09:30') AS vo_morning,
+          arg_max(C, Time) FILTER ((Time AT TIME ZONE 'Asia/Tokyo')::TIME < TIME '09:30') AS close_pre0930,
+          arg_max((Time AT TIME ZONE 'Asia/Tokyo')::TIME, Time)
+            FILTER ((Time AT TIME ZONE 'Asia/Tokyo')::TIME < TIME '09:30') AS close_pre0930_time,
           arg_min(O, Time) AS open_day,
           arg_min(C, Time) FILTER ((Time AT TIME ZONE 'Asia/Tokyo')::TIME >= TIME '09:35') AS entry_0935_close,
           min((Time AT TIME ZONE 'Asia/Tokyo')::TIME) FILTER ((Time AT TIME ZONE 'Asia/Tokyo')::TIME >= TIME '09:35') AS entry_time,
@@ -170,6 +199,28 @@ def main() -> None:
             """
         )
     )[0]
+    report["minute_bar_quality"] = rows_to_dicts(
+        con.execute(
+            """
+            SELECT COUNT(*) AS rows,
+                   COUNT(DISTINCT (Code, Date, Time)) AS unique_bar_keys,
+                   COUNT(*) FILTER (Code IS NULL OR Date IS NULL OR Time IS NULL) AS null_keys,
+                   COUNT(*) FILTER (O IS NULL OR H IS NULL OR L IS NULL OR C IS NULL) AS null_ohlc,
+                   COUNT(*) FILTER (Vo IS NULL OR Va IS NULL) AS null_volume_or_value,
+                   COUNT(*) FILTER (
+                     H < GREATEST(O, C) OR L > LEAST(O, C) OR H < L
+                   ) AS invalid_ohlc,
+                   COUNT(*) FILTER (O <= 0 OR H <= 0 OR L <= 0 OR C <= 0) AS nonpositive_price,
+                   COUNT(*) FILTER (Vo < 0 OR Va < 0) AS negative_volume_or_value
+            FROM read_parquet(?)
+            """,
+            [minute_paths],
+        )
+    )[0]
+    report["minute_bar_quality"]["duplicate_key_excess_rows"] = (
+        report["minute_bar_quality"]["rows"]
+        - report["minute_bar_quality"]["unique_bar_keys"]
+    )
     report["minute_bars_per_day_by_halfyear"] = rows_to_dicts(
         con.sql(
             """
@@ -203,25 +254,56 @@ def main() -> None:
         )
     )[0]
 
-    # 調整後価格の連続性チェック: 分割・併合日(adj_factor<>1)の調整後リターンが
-    # 生値と違い不連続になっていないか（|ret|>50%の行数と、その adj_factor 内訳）
+    # 調整後価格の連続性チェック。イベント日に raw/adjusted return の差も集計し、
+    # 分割比率が小さくても調整が効いているか確認する。
     report["adj_continuity_check"] = rows_to_dicts(
         con.sql(
             """
             WITH r AS (
               SELECT code, date, adj_factor,
-                     adj_c / lag(adj_c) OVER (PARTITION BY code ORDER BY date) - 1 AS ret1_adj,
-                     c / lag(c) OVER (PARTITION BY code ORDER BY date) - 1 AS ret1_raw
+                     adj_c / NULLIF(lag(adj_c) OVER (PARTITION BY code ORDER BY date), 0) - 1 AS ret1_adj,
+                     c / NULLIF(lag(c) OVER (PARTITION BY code ORDER BY date), 0) - 1 AS ret1_raw
               FROM bars_daily WHERE c IS NOT NULL AND adj_c IS NOT NULL
             )
             SELECT COUNT(*) FILTER (abs(ret1_adj) > 0.5) AS adj_ret_gt50pct,
                    COUNT(*) FILTER (abs(ret1_adj) > 0.5 AND COALESCE(adj_factor,1) <> 1) AS adj_ret_gt50pct_on_event_day,
+                   COUNT(*) FILTER (abs(ret1_adj) > 0.5 AND COALESCE(adj_factor,1) = 1) AS adj_ret_gt50pct_off_event_day,
                    COUNT(*) FILTER (abs(ret1_raw) > 0.5) AS raw_ret_gt50pct,
-                   COUNT(*) FILTER (COALESCE(adj_factor,1) <> 1) AS event_day_rows
+                   COUNT(*) FILTER (COALESCE(adj_factor,1) <> 1) AS event_day_rows,
+                   COUNT(*) FILTER (
+                     COALESCE(adj_factor,1) <> 1 AND abs(ret1_raw) > 0.5
+                   ) AS event_raw_ret_gt50pct,
+                   COUNT(*) FILTER (
+                     COALESCE(adj_factor,1) <> 1 AND abs(ret1_adj) > 0.5
+                   ) AS event_adj_ret_gt50pct,
+                   COUNT(*) FILTER (
+                     COALESCE(adj_factor,1) <> 1
+                     AND abs(ret1_raw - ret1_adj) > 0.05
+                   ) AS event_raw_adj_gap_gt5pp,
+                   ROUND(quantile_cont(abs(ret1_raw - ret1_adj), 0.5)
+                     FILTER (COALESCE(adj_factor,1) <> 1), 5) AS event_raw_adj_gap_median,
+                   ROUND(quantile_cont(abs(ret1_raw - ret1_adj), 0.9)
+                     FILTER (COALESCE(adj_factor,1) <> 1), 5) AS event_raw_adj_gap_p90
             FROM r
             """
         )
     )[0]
+    report["adj_non_event_extremes_by_year"] = rows_to_dicts(
+        con.sql(
+            """
+            WITH r AS (
+              SELECT date, COALESCE(adj_factor,1) AS adj_factor,
+                     adj_c / NULLIF(lag(adj_c) OVER (PARTITION BY code ORDER BY date), 0) - 1 AS ret1_adj
+              FROM bars_daily WHERE c IS NOT NULL AND adj_c IS NOT NULL
+            )
+            SELECT year(date) AS year, COUNT(*) AS rows,
+                   COUNT(*) FILTER (abs(ret1_adj) > 0.5) AS adj_ret_gt50pct_off_event_day
+            FROM r
+            WHERE adj_factor = 1
+            GROUP BY 1 ORDER BY 1
+            """
+        )
+    )
 
     write_json("01_data_quality.json", report)
     con.close()

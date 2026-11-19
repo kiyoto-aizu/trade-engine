@@ -1,4 +1,15 @@
 {
+  "analysis_data_cutoff": "2026-11-17",
+  "available_daily_dates": {
+    "count": 1232,
+    "first": "2021-11-04",
+    "last": "2026-11-19"
+  },
+  "available_minute_dates": {
+    "count": 497,
+    "first": "2024-11-05",
+    "last": "2026-11-19"
+  },
   "daily_dates": {
     "count": 1230,
     "first": "2021-11-04",
@@ -16,8 +27,12 @@
     "max_date": "2026-11-17",
     "null_close": 208155,
     "null_open": 208155,
+    "null_ohlc": 208155,
     "null_va": 208155,
     "zero_volume": 0,
+    "invalid_ohlc": 0,
+    "nonpositive_ohlc": 0,
+    "negative_volume_or_value": 0,
     "limit_up": 13149,
     "limit_down": 3555
   },
@@ -92,6 +107,17 @@
     "min_first_time": "2024-11-05 09:00:00",
     "max_last_time": "2026-11-17 15:30:00"
   },
+  "minute_bar_quality": {
+    "rows": 233460718,
+    "unique_bar_keys": 233460718,
+    "null_keys": 0,
+    "null_ohlc": 0,
+    "null_volume_or_value": 0,
+    "invalid_ohlc": 0,
+    "nonpositive_price": 0,
+    "negative_volume_or_value": 0,
+    "duplicate_key_excess_rows": 0
+  },
   "minute_bars_per_day_by_halfyear": [
     {
       "half": "2024-H2",
@@ -138,7 +164,45 @@
   "adj_continuity_check": {
     "adj_ret_gt50pct": 157,
     "adj_ret_gt50pct_on_event_day": 0,
+    "adj_ret_gt50pct_off_event_day": 157,
     "raw_ret_gt50pct": 973,
-    "event_day_rows": 1002
-  }
+    "event_day_rows": 1002,
+    "event_raw_ret_gt50pct": 816,
+    "event_adj_ret_gt50pct": 0,
+    "event_raw_adj_gap_gt5pp": 998,
+    "event_raw_adj_gap_median": 0.62125,
+    "event_raw_adj_gap_p90": 0.81923
+  },
+  "adj_non_event_extremes_by_year": [
+    {
+      "year": 2021,
+      "rows": 161181,
+      "adj_ret_gt50pct_off_event_day": 4
+    },
+    {
+      "year": 2022,
+      "rows": 988634,
+      "adj_ret_gt50pct_off_event_day": 18
+    },
+    {
+      "year": 2023,
+      "rows": 1018277,
+      "adj_ret_gt50pct_off_event_day": 26
+    },
+    {
+      "year": 2024,
+      "rows": 1030739,
+      "adj_ret_gt50pct_off_event_day": 34
+    },
+    {
+      "year": 2025,
+      "rows": 1025291,
+      "adj_ret_gt50pct_off_event_day": 32
+    },
+    {
+      "year": 2026,
+      "rows": 893893,
+      "adj_ret_gt50pct_off_event_day": 43
+    }
+  ]
 }

@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import random
 import sys
 from pathlib import Path
 
@@ -42,11 +43,13 @@ WITH prev AS (
   SELECT *, rank() OVER (PARTITION BY prev_date ORDER BY (r_va + r_up)) AS r_merge
   FROM ranked
 )
-SELECT s.*, m.va_morning, m.vo_morning, m.entry_0935_close, m.close_1525, m.close_last,
+SELECT s.*, m.va_morning, m.vo_morning, m.close_pre0930, m.close_pre0930_time,
+       m.entry_0935_close, m.close_1525, m.close_last,
        m.high_after_0935, m.low_after_0935, m.time_of_high_after_0935, m.time_of_low_after_0935,
        m.open_day, m.bars, m.entry_time, m.last_time,
        m.va_morning / s.va_avg20 AS morning_surge,
        m.entry_0935_close / s.prev_close - 1 AS morning_move,
+       m.close_pre0930 / s.prev_close - 1 AS move_at_0930,
        m.open_day / s.prev_close - 1 AS gap_open,
        m.close_1525 / m.entry_0935_close - 1 AS ret_0935_1525,
        m.high_after_0935 / m.entry_0935_close - 1 AS mfe_0935,
@@ -77,7 +80,7 @@ CREATE OR REPLACE TEMP VIEW sel_excl AS
 SELECT *,
        rank() OVER (PARTITION BY date ORDER BY morning_surge DESC NULLS LAST) AS r_surge_excl
 FROM sel
-WHERE morning_move IS NOT NULL AND morning_move <= 0.02
+WHERE move_at_0930 IS NOT NULL AND move_at_0930 <= 0.02
   AND prev_ul = 0 AND (ret20 IS NULL OR ret20 < 0.25);
 """
 
@@ -97,6 +100,15 @@ OUTCOME = """
 
 def q(con, sql: str) -> list[dict]:
     return rows_to_dicts(con.sql(sql))
+
+
+def percentile(values: list[float], probability: float) -> float:
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * probability
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = position - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
 
 
 def main() -> None:
@@ -132,7 +144,7 @@ def main() -> None:
         "V1_rank11_30_surge": "r_surge BETWEEN 11 AND 30",
         "V2_top10_prev_gainers": "r_prev_up <= 10",
         "V3_top10_va_morning": "r_va_morning <= 10",
-        "V4_top10_surge_nogap2": "r_surge <= 10 AND morning_move <= 0.02",
+        "V4_top10_surge_nogap2": "r_surge <= 10 AND move_at_0930 <= 0.02",
         "V5_top10_surge_no_ul_mom25": "r_surge <= 10 AND prev_ul = 0 AND (ret20 IS NULL OR ret20 < 0.25)",
         "V6_top10_surge_liq50M": "r_surge <= 10 AND va_avg20 >= 5e7",
         "V7_all_candidates": "TRUE",
@@ -154,6 +166,72 @@ def main() -> None:
                ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT date), 1) AS eligible_per_day
         FROM sel_excl GROUP BY 1 ORDER BY 1
     """)
+    out["fill_failure_stress"] = q(con, """
+        WITH selected AS (
+          SELECT 'V0_top10_surge' AS variant, mperiod, filled, ret_0935_1525 AS ret
+          FROM sel WHERE r_surge <= 10
+          UNION ALL
+          SELECT 'V5b_exclude_then_top10', mperiod, filled, ret_0935_1525
+          FROM sel_excl WHERE r_surge_excl <= 10
+        )
+        SELECT variant, mperiod, COUNT(*) AS selected_n,
+               COUNT(*) FILTER (filled = 1) AS filled_n,
+               COUNT(*) FILTER (filled = 0) AS unfilled_n,
+               ROUND(AVG(ret) FILTER (filled = 1), 5) AS filled_only_mean,
+               ROUND(
+                 (SUM(ret) FILTER (filled = 1) - COUNT(*) FILTER (filled = 0)) / COUNT(*),
+                 5
+               ) AS mean_if_unfilled_loses_100pct
+        FROM selected GROUP BY 1, 2 ORDER BY 1, 2
+    """)
+
+    daily_v5b_comparison = q(con, """
+        WITH v0 AS (
+          SELECT date, mperiod, AVG(ret_0935_1525) AS daily_mean
+          FROM sel WHERE r_surge <= 10 AND filled = 1
+          GROUP BY 1, 2
+        ), v5b AS (
+          SELECT date, mperiod, AVG(ret_0935_1525) AS daily_mean
+          FROM sel_excl WHERE r_surge_excl <= 10 AND filled = 1
+          GROUP BY 1, 2
+        )
+        SELECT v0.date, v0.mperiod, v0.daily_mean AS v0_daily_mean,
+               v5b.daily_mean AS v5b_daily_mean,
+               v5b.daily_mean - v0.daily_mean AS paired_daily_diff
+        FROM v0 JOIN v5b USING (date, mperiod)
+        ORDER BY v0.date
+    """)
+    rng = random.Random(20261119)
+    out["V5b_vs_V0_paired_daily_difference"] = []
+    for period in ("M1(24/11-25/11)", "M2(25/11-26/11)", "ALL"):
+        sample = [
+            row for row in daily_v5b_comparison
+            if period == "ALL" or row["mperiod"] == period
+        ]
+        differences = [row["paired_daily_diff"] for row in sample]
+        bootstrap = []
+        for _ in range(10_000):
+            bootstrap_sample = [
+                differences[rng.randrange(len(differences))]
+                for _ in differences
+            ]
+            bootstrap.append(sum(bootstrap_sample) / len(bootstrap_sample))
+        out["V5b_vs_V0_paired_daily_difference"].append({
+            "period": period,
+            "paired_days": len(sample),
+            "v0_daily_mean": round(
+                sum(row["v0_daily_mean"] for row in sample) / len(sample), 5
+            ),
+            "v5b_daily_mean": round(
+                sum(row["v5b_daily_mean"] for row in sample) / len(sample), 5
+            ),
+            "difference_mean": round(sum(differences) / len(differences), 5),
+            "difference_ci95": [
+                round(percentile(bootstrap, 0.025), 5),
+                round(percentile(bootstrap, 0.975), 5),
+            ],
+            "bootstrap_method": "10,000 paired trading-date resamples with replacement; seed=20261119",
+        })
 
     # --- サージ順位と成績の関係 ---
     out["surge_rank_buckets"] = q(con, f"""

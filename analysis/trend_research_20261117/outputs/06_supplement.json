@@ -120,7 +120,7 @@
   "regime_db_tables": [
     "market_regime_daily"
   ],
-  "regime_db_row_count": 20,
+  "regime_db_row_count": 21,
   "regime_proxy_agreement": [
     {
       "prod_final": "CAUTION",
