@@ -104,9 +104,9 @@ def main() -> None:
     )
     # 平日でデータが無い日（祝日を含むため参考値）
     report["weekday_gaps"] = con.sql(
-        """
+        f"""
         WITH cal AS (
-          SELECT unnest(generate_series(DATE '2021-11-04', DATE '2026-11-16', INTERVAL 1 DAY))::DATE AS d
+          SELECT unnest(generate_series(DATE '2021-11-04', DATE '{ANALYSIS_DATA_CUTOFF}', INTERVAL 1 DAY))::DATE AS d
         ), days AS (SELECT DISTINCT date FROM bars_daily)
         SELECT COUNT(*) FROM cal
         WHERE dayofweek(d) BETWEEN 1 AND 5 AND d NOT IN (SELECT date FROM days)

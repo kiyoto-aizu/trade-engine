@@ -7,6 +7,7 @@
   - 対象候補は 04 と同じ近似パイプライン（前日スクリーニング上位50 → 朝サージ上位10）
   - ブレイクアウト: 前日までの直近5本の生終値SMA×1.01 を0.1円丸めした上限帯に、
     09:35以降の分足高値が最初に到達したバーの終値でエントリー（本番は板価格・成行のため近似）
+    約定可否はブレイクアウト到達足と、その後の15:00-15:25決済足で判定する（09:45条件はAの9:35エントリーのみ）
   - RSIゲートは Cutler 近似 RSI(t-1) >= 55 を使用（本番は Wilder。値がずれるため傾向比較用）
   - イグジット: 15:25 までの最後の分足終値（EOD決済近似）。ATRトレーリングは含まない（限界として報告）
   - コスト: 往復 手数料0.055%×2 + スリッページ5bps×2 = 約0.21%（現行バックテスト既定と同一）
@@ -95,18 +96,27 @@ def main() -> None:
         ) WHERE r_surge <= 10
     """)
 
-    # --- 分足からブレイクアウト到達バーを抽出（候補のみ・1スキャン） ---
+    # --- 分足からブレイクアウト到達バーと15時台の決済足を抽出（候補のみ・1スキャン） ---
     con.execute(
         """
         CREATE OR REPLACE TEMP TABLE breakout AS
         SELECT b.Code AS code, b.Date AS date,
-               min((b.Time AT TIME ZONE 'Asia/Tokyo')::TIME) AS cross_time,
-               arg_min(b.C, b.Time) AS cross_close
+               min((b.Time AT TIME ZONE 'Asia/Tokyo')::TIME)
+                 FILTER ((b.Time AT TIME ZONE 'Asia/Tokyo')::TIME <= TIME '15:19'
+                         AND b.H >= t.upper_band) AS cross_time,
+               arg_min(b.C, b.Time)
+                 FILTER ((b.Time AT TIME ZONE 'Asia/Tokyo')::TIME <= TIME '15:19'
+                         AND b.H >= t.upper_band) AS cross_close,
+               arg_max(b.C, b.Time)
+                 FILTER ((b.Time AT TIME ZONE 'Asia/Tokyo')::TIME >= TIME '15:00'
+                         AND (b.Time AT TIME ZONE 'Asia/Tokyo')::TIME <= TIME '15:25') AS exit_close,
+               arg_max((b.Time AT TIME ZONE 'Asia/Tokyo')::TIME, b.Time)
+                 FILTER ((b.Time AT TIME ZONE 'Asia/Tokyo')::TIME >= TIME '15:00'
+                         AND (b.Time AT TIME ZONE 'Asia/Tokyo')::TIME <= TIME '15:25') AS exit_time
         FROM read_parquet(?) b
         JOIN top10 t ON t.code = b.Code AND t.date = b.Date
         WHERE (b.Time AT TIME ZONE 'Asia/Tokyo')::TIME >= TIME '09:35'
-          AND (b.Time AT TIME ZONE 'Asia/Tokyo')::TIME <= TIME '15:19'
-          AND b.H >= t.upper_band
+          AND (b.Time AT TIME ZONE 'Asia/Tokyo')::TIME <= TIME '15:25'
         GROUP BY 1, 2
         """,
         [minute_paths],
@@ -114,14 +124,20 @@ def main() -> None:
 
     con.execute(f"""
         CREATE OR REPLACE TEMP VIEW sim AS
-        SELECT t.*, br.cross_time,
+        SELECT t.*, br.cross_time, br.exit_close AS breakout_exit_close,
+               br.exit_time AS breakout_exit_time,
                -- 約定価格はバンド価格と到達バー終値の高い方（高値だけ触れて下げたバーでの有利約定を防ぐ保守化）
                GREATEST(t.upper_band, br.cross_close) AS entry_breakout,
                CASE WHEN t.rsi14_sma >= 55 THEN 1 ELSE 0 END AS rsi_ok,
-               CASE WHEN br.cross_time IS NOT NULL AND t.filled = 1
-                    THEN t.close_1525 / GREATEST(t.upper_band, br.cross_close) - 1 END AS ret_breakout,
-               CASE WHEN br.cross_time IS NOT NULL AND t.filled = 1
-                    THEN t.close_1525 / GREATEST(t.upper_band, br.cross_close) - 1 - {ROUND_TRIP_COST} END AS ret_breakout_net,
+               CASE WHEN br.cross_time IS NOT NULL AND br.cross_close IS NOT NULL
+                          AND br.exit_time IS NOT NULL AND br.exit_time > br.cross_time
+                    THEN 1 ELSE 0 END AS breakout_filled,
+               CASE WHEN br.cross_time IS NOT NULL AND br.cross_close IS NOT NULL
+                          AND br.exit_time IS NOT NULL AND br.exit_time > br.cross_time
+                    THEN br.exit_close / GREATEST(t.upper_band, br.cross_close) - 1 END AS ret_breakout,
+               CASE WHEN br.cross_time IS NOT NULL AND br.cross_close IS NOT NULL
+                          AND br.exit_time IS NOT NULL AND br.exit_time > br.cross_time
+                    THEN br.exit_close / GREATEST(t.upper_band, br.cross_close) - 1 - {ROUND_TRIP_COST} END AS ret_breakout_net,
                CASE WHEN t.filled = 1 THEN t.close_1525 / t.entry_0935_close - 1 END AS ret_0935,
                CASE WHEN t.filled = 1 THEN t.close_1525 / t.entry_0935_close - 1 - {ROUND_TRIP_COST} END AS ret_0935_net,
                CASE WHEN t.date < DATE '2025-11-16' THEN 'M1' ELSE 'M2' END AS mperiod,
@@ -132,6 +148,14 @@ def main() -> None:
 
     out["fill_rates"] = q(con, """
         SELECT mperiod, COUNT(*) AS top10_rows, ROUND(AVG(filled), 4) AS fill_rate
+        FROM sim GROUP BY 1 ORDER BY 1
+    """)
+    out["breakout_fill_rates"] = q(con, """
+        SELECT mperiod,
+               COUNT(*) FILTER (cross_time IS NOT NULL) AS breakout_signals,
+               COUNT(*) FILTER (breakout_filled = 1) AS breakout_filled_n,
+               COUNT(*) FILTER (cross_time IS NOT NULL AND breakout_filled = 0) AS breakout_timing_ineligible_n,
+               ROUND(AVG(breakout_filled) FILTER (cross_time IS NOT NULL), 4) AS breakout_fill_rate
         FROM sim GROUP BY 1 ORDER BY 1
     """)
 
@@ -287,29 +311,38 @@ def main() -> None:
         ).fetchall() if r[0] is not None]
         out["bootstrap_ci_daily_mean"].append({"variant": label, **bootstrap_ci(day_means)})
 
-    # 未約定行を評価対象外とする既定集計に加え、全額損失(-100%)と仮定した極端な下方ストレスを示す。
-    out["fill_failure_stress"] = q(con, """
+    # 約定可否は戦略別に判定し、条件未充足を不取引（損益寄与0）と置く感度を出力する。
+    out["timing_eligibility"] = q(con, """
         WITH selected AS (
-          SELECT 'A_全候補_0935' AS variant, mperiod, filled, ret_0935_net AS ret
+          SELECT 'A_全候補_0935' AS variant, mperiod, filled AS strategy_filled,
+                 entry_0935_close IS NULL AS missing_entry_bar,
+                 entry_time > TIME '09:45' AS late_entry,
+                 (close_1525 IS NULL OR last_time::TIME < TIME '15:00') AS exit_time_ineligible,
+                 ret_0935_net AS ret
           FROM sim
           UNION ALL
-          SELECT 'C_ブレイクアウト+RSI55', mperiod, filled, ret_breakout_net
+          SELECT 'C_ブレイクアウト+RSI55', mperiod, breakout_filled,
+                 FALSE, FALSE,
+                 (breakout_exit_time IS NULL OR breakout_exit_time <= cross_time),
+                 ret_breakout_net
           FROM sim WHERE cross_time IS NOT NULL AND rsi_ok = 1
           UNION ALL
-          SELECT 'G_除外付きブレイクアウト', mperiod, filled, ret_breakout_net
+          SELECT 'G_除外付きブレイクアウト', mperiod, breakout_filled,
+                 FALSE, FALSE,
+                 (breakout_exit_time IS NULL OR breakout_exit_time <= cross_time),
+                 ret_breakout_net
           FROM sim
           WHERE cross_time IS NOT NULL AND rsi_ok = 1 AND move_at_0930 <= 0.02
             AND prev_ul = 0 AND (ret20 IS NULL OR ret20 < 0.25)
         )
         SELECT variant, mperiod, COUNT(*) AS selected_n,
-               COUNT(*) FILTER (filled = 1) AS filled_n,
-               COUNT(*) FILTER (filled = 0) AS unfilled_n,
-               ROUND(AVG(ret) FILTER (filled = 1), 5) AS filled_only_net_mean,
-               ROUND(
-                 (COALESCE(SUM(ret) FILTER (filled = 1), 0)
-                   - COUNT(*) FILTER (filled = 0)) / COUNT(*),
-                 5
-               ) AS net_mean_if_unfilled_loses_100pct
+               COUNT(*) FILTER (strategy_filled = 1) AS filled_n,
+               COUNT(*) FILTER (strategy_filled = 0) AS timing_ineligible_n,
+               COUNT(*) FILTER (missing_entry_bar) AS missing_entry_bar_n,
+               COUNT(*) FILTER (late_entry) AS late_entry_n,
+               COUNT(*) FILTER (exit_time_ineligible) AS exit_time_ineligible_n,
+               ROUND(SUM(ret) FILTER (strategy_filled = 1) / COUNT(*), 5)
+                 AS net_mean_per_selected_if_ineligible_not_traded
         FROM selected GROUP BY 1, 2 ORDER BY 1, 2
     """)
 

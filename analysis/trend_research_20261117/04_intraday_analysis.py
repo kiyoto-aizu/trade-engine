@@ -1,4 +1,4 @@
-"""04: 分足による朝フィルタ再現と日中フォロースルー検証（2024-11-05〜2026-11-16）。
+"""04: 分足による朝フィルタ再現と日中フォロースルー検証（2024-11-05〜ANALYSIS_DATA_CUTOFF、現在2026-11-17）。
 
 入力: trend_research.duckdb（minute_day_summary, panel, universe_master, market_state）
 出力: data/analysis/trend_research_20261117/04_intraday_analysis.json
@@ -166,22 +166,71 @@ def main() -> None:
                ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT date), 1) AS eligible_per_day
         FROM sel_excl GROUP BY 1 ORDER BY 1
     """)
-    out["fill_failure_stress"] = q(con, """
+    out["timing_eligibility"] = q(con, """
+        WITH selected AS (
+          SELECT 'V0_top10_surge' AS variant, mperiod, filled,
+                 entry_0935_close, entry_time, close_1525, last_time,
+                 ret_0935_1525 AS ret
+          FROM sel WHERE r_surge <= 10
+          UNION ALL
+          SELECT 'V5b_exclude_then_top10', mperiod, filled,
+                 entry_0935_close, entry_time, close_1525, last_time,
+                 ret_0935_1525
+          FROM sel_excl WHERE r_surge_excl <= 10
+        )
+        SELECT variant, mperiod, COUNT(*) AS selected_n,
+               COUNT(*) FILTER (filled = 1) AS filled_n,
+               COUNT(*) FILTER (filled = 0) AS timing_ineligible_n,
+               COUNT(*) FILTER (entry_0935_close IS NULL) AS missing_entry_bar_n,
+               COUNT(*) FILTER (entry_time > TIME '09:45') AS late_entry_n,
+               COUNT(*) FILTER (close_1525 IS NULL OR last_time::TIME < TIME '15:00') AS exit_time_ineligible_n,
+               ROUND(SUM(ret) FILTER (filled = 1) / COUNT(*), 5) AS mean_per_selected_if_ineligible_not_traded
+        FROM selected GROUP BY 1, 2 ORDER BY 1, 2
+    """)
+    out["V5b_vs_V0_timing_break_even"] = q(con, """
         WITH selected AS (
           SELECT 'V0_top10_surge' AS variant, mperiod, filled, ret_0935_1525 AS ret
           FROM sel WHERE r_surge <= 10
           UNION ALL
           SELECT 'V5b_exclude_then_top10', mperiod, filled, ret_0935_1525
           FROM sel_excl WHERE r_surge_excl <= 10
+        ), totals AS (
+          SELECT variant, mperiod, COUNT(*) AS selected_n,
+                 COUNT(*) FILTER (filled = 0) AS timing_ineligible_n,
+                 SUM(ret) FILTER (filled = 1) AS filled_return_sum
+          FROM selected GROUP BY 1, 2
+        ), paired AS (
+          SELECT v0.mperiod,
+                 v0.filled_return_sum / v0.selected_n AS v0_mean_if_ineligible_not_traded,
+                 v5b.filled_return_sum / v5b.selected_n AS v5b_mean_if_ineligible_not_traded,
+                 v5b.timing_ineligible_n * 1.0 / v5b.selected_n AS v5b_ineligible_rate
+          FROM totals v0
+          JOIN totals v5b USING (mperiod)
+          WHERE v0.variant = 'V0_top10_surge'
+            AND v5b.variant = 'V5b_exclude_then_top10'
+        )
+        SELECT mperiod,
+               ROUND((v5b_mean_if_ineligible_not_traded - v0_mean_if_ineligible_not_traded) * 100, 3)
+                 AS baseline_difference_pp,
+               ROUND(-(v5b_mean_if_ineligible_not_traded - v0_mean_if_ineligible_not_traded)
+                     / NULLIF(v5b_ineligible_rate, 0), 5)
+                 AS v5b_ineligible_mean_break_even_if_v0_ineligible_zero
+        FROM paired ORDER BY mperiod
+    """)
+    out["pre0930_price_freshness"] = q(con, """
+        WITH selected AS (
+          SELECT 'V0_top10_surge' AS variant, mperiod, close_pre0930_time
+          FROM sel WHERE r_surge <= 10
+          UNION ALL
+          SELECT 'V5b_exclude_then_top10', mperiod, close_pre0930_time
+          FROM sel_excl WHERE r_surge_excl <= 10
         )
         SELECT variant, mperiod, COUNT(*) AS selected_n,
-               COUNT(*) FILTER (filled = 1) AS filled_n,
-               COUNT(*) FILTER (filled = 0) AS unfilled_n,
-               ROUND(AVG(ret) FILTER (filled = 1), 5) AS filled_only_mean,
-               ROUND(
-                 (SUM(ret) FILTER (filled = 1) - COUNT(*) FILTER (filled = 0)) / COUNT(*),
-                 5
-               ) AS mean_if_unfilled_loses_100pct
+               COUNT(*) FILTER (close_pre0930_time IS NULL) AS missing_pre0930_time_n,
+               ROUND(100.0 * COUNT(*) FILTER (close_pre0930_time >= TIME '09:25') / COUNT(*), 2)
+                 AS last_trade_at_or_after_0925_pct,
+               ROUND(100.0 * COUNT(*) FILTER (close_pre0930_time >= TIME '09:20') / COUNT(*), 2)
+                 AS last_trade_at_or_after_0920_pct
         FROM selected GROUP BY 1, 2 ORDER BY 1, 2
     """)
 
