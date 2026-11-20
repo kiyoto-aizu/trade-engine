@@ -1,0 +1,1015 @@
+{
+  "fill_rates": [
+    {
+      "mperiod": "M1",
+      "top10_rows": 2520,
+      "fill_rate": 0.9845
+    },
+    {
+      "mperiod": "M2",
+      "top10_rows": 2430,
+      "fill_rate": 0.9724
+    }
+  ],
+  "breakout_fill_rates": [
+    {
+      "mperiod": "M1",
+      "breakout_signals": 2343,
+      "breakout_filled_n": 2235,
+      "breakout_timing_ineligible_n": 108,
+      "breakout_fill_rate": 0.9539
+    },
+    {
+      "mperiod": "M2",
+      "breakout_signals": 2226,
+      "breakout_filled_n": 2115,
+      "breakout_timing_ineligible_n": 111,
+      "breakout_fill_rate": 0.9501
+    }
+  ],
+  "gate_trigger_rates": [
+    {
+      "mperiod": "M1",
+      "cand": 2520,
+      "breakout_rate": 0.9298,
+      "rsi55_rate": 0.8694,
+      "both_rate": 0.8313
+    },
+    {
+      "mperiod": "M2",
+      "cand": 2430,
+      "breakout_rate": 0.916,
+      "rsi55_rate": 0.8021,
+      "both_rate": 0.7638
+    }
+  ],
+  "gate_comparison_net": [
+    {
+      "variant": "A_全候補_0935エントリー",
+      "rows": [
+        {
+          "mperiod": "M1",
+          "n": 2481,
+          "mean": -0.00873,
+          "med": -0.00575,
+          "p10": -0.07107,
+          "p90": 0.04989,
+          "win": 0.389
+        },
+        {
+          "mperiod": "M2",
+          "n": 2363,
+          "mean": -0.00835,
+          "med": -0.00552,
+          "p10": -0.07537,
+          "p90": 0.05346,
+          "win": 0.4012
+        }
+      ]
+    },
+    {
+      "variant": "B_ブレイクアウトのみ",
+      "rows": [
+        {
+          "mperiod": "M1",
+          "n": 2235,
+          "mean": -0.01243,
+          "med": -0.00809,
+          "p10": -0.07651,
+          "p90": 0.04384,
+          "win": 0.3673
+        },
+        {
+          "mperiod": "M2",
+          "n": 2115,
+          "mean": -0.01318,
+          "med": -0.00846,
+          "p10": -0.07902,
+          "p90": 0.04463,
+          "win": 0.3707
+        }
+      ]
+    },
+    {
+      "variant": "C_ブレイクアウト+RSI55",
+      "rows": [
+        {
+          "mperiod": "M1",
+          "n": 1995,
+          "mean": -0.01338,
+          "med": -0.00841,
+          "p10": -0.0795,
+          "p90": 0.0436,
+          "win": 0.3644
+        },
+        {
+          "mperiod": "M2",
+          "n": 1755,
+          "mean": -0.01367,
+          "med": -0.00919,
+          "p10": -0.081,
+          "p90": 0.0468,
+          "win": 0.3755
+        }
+      ]
+    },
+    {
+      "variant": "D_ブレイクアウト+RSI55未満",
+      "rows": [
+        {
+          "mperiod": "M1",
+          "n": 240,
+          "mean": -0.00453,
+          "med": -0.00478,
+          "p10": -0.05766,
+          "p90": 0.04532,
+          "win": 0.3917
+        },
+        {
+          "mperiod": "M2",
+          "n": 360,
+          "mean": -0.01082,
+          "med": -0.00446,
+          "p10": -0.06304,
+          "p90": 0.03792,
+          "win": 0.3472
+        }
+      ]
+    },
+    {
+      "variant": "E_非ブレイクアウト(0935)",
+      "rows": [
+        {
+          "mperiod": "M1",
+          "n": 163,
+          "mean": -0.00932,
+          "med": -0.00654,
+          "p10": -0.03604,
+          "p90": 0.01399,
+          "win": 0.2883
+        },
+        {
+          "mperiod": "M2",
+          "n": 177,
+          "mean": -0.00731,
+          "med": -0.0021,
+          "p10": -0.04623,
+          "p90": 0.02505,
+          "win": 0.3277
+        }
+      ]
+    },
+    {
+      "variant": "F_ブレイクアウト+朝2%以下",
+      "rows": [
+        {
+          "mperiod": "M1",
+          "n": 1330,
+          "mean": -0.00618,
+          "med": -0.00684,
+          "p10": -0.05766,
+          "p90": 0.03841,
+          "win": 0.3752
+        },
+        {
+          "mperiod": "M2",
+          "n": 1281,
+          "mean": -0.0083,
+          "med": -0.00612,
+          "p10": -0.06131,
+          "p90": 0.03895,
+          "win": 0.37
+        }
+      ]
+    },
+    {
+      "variant": "G_ブレイクアウト+RSI55+朝2%以下+UL/mom除外",
+      "rows": [
+        {
+          "mperiod": "M1",
+          "n": 618,
+          "mean": -0.00434,
+          "med": -0.00541,
+          "p10": -0.03586,
+          "p90": 0.02693,
+          "win": 0.3738
+        },
+        {
+          "mperiod": "M2",
+          "n": 570,
+          "mean": -0.00398,
+          "med": -0.0021,
+          "p10": -0.03966,
+          "p90": 0.03198,
+          "win": 0.4123
+        }
+      ]
+    }
+  ],
+  "breakout_time_buckets": [
+    {
+      "bucket": "a:9:35-10時",
+      "n": 4239,
+      "mean": -0.01271,
+      "med": -0.00829,
+      "p10": -0.07902,
+      "p90": 0.04552,
+      "win": 0.3715
+    },
+    {
+      "bucket": "b:10-11時",
+      "n": 55,
+      "mean": -0.01615,
+      "med": -0.00946,
+      "p10": -0.05891,
+      "p90": 0.01383,
+      "win": 0.2364
+    },
+    {
+      "bucket": "c:11-13時",
+      "n": 29,
+      "mean": -0.01224,
+      "med": -0.00379,
+      "p10": -0.04834,
+      "p90": 0.00513,
+      "win": 0.3103
+    },
+    {
+      "bucket": "d:13時以降",
+      "n": 27,
+      "mean": -0.01937,
+      "med": -0.00618,
+      "p10": -0.045,
+      "p90": 0.01108,
+      "win": 0.2963
+    }
+  ],
+  "quarterly_stability": [
+    {
+      "variant": "A_全候補_0935",
+      "rows": [
+        {
+          "yq": "2024Q4",
+          "n": 396,
+          "mean": -0.00877,
+          "med": -0.00839,
+          "p10": -0.06716,
+          "p90": 0.0511,
+          "win": 0.3889
+        },
+        {
+          "yq": "2025Q1",
+          "n": 561,
+          "mean": -0.00314,
+          "med": -0.0021,
+          "p10": -0.06332,
+          "p90": 0.04934,
+          "win": 0.4135
+        },
+        {
+          "yq": "2025Q2",
+          "n": 611,
+          "mean": -0.01386,
+          "med": -0.0073,
+          "p10": -0.08799,
+          "p90": 0.04992,
+          "win": 0.3748
+        },
+        {
+          "yq": "2025Q3",
+          "n": 605,
+          "mean": -0.00902,
+          "med": -0.00578,
+          "p10": -0.07335,
+          "p90": 0.04779,
+          "win": 0.3934
+        },
+        {
+          "yq": "2025Q4",
+          "n": 612,
+          "mean": -0.00808,
+          "med": -0.00661,
+          "p10": -0.06982,
+          "p90": 0.05742,
+          "win": 0.3709
+        },
+        {
+          "yq": "2026Q1",
+          "n": 565,
+          "mean": -0.00762,
+          "med": -0.00591,
+          "p10": -0.08091,
+          "p90": 0.06128,
+          "win": 0.4265
+        },
+        {
+          "yq": "2026Q2",
+          "n": 596,
+          "mean": -0.0065,
+          "med": -0.00586,
+          "p10": -0.07084,
+          "p90": 0.05411,
+          "win": 0.3993
+        },
+        {
+          "yq": "2026Q3",
+          "n": 590,
+          "mean": -0.00842,
+          "med": -0.0021,
+          "p10": -0.07201,
+          "p90": 0.04866,
+          "win": 0.422
+        },
+        {
+          "yq": "2026Q4",
+          "n": 308,
+          "mean": -0.01344,
+          "med": -0.00765,
+          "p10": -0.08207,
+          "p90": 0.03681,
+          "win": 0.3409
+        }
+      ]
+    },
+    {
+      "variant": "C_ブレイクアウト+RSI55",
+      "rows": [
+        {
+          "yq": "2024Q4",
+          "n": 321,
+          "mean": -0.01164,
+          "med": -0.00927,
+          "p10": -0.07224,
+          "p90": 0.04918,
+          "win": 0.3707
+        },
+        {
+          "yq": "2025Q1",
+          "n": 466,
+          "mean": -0.00759,
+          "med": -0.00545,
+          "p10": -0.06752,
+          "p90": 0.04536,
+          "win": 0.3863
+        },
+        {
+          "yq": "2025Q2",
+          "n": 479,
+          "mean": -0.02132,
+          "med": -0.01208,
+          "p10": -0.09321,
+          "p90": 0.04601,
+          "win": 0.3361
+        },
+        {
+          "yq": "2025Q3",
+          "n": 518,
+          "mean": -0.0123,
+          "med": -0.00819,
+          "p10": -0.07511,
+          "p90": 0.042,
+          "win": 0.3668
+        },
+        {
+          "yq": "2025Q4",
+          "n": 432,
+          "mean": -0.01236,
+          "med": -0.00857,
+          "p10": -0.07614,
+          "p90": 0.04378,
+          "win": 0.3634
+        },
+        {
+          "yq": "2026Q1",
+          "n": 449,
+          "mean": -0.01426,
+          "med": -0.0105,
+          "p10": -0.08729,
+          "p90": 0.05656,
+          "win": 0.3875
+        },
+        {
+          "yq": "2026Q2",
+          "n": 412,
+          "mean": -0.01206,
+          "med": -0.01083,
+          "p10": -0.07868,
+          "p90": 0.04914,
+          "win": 0.3786
+        },
+        {
+          "yq": "2026Q3",
+          "n": 467,
+          "mean": -0.01303,
+          "med": -0.00639,
+          "p10": -0.07366,
+          "p90": 0.03923,
+          "win": 0.3854
+        },
+        {
+          "yq": "2026Q4",
+          "n": 206,
+          "mean": -0.01957,
+          "med": -0.00963,
+          "p10": -0.09442,
+          "p90": 0.03637,
+          "win": 0.335
+        }
+      ]
+    },
+    {
+      "variant": "G_除外付きブレイクアウト",
+      "rows": [
+        {
+          "yq": "2024Q4",
+          "n": 88,
+          "mean": -0.00411,
+          "med": -0.00665,
+          "p10": -0.03298,
+          "p90": 0.03656,
+          "win": 0.375
+        },
+        {
+          "yq": "2025Q1",
+          "n": 148,
+          "mean": -0.00474,
+          "med": -0.0021,
+          "p10": -0.03605,
+          "p90": 0.01431,
+          "win": 0.3851
+        },
+        {
+          "yq": "2025Q2",
+          "n": 119,
+          "mean": -0.00619,
+          "med": -0.00618,
+          "p10": -0.04532,
+          "p90": 0.02587,
+          "win": 0.3697
+        },
+        {
+          "yq": "2025Q3",
+          "n": 171,
+          "mean": -0.00251,
+          "med": -0.00647,
+          "p10": -0.03335,
+          "p90": 0.03194,
+          "win": 0.3684
+        },
+        {
+          "yq": "2025Q4",
+          "n": 163,
+          "mean": -0.00737,
+          "med": -0.00573,
+          "p10": -0.0402,
+          "p90": 0.02646,
+          "win": 0.362
+        },
+        {
+          "yq": "2026Q1",
+          "n": 111,
+          "mean": -0.00018,
+          "med": -0.0021,
+          "p10": -0.04478,
+          "p90": 0.04162,
+          "win": 0.4414
+        },
+        {
+          "yq": "2026Q2",
+          "n": 133,
+          "mean": -0.00179,
+          "med": -0.0021,
+          "p10": -0.03773,
+          "p90": 0.03465,
+          "win": 0.4586
+        },
+        {
+          "yq": "2026Q3",
+          "n": 173,
+          "mean": -0.00383,
+          "med": -0.0021,
+          "p10": -0.03765,
+          "p90": 0.03019,
+          "win": 0.422
+        },
+        {
+          "yq": "2026Q4",
+          "n": 82,
+          "mean": -0.00726,
+          "med": -0.00667,
+          "p10": -0.03519,
+          "p90": 0.02742,
+          "win": 0.3293
+        }
+      ]
+    }
+  ],
+  "daily_proxy_unfilled": [
+    {
+      "period": "P1",
+      "top50_rows": 24511,
+      "top50_no_fwd_rate": 0.0
+    },
+    {
+      "period": "P2",
+      "top50_rows": 12278,
+      "top50_no_fwd_rate": 0.0
+    },
+    {
+      "period": "P3",
+      "top50_rows": 12235,
+      "top50_no_fwd_rate": 0.0
+    },
+    {
+      "period": "P4",
+      "top50_rows": 12641,
+      "top50_no_fwd_rate": 0.0042
+    }
+  ],
+  "daily_proxy_screening": [
+    {
+      "variant": "S0_上位50全体",
+      "rows": [
+        {
+          "period": "P1",
+          "n": 24511,
+          "days": 489,
+          "net_mean": -0.00381,
+          "net_med": -0.00428,
+          "net_win": 0.4128,
+          "ex1_mean": -0.00187
+        },
+        {
+          "period": "P2",
+          "n": 12278,
+          "days": 245,
+          "net_mean": -0.00493,
+          "net_med": -0.00566,
+          "net_win": 0.3885,
+          "ex1_mean": -0.00274
+        },
+        {
+          "period": "P3",
+          "n": 12235,
+          "days": 244,
+          "net_mean": -0.00607,
+          "net_med": -0.00654,
+          "net_win": 0.3802,
+          "ex1_mean": -0.00387
+        },
+        {
+          "period": "P4",
+          "n": 12588,
+          "days": 251,
+          "net_mean": -0.00596,
+          "net_med": -0.00565,
+          "net_win": 0.3924,
+          "ex1_mean": -0.00356
+        }
+      ]
+    },
+    {
+      "variant": "S1_上位50+前日サージ>=4除外",
+      "rows": [
+        {
+          "period": "P1",
+          "n": 19959,
+          "days": 489,
+          "net_mean": -0.00301,
+          "net_med": -0.00343,
+          "net_win": 0.4212,
+          "ex1_mean": -0.00108
+        },
+        {
+          "period": "P2",
+          "n": 9713,
+          "days": 245,
+          "net_mean": -0.00351,
+          "net_med": -0.00454,
+          "net_win": 0.3987,
+          "ex1_mean": -0.00129
+        },
+        {
+          "period": "P3",
+          "n": 9207,
+          "days": 244,
+          "net_mean": -0.00395,
+          "net_med": -0.0048,
+          "net_win": 0.3926,
+          "ex1_mean": -0.00175
+        },
+        {
+          "period": "P4",
+          "n": 10182,
+          "days": 251,
+          "net_mean": -0.00419,
+          "net_med": -0.00444,
+          "net_win": 0.4029,
+          "ex1_mean": -0.00185
+        }
+      ]
+    },
+    {
+      "variant": "S2_上位50+UL/mom25除外",
+      "rows": [
+        {
+          "period": "P1",
+          "n": 20439,
+          "days": 489,
+          "net_mean": -0.0029,
+          "net_med": -0.00366,
+          "net_win": 0.4178,
+          "ex1_mean": -0.00096
+        },
+        {
+          "period": "P2",
+          "n": 9982,
+          "days": 245,
+          "net_mean": -0.0031,
+          "net_med": -0.00464,
+          "net_win": 0.3997,
+          "ex1_mean": -0.0008
+        },
+        {
+          "period": "P3",
+          "n": 9398,
+          "days": 244,
+          "net_mean": -0.00454,
+          "net_med": -0.00555,
+          "net_win": 0.3833,
+          "ex1_mean": -0.00239
+        },
+        {
+          "period": "P4",
+          "n": 10206,
+          "days": 251,
+          "net_mean": -0.00386,
+          "net_med": -0.00458,
+          "net_win": 0.4017,
+          "ex1_mean": -0.00144
+        }
+      ]
+    },
+    {
+      "variant": "S3_上位50+ギャップ2%超除外",
+      "rows": [
+        {
+          "period": "P1",
+          "n": 22137,
+          "days": 489,
+          "net_mean": -0.00284,
+          "net_med": -0.00387,
+          "net_win": 0.4177,
+          "ex1_mean": -0.00093
+        },
+        {
+          "period": "P2",
+          "n": 10899,
+          "days": 245,
+          "net_mean": -0.00377,
+          "net_med": -0.00527,
+          "net_win": 0.3927,
+          "ex1_mean": -0.0017
+        },
+        {
+          "period": "P3",
+          "n": 10518,
+          "days": 244,
+          "net_mean": -0.00468,
+          "net_med": -0.00573,
+          "net_win": 0.385,
+          "ex1_mean": -0.00252
+        },
+        {
+          "period": "P4",
+          "n": 11024,
+          "days": 251,
+          "net_mean": -0.00482,
+          "net_med": -0.00549,
+          "net_win": 0.3952,
+          "ex1_mean": -0.00242
+        }
+      ]
+    },
+    {
+      "variant": "S4_S2+S3複合",
+      "rows": [
+        {
+          "period": "P1",
+          "n": 18989,
+          "days": 489,
+          "net_mean": -0.00263,
+          "net_med": -0.00346,
+          "net_win": 0.4198,
+          "ex1_mean": -0.0007
+        },
+        {
+          "period": "P2",
+          "n": 9221,
+          "days": 245,
+          "net_mean": -0.00305,
+          "net_med": -0.00453,
+          "net_win": 0.4005,
+          "ex1_mean": -0.00088
+        },
+        {
+          "period": "P3",
+          "n": 8468,
+          "days": 244,
+          "net_mean": -0.00396,
+          "net_med": -0.00494,
+          "net_win": 0.3871,
+          "ex1_mean": -0.00184
+        },
+        {
+          "period": "P4",
+          "n": 9279,
+          "days": 251,
+          "net_mean": -0.00383,
+          "net_med": -0.0045,
+          "net_win": 0.4008,
+          "ex1_mean": -0.00142
+        }
+      ]
+    },
+    {
+      "variant": "S5_価格帯450-900のみ上位50(帯内で再ランキング)",
+      "rows": [
+        {
+          "period": "P1",
+          "n": 24527,
+          "days": 489,
+          "net_mean": -0.00311,
+          "net_med": -0.00356,
+          "net_win": 0.4186,
+          "ex1_mean": -0.00118
+        },
+        {
+          "period": "P2",
+          "n": 12292,
+          "days": 245,
+          "net_mean": -0.00383,
+          "net_med": -0.00447,
+          "net_win": 0.4016,
+          "ex1_mean": -0.00164
+        },
+        {
+          "period": "P3",
+          "n": 12237,
+          "days": 244,
+          "net_mean": -0.00424,
+          "net_med": -0.00414,
+          "net_win": 0.3987,
+          "ex1_mean": -0.00205
+        },
+        {
+          "period": "P4",
+          "n": 12594,
+          "days": 251,
+          "net_mean": -0.00355,
+          "net_med": -0.00374,
+          "net_win": 0.4086,
+          "ex1_mean": -0.00117
+        }
+      ]
+    },
+    {
+      "variant": "S6_価格帯<=270のみ上位50(帯内で再ランキング)",
+      "rows": [
+        {
+          "period": "P1",
+          "n": 10831,
+          "days": 489,
+          "net_mean": -0.0041,
+          "net_med": -0.0021,
+          "net_win": 0.3721,
+          "ex1_mean": -0.00213
+        },
+        {
+          "period": "P2",
+          "n": 6171,
+          "days": 245,
+          "net_mean": -0.00366,
+          "net_med": -0.0021,
+          "net_win": 0.3683,
+          "ex1_mean": -0.00165
+        },
+        {
+          "period": "P3",
+          "n": 7128,
+          "days": 244,
+          "net_mean": -0.00513,
+          "net_med": -0.0066,
+          "net_win": 0.3485,
+          "ex1_mean": -0.00279
+        },
+        {
+          "period": "P4",
+          "n": 7008,
+          "days": 251,
+          "net_mean": -0.0078,
+          "net_med": -0.00652,
+          "net_win": 0.3326,
+          "ex1_mean": -0.00546
+        }
+      ]
+    }
+  ],
+  "daily_proxy_by_regime": [
+    {
+      "period": "P1",
+      "regime": "CAUTION",
+      "n": 12981,
+      "days": 259,
+      "net_mean": -0.00365,
+      "net_win": 0.4197
+    },
+    {
+      "period": "P1",
+      "regime": "DANGER",
+      "n": 451,
+      "days": 9,
+      "net_mean": 0.00026,
+      "net_win": 0.4701
+    },
+    {
+      "period": "P1",
+      "regime": "NORMAL",
+      "n": 10979,
+      "days": 219,
+      "net_mean": -0.00421,
+      "net_win": 0.4027
+    },
+    {
+      "period": "P1",
+      "regime": null,
+      "n": 100,
+      "days": 2,
+      "net_mean": 0.00189,
+      "net_win": 0.38
+    },
+    {
+      "period": "P2",
+      "regime": "CAUTION",
+      "n": 5908,
+      "days": 118,
+      "net_mean": -0.00445,
+      "net_win": 0.3913
+    },
+    {
+      "period": "P2",
+      "regime": "DANGER",
+      "n": 1655,
+      "days": 33,
+      "net_mean": -0.00604,
+      "net_win": 0.3921
+    },
+    {
+      "period": "P2",
+      "regime": "NORMAL",
+      "n": 4715,
+      "days": 94,
+      "net_mean": -0.00515,
+      "net_win": 0.3837
+    },
+    {
+      "period": "P3",
+      "regime": "CAUTION",
+      "n": 5268,
+      "days": 105,
+      "net_mean": -0.00487,
+      "net_win": 0.3931
+    },
+    {
+      "period": "P3",
+      "regime": "DANGER",
+      "n": 1205,
+      "days": 24,
+      "net_mean": -0.00696,
+      "net_win": 0.3851
+    },
+    {
+      "period": "P3",
+      "regime": "NORMAL",
+      "n": 5762,
+      "days": 115,
+      "net_mean": -0.00697,
+      "net_win": 0.3674
+    },
+    {
+      "period": "P4",
+      "regime": "CAUTION",
+      "n": 6917,
+      "days": 138,
+      "net_mean": -0.00624,
+      "net_win": 0.387
+    },
+    {
+      "period": "P4",
+      "regime": "DANGER",
+      "n": 5570,
+      "days": 111,
+      "net_mean": -0.00547,
+      "net_win": 0.4011
+    },
+    {
+      "period": "P4",
+      "regime": "NORMAL",
+      "n": 101,
+      "days": 2,
+      "net_mean": -0.01378,
+      "net_win": 0.2871
+    }
+  ],
+  "bootstrap_ci_daily_mean": [
+    {
+      "variant": "A_全候補_0935",
+      "days": 495,
+      "mean": -0.00855,
+      "ci_lo": -0.01058,
+      "ci_hi": -0.00649
+    },
+    {
+      "variant": "C_ブレイクアウト+RSI55",
+      "days": 494,
+      "mean": -0.01378,
+      "ci_lo": -0.01585,
+      "ci_hi": -0.01165
+    },
+    {
+      "variant": "G_除外付きブレイクアウト",
+      "days": 454,
+      "mean": -0.00425,
+      "ci_lo": -0.00653,
+      "ci_hi": -0.00186
+    }
+  ],
+  "timing_eligibility": [
+    {
+      "variant": "A_全候補_0935",
+      "mperiod": "M1",
+      "selected_n": 2520,
+      "filled_n": 2481,
+      "timing_ineligible_n": 39,
+      "missing_entry_bar_n": 0,
+      "late_entry_n": 39,
+      "exit_time_ineligible_n": 0,
+      "net_mean_per_selected_if_ineligible_not_traded": -0.0086
+    },
+    {
+      "variant": "A_全候補_0935",
+      "mperiod": "M2",
+      "selected_n": 2430,
+      "filled_n": 2363,
+      "timing_ineligible_n": 67,
+      "missing_entry_bar_n": 0,
+      "late_entry_n": 67,
+      "exit_time_ineligible_n": 0,
+      "net_mean_per_selected_if_ineligible_not_traded": -0.00812
+    },
+    {
+      "variant": "C_ブレイクアウト+RSI55",
+      "mperiod": "M1",
+      "selected_n": 2095,
+      "filled_n": 1995,
+      "timing_ineligible_n": 100,
+      "missing_entry_bar_n": 0,
+      "late_entry_n": 0,
+      "exit_time_ineligible_n": 100,
+      "net_mean_per_selected_if_ineligible_not_traded": -0.01274
+    },
+    {
+      "variant": "C_ブレイクアウト+RSI55",
+      "mperiod": "M2",
+      "selected_n": 1856,
+      "filled_n": 1755,
+      "timing_ineligible_n": 101,
+      "missing_entry_bar_n": 0,
+      "late_entry_n": 0,
+      "exit_time_ineligible_n": 101,
+      "net_mean_per_selected_if_ineligible_not_traded": -0.01292
+    },
+    {
+      "variant": "G_除外付きブレイクアウト",
+      "mperiod": "M1",
+      "selected_n": 619,
+      "filled_n": 618,
+      "timing_ineligible_n": 1,
+      "missing_entry_bar_n": 0,
+      "late_entry_n": 0,
+      "exit_time_ineligible_n": 1,
+      "net_mean_per_selected_if_ineligible_not_traded": -0.00433
+    },
+    {
+      "variant": "G_除外付きブレイクアウト",
+      "mperiod": "M2",
+      "selected_n": 571,
+      "filled_n": 570,
+      "timing_ineligible_n": 1,
+      "missing_entry_bar_n": 0,
+      "late_entry_n": 0,
+      "exit_time_ineligible_n": 1,
+      "net_mean_per_selected_if_ineligible_not_traded": -0.00397
+    }
+  ]
+}

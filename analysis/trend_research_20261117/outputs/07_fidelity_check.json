@@ -1,0 +1,229 @@
+{
+  "actual_files_cutoff": "2026-11-18",
+  "actual_files": {
+    "screening_days": 49,
+    "screening_range": [
+      "2026-08-31",
+      "2026-11-18"
+    ],
+    "filtering_days": 48,
+    "filtering_range": [
+      "2026-09-01",
+      "2026-11-18"
+    ],
+    "screening_symbols": 2207,
+    "filtering_symbols": 444,
+    "screening_files_after_cutoff": [
+      "2026-11-19"
+    ],
+    "filtering_files_after_cutoff": [
+      "2026-11-19"
+    ]
+  },
+  "filtering_screening_date_alignment": {
+    "filtering_dates": 47,
+    "dates_with_market_calendar": 46,
+    "dates_with_prior_session_screening": 45,
+    "dates_without_match": 2,
+    "analysis_data_cutoff": "2026-11-17",
+    "dates_without_match_list": [
+      "2026-09-21",
+      "2026-11-12"
+    ],
+    "dates_without_match_reasons": [
+      {
+        "date": "2026-09-21",
+        "reason": "no_market_calendar_record"
+      },
+      {
+        "date": "2026-11-12",
+        "reason": "missing_prior_session_screening_file"
+      }
+    ],
+    "dates_excluded_by_analysis_cutoff_list": [
+      {
+        "date": "2026-11-18",
+        "reason": "excluded_by_analysis_cutoff"
+      }
+    ],
+    "dates_excluded_by_analysis_cutoff": 1
+  },
+  "filtering_files_excluded_by_analysis_cutoff": [
+    {
+      "date": "2026-11-18",
+      "symbols_in_filter_file": 10,
+      "daily_data_available": true,
+      "minute_data_available": true,
+      "analysis_data_cutoff": "2026-11-17",
+      "interpretation": "excluded to preserve the fixed analysis window; not a non-market day"
+    }
+  ],
+  "filtering_files_without_market_session": [
+    {
+      "date": "2026-09-21",
+      "symbols_in_filter_file": 5,
+      "generated_at": "2026-09-21T09:30:23.607045",
+      "same_date_screening_file_exists": false,
+      "daily_rows": 0,
+      "minute_symbol_days": 0,
+      "interpretation": "file presence alone does not establish that the live filter or orders ran"
+    }
+  ],
+  "screening_overlap": {
+    "days": 47,
+    "mean_overlap": 0.179,
+    "p25": 0.1,
+    "median": 0.14,
+    "p75": 0.18
+  },
+  "actual_screening_rank_distribution": {
+    "selected_symbols": 2107,
+    "days": 47,
+    "symbols_with_rank_audit": 2107,
+    "mean_total_rank": 397.18,
+    "median_total_rank": 439.0,
+    "p25_total_rank": 162.0,
+    "p75_total_rank": 601.0,
+    "restricted_in_selected": 0,
+    "audit_selected_matches": 2107,
+    "total_rank_definition": "audit total_rank is turnover_rank + price_gain_rank; it is not the final selected-list position. The selected flag is recorded separately after candidate filtering and limiting."
+  },
+  "filtering_overlap": {
+    "days": 47,
+    "mean_overlap": 0.1839,
+    "median": 0.2
+  },
+  "filtering_overlap_by_session_shift": [
+    {
+      "session_shift": "+1",
+      "days": 44,
+      "mean_overlap": 0.0625,
+      "median_overlap": 0.0
+    },
+    {
+      "session_shift": "-1",
+      "days": 44,
+      "mean_overlap": 0.068,
+      "median_overlap": 0.0
+    },
+    {
+      "session_shift": "0",
+      "days": 44,
+      "mean_overlap": 0.185,
+      "median_overlap": 0.2
+    }
+  ],
+  "filtering_in_approx_top50": {
+    "days": 47,
+    "mean_overlap": 0.265,
+    "median": 0.3
+  },
+  "actual_filtering_performance": {
+    "n": 428,
+    "days": 45,
+    "ret_mean": -0.00563,
+    "ret_med": 0.0,
+    "ret_p10": -0.05556,
+    "ret_p90": 0.03448,
+    "win": 0.3551,
+    "return_basis": "per selected-symbol observation, before costs",
+    "daily_cluster_bootstrap_95ci": [
+      -0.01095,
+      -0.00039
+    ],
+    "bootstrap_days": 45,
+    "bootstrap_method": "10,000 resamples of observed dates with replacement; pooled per-symbol mean; percentile CI; seed=71",
+    "after_round_trip_cost": {
+      "ret_mean": -0.00773,
+      "ret_med": -0.0021,
+      "win": 0.3505,
+      "round_trip_cost": 0.0021,
+      "daily_cluster_bootstrap_95ci": [
+        -0.01305,
+        -0.00249
+      ]
+    }
+  },
+  "actual_filtering_strict_fill_performance": {
+    "n": 373,
+    "days": 45,
+    "ret_mean": -0.0067,
+    "ret_med": 0.0,
+    "win": 0.3539,
+    "return_basis": "per selected-symbol observation, before costs",
+    "fill_definition": "entry by 09:45 and bar used for 15:25 exit price at/after 15:00",
+    "daily_cluster_bootstrap_95ci": [
+      -0.01192,
+      -0.00157
+    ],
+    "bootstrap_days": 45,
+    "bootstrap_method": "10,000 resamples of observed dates with replacement; pooled per-symbol mean; percentile CI; seed=71",
+    "after_round_trip_cost": {
+      "ret_mean": -0.0088,
+      "ret_med": -0.0021,
+      "win": 0.3512,
+      "round_trip_cost": 0.0021,
+      "daily_cluster_bootstrap_95ci": [
+        -0.01402,
+        -0.00367
+      ]
+    }
+  },
+  "actual_filtering_exclusion_performance": [
+    {
+      "excluded_by_known_conditions": false,
+      "n": 294,
+      "days": 45,
+      "ret_mean_before_cost": 0.00091,
+      "ret_median_before_cost": 0.0,
+      "ret_p10_before_cost": -0.0364,
+      "win_before_cost": 0.3639,
+      "ret_mean_after_cost": -0.00119,
+      "win_after_cost": 0.3571,
+      "round_trip_cost": 0.0021,
+      "daily_cluster_bootstrap_95ci_before_cost": [
+        -0.00279,
+        0.00486
+      ],
+      "daily_cluster_bootstrap_95ci_after_cost": [
+        -0.00489,
+        0.00276
+      ],
+      "bootstrap_method": "10,000 resamples of observed dates with replacement; pooled per-symbol mean; percentile CI; seed=71"
+    },
+    {
+      "excluded_by_known_conditions": true,
+      "n": 134,
+      "days": 41,
+      "ret_mean_before_cost": -0.01998,
+      "ret_median_before_cost": -0.00533,
+      "ret_p10_before_cost": -0.0976,
+      "win_before_cost": 0.3358,
+      "ret_mean_after_cost": -0.02208,
+      "win_after_cost": 0.3358,
+      "round_trip_cost": 0.0021,
+      "daily_cluster_bootstrap_95ci_before_cost": [
+        -0.03311,
+        -0.00767
+      ],
+      "daily_cluster_bootstrap_95ci_after_cost": [
+        -0.03521,
+        -0.00977
+      ],
+      "bootstrap_method": "10,000 resamples of observed dates with replacement; pooled per-symbol mean; percentile CI; seed=71"
+    }
+  ],
+  "actual_filtering_exclusion_exposure": {
+    "selected_symbol_rows": 444,
+    "rows_with_previous_daily_data": 429,
+    "rows_with_entry_exit_prices": 428,
+    "rows_meeting_strict_fill_time": 373,
+    "prior_limit_up_rows": 26,
+    "prior_20d_return_ge25_rows": 38,
+    "opening_gap_gt2_rows": 96,
+    "any_known_by_0930_exclusion_rows": 134,
+    "move_gt2_at_0930_rows": 112,
+    "move_gt2_at_0935_rows": 110,
+    "outcome_days": 45
+  }
+}

@@ -1,0 +1,150 @@
+{
+  "swing_trend_candidates": [
+    {
+      "period": "P1",
+      "n": 14910,
+      "days": 237,
+      "cand_per_day": 62.9,
+      "net_mean": 0.00556,
+      "net_med": 0.00261,
+      "p10": -0.10359,
+      "p90": 0.12018,
+      "net_win": 0.5111,
+      "excess_mean": 0.00041,
+      "trend10_rate": 0.1049,
+      "mae_med": -0.0552
+    },
+    {
+      "period": "P2",
+      "n": 18130,
+      "days": 245,
+      "cand_per_day": 74.0,
+      "net_mean": 0.00307,
+      "net_med": -0.00368,
+      "p10": -0.10835,
+      "p90": 0.12623,
+      "net_win": 0.4799,
+      "excess_mean": -0.00415,
+      "trend10_rate": 0.1121,
+      "mae_med": -0.0558
+    },
+    {
+      "period": "P3",
+      "n": 15441,
+      "days": 244,
+      "cand_per_day": 63.3,
+      "net_mean": 0.01488,
+      "net_med": 0.01049,
+      "p10": -0.09309,
+      "p90": 0.12855,
+      "net_win": 0.5572,
+      "excess_mean": -0.00049,
+      "trend10_rate": 0.1104,
+      "mae_med": -0.0456
+    },
+    {
+      "period": "P4",
+      "n": 21146,
+      "days": 232,
+      "cand_per_day": 91.1,
+      "net_mean": 0.01559,
+      "net_med": 0.00762,
+      "p10": -0.12485,
+      "p90": 0.16363,
+      "net_win": 0.5304,
+      "excess_mean": 0.00908,
+      "trend10_rate": 0.1466,
+      "mae_med": -0.0613
+    }
+  ],
+  "swing_trend_le900": [
+    {
+      "period": "P1",
+      "n": 2055,
+      "days": 228,
+      "net_mean": 0.00701,
+      "net_med": 0.00748,
+      "net_win": 0.5348
+    },
+    {
+      "period": "P2",
+      "n": 1391,
+      "days": 229,
+      "net_mean": -0.00809,
+      "net_med": -0.01558,
+      "net_win": 0.4357
+    },
+    {
+      "period": "P3",
+      "n": 1206,
+      "days": 225,
+      "net_mean": 0.01298,
+      "net_med": 0.01038,
+      "net_win": 0.5489
+    },
+    {
+      "period": "P4",
+      "n": 1132,
+      "days": 211,
+      "net_mean": 0.01504,
+      "net_med": 0.01297,
+      "net_win": 0.5442
+    }
+  ],
+  "swing_baseline_same_liq_vol": [
+    {
+      "period": "P1",
+      "n": 389737,
+      "net_mean": 0.00203,
+      "net_win": 0.4929
+    },
+    {
+      "period": "P2",
+      "n": 231667,
+      "net_mean": 0.00567,
+      "net_win": 0.5022
+    },
+    {
+      "period": "P3",
+      "n": 207784,
+      "net_mean": 0.01342,
+      "net_win": 0.5338
+    },
+    {
+      "period": "P4",
+      "n": 242532,
+      "net_mean": 0.01069,
+      "net_win": 0.517
+    }
+  ],
+  "regime_db_tables": [
+    "market_regime_daily"
+  ],
+  "regime_db_row_count": 21,
+  "regime_proxy_agreement": [
+    {
+      "prod_final": "CAUTION",
+      "prod_before_relief": "CAUTION",
+      "proxy_prev_day": "CAUTION",
+      "n": 8
+    },
+    {
+      "prod_final": "CAUTION",
+      "prod_before_relief": "DANGER",
+      "proxy_prev_day": "DANGER",
+      "n": 3
+    },
+    {
+      "prod_final": "DANGER",
+      "prod_before_relief": "DANGER",
+      "proxy_prev_day": "CAUTION",
+      "n": 6
+    },
+    {
+      "prod_final": "DANGER",
+      "prod_before_relief": "DANGER",
+      "proxy_prev_day": "DANGER",
+      "n": 2
+    }
+  ]
+}
