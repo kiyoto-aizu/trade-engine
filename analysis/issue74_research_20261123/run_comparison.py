@@ -15,7 +15,7 @@ import duckdb
 ROOT = Path(__file__).resolve().parents[2]
 DB = ROOT / "data" / "analysis" / "trend_research_20261117" / "trend_research.duckdb"
 REFERENCE = ROOT / "data" / "analysis" / "trend_research_20261117" / "issue73" / "freeze_v1" / "report.json"
-OUTPUT = ROOT / "data" / "analysis" / "issue74_research_20261123" / "trial_v1_review_corrected"
+OUTPUT = ROOT / "data" / "analysis" / "issue74_research_20261123" / "trial_review_followup_v1"
 END = date(2026, 11, 17)
 START_CASH = 300_000.0
 SLOTS = 3
@@ -27,7 +27,10 @@ FEES = (0.00105, 0.00205, 0.00305)
 
 def digest(path):
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        hasher = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            hasher.update(chunk)
+        return hasher.hexdigest()
 
 
 def load_inputs(con):
@@ -105,7 +108,7 @@ def valid(value):
     return value is not None and math.isfinite(value) and value > 0
 
 
-def simulate(sessions, candidates, bars, strategies, fee):
+def simulate(sessions, candidates, bars, strategies, fee, stop_strategies=("range", "rebound")):
     by_day = defaultdict(list)
     decisions = Counter()
     for row in candidates:
@@ -188,7 +191,7 @@ def simulate(sessions, candidates, bars, strategies, fee):
                 pos["last_kind"] = "close"
             if not pos["stop_pending"] and day >= row["exit_date"] and valid(close):
                 sell(code, close, "scheduled_close")
-            elif (not pos["stop_pending"] and row["strategy"] != "pullback"
+            elif (not pos["stop_pending"] and row["strategy"] in stop_strategies
                   and day < row["exit_date"] and valid(close)
                   and close / row["adjusted_open"] <= .95):
                 pos["stop_pending"] = True
@@ -205,7 +208,7 @@ def simulate(sessions, candidates, bars, strategies, fee):
         if not math.isclose(sum(pnl.values()), equity - equity_before_open, abs_tol=1e-6):
             raise ValueError("Daily strategy attribution does not reconcile")
         curve.append({"date": day, "equity": equity, "cash": cash, "slots": slots})
-        daily.append({"date": day, "pnl": pnl, "active": active})
+        daily.append({"date": day, "pnl": pnl, "active": active, "prior_equity": equity_before_open})
         before_strategy = {code: pos["row"]["strategy"] for code, pos in positions.items()}
     return decisions, trades, curve, daily, positions, fills
 
@@ -313,19 +316,75 @@ def compare_daily(left, right, market):
     def metric(rows):
         xs = [a["pnl"][a_name] for a, _ in rows]
         ys = [b["pnl"][b_name] for _, b in rows]
+        normalized = [(a["pnl"][a_name] / a["prior_equity"], b["pnl"][b_name] / b["prior_equity"])
+                      for a, b in rows if a["prior_equity"] > 0 and b["prior_equity"] > 0]
         return {"days": len(rows), "correlation": correlation(xs, ys),
+                "normalized_days": len(normalized), "nonpositive_equity_days": len(rows) - len(normalized),
+                "equity_return_correlation": correlation(
+                    [x for x, _ in normalized], [y for _, y in normalized]),
                 "simultaneous_loss_days": sum(x < 0 and y < 0 for x, y in zip(xs, ys)),
                 "simultaneous_loss_rate": sum(x < 0 and y < 0 for x, y in zip(xs, ys)) / len(rows) if rows else None}
     return {"all_sessions": metric(pairs), "both_active": metric(active),
             "both_active_topix_down_2pct": metric(crashes),
+            "by_year_all_sessions": {
+                str(year): metric([(a, b) for a, b in pairs if a["date"].year == year])
+                for year in sorted({a["date"].year for a, _ in pairs})
+            },
             "filled_entry_day_overlap": len(left_filled_days & right_filled_days),
             "filled_entry_day_code_overlap": len(left_filled_pairs & right_filled_pairs),
             "completed_entry_day_overlap": len(left_days & right_days),
             "completed_entry_day_code_overlap": len(left_pairs & right_pairs)}
 
 
-def run(db, output):
-    with REFERENCE.open(encoding="utf-8") as stream:
+def candidate_returns(sessions, candidates, bars, fee, stop_strategies):
+    indices = {day: index for index, day in enumerate(sessions)}
+    stats = {strategy: Counter() for strategy in STRATEGIES}
+    values = {strategy: [] for strategy in STRATEGIES}
+    for row in candidates:
+        strategy = row["strategy"]
+        counts = stats[strategy]
+        if row["entry_date"] is None or row["exit_date"] is None:
+            counts["right_censored"] += 1
+            continue
+        if not valid(row["raw_open"]) or not valid(row["adjusted_open"]):
+            counts["missing_entry"] += 1
+            continue
+        pending = False
+        exit_price = None
+        for day in sessions[indices[row["entry_date"]]:]:
+            bar = bars.get((row["code"], day))
+            if pending and bar is not None and valid(bar[0]) and valid(bar[1]):
+                exit_price = bar[1]
+                counts["stop_exit"] += 1
+                break
+            close = bar[2] if bar is not None else None
+            if not pending and day >= row["exit_date"] and valid(close):
+                exit_price = close
+                break
+            if (not pending and strategy in stop_strategies and day < row["exit_date"]
+                    and valid(close) and close / row["adjusted_open"] <= .95):
+                pending = True
+        if exit_price is None:
+            counts["unclosed"] += 1
+            continue
+        counts["completed"] += 1
+        values[strategy].append(exit_price * (1 - fee) / (row["adjusted_open"] * (1 + fee)) - 1)
+    return {
+        strategy: {
+            "counts": dict(stats[strategy]),
+            "mean_net_return": mean(values[strategy]) if values[strategy] else None,
+            "median_net_return": median(values[strategy]) if values[strategy] else None,
+            "win_rate": (sum(value > 0 for value in values[strategy]) / len(values[strategy])
+                         if values[strategy] else None),
+        }
+        for strategy in STRATEGIES
+    }
+
+
+def run(db, output, reference=REFERENCE):
+    if output.exists():
+        raise FileExistsError(f"Output already exists: {output}")
+    with reference.open(encoding="utf-8") as stream:
         expected_hash = json.load(stream)["input_sha256"]
     db_hash = digest(db)
     if db_hash != expected_hash:
@@ -334,18 +393,17 @@ def run(db, output):
         sessions, market, candidates, bars, missing = load_inputs(con)
     if digest(db) != db_hash:
         raise ValueError("Input DB changed during read")
-    if output.exists():
-        raise FileExistsError(f"Output already exists: {output}")
     runs = {}
     correlations = {}
+    strategy_sets = {
+        "pullback": ("pullback",), "range": ("range",), "rebound": ("rebound",),
+        "pullback_range": ("pullback", "range"),
+        "pullback_rebound": ("pullback", "rebound"),
+    }
     for fee in FEES:
         simulations = {
             name: simulate(sessions, candidates, bars, strategies, fee)
-            for name, strategies in {
-                "pullback": ("pullback",), "range": ("range",), "rebound": ("rebound",),
-                "pullback_range": ("pullback", "range"),
-                "pullback_rebound": ("pullback", "rebound"),
-            }.items()
+            for name, strategies in strategy_sets.items()
         }
         runs[str(fee)] = {
             name: summarize(sim, tuple(sim[3][0]["pnl"]), market) for name, sim in simulations.items()
@@ -368,12 +426,33 @@ def run(db, output):
             "signal_date_code": len(pullback & other),
             "signal_days": len({d for d, _ in pullback} & {d for d, _ in other}),
         }
+    followup = {}
+    for name, stops in (("original", ("range", "rebound")), ("no_stops", ()),
+                        ("all_stops", STRATEGIES)):
+        portfolio = {
+            key: simulate(sessions, candidates, bars, strategies, FEES[0], stops)
+            for key, strategies in strategy_sets.items()
+        }
+        followup[name] = {
+            "unconstrained_candidates": candidate_returns(sessions, candidates, bars, FEES[0], stops),
+            "portfolios": {key: summarize(sim, strategy_sets[key], market) for key, sim in portfolio.items()},
+        }
+    ranking = {
+        strategy: {
+            "candidates": len(rows),
+            "first_signal_date": str(min(row["signal_date"] for row in rows)) if rows else None,
+            "median_rank": median(row["merged_rank"] for row in rows) if rows else None,
+            "rank_at_most_10": sum(row["merged_rank"] <= 10 for row in rows),
+        }
+        for strategy in STRATEGIES for rows in [[r for r in candidates if r["strategy"] == strategy]]
+    }
     report = {
-        "trial": "v1_review_corrected", "input_sha256": db_hash, "script_sha256": digest(Path(__file__)),
+        "trial": "review_followup_v1", "input_sha256": db_hash, "script_sha256": digest(Path(__file__)),
         "period": [str(sessions[0]), str(sessions[-1])], "sessions": len(sessions),
         "candidate_counts": dict(Counter(r["strategy"] for r in candidates)),
         "candidate_overlap": overlap, "missing_indicators_among_ranked": missing,
-        "runs": runs, "daily_standalone_correlations": correlations,
+        "runs": runs, "daily_standalone_correlations": correlations, "followup": followup,
+        "candidate_ranking": ranking,
     }
     output.mkdir(parents=True, exist_ok=False)
     with (output / "report.json").open("x", encoding="utf-8") as stream:
@@ -385,5 +464,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=DB)
     parser.add_argument("--output", type=Path, default=OUTPUT)
+    parser.add_argument("--reference", type=Path, default=REFERENCE)
     args = parser.parse_args()
-    run(args.db, args.output)
+    run(args.db, args.output, args.reference)
