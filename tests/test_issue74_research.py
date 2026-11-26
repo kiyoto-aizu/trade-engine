@@ -186,13 +186,22 @@ def test_future_prices_do_not_affect_ranks_or_candidate_membership():
         for i in range(60):
             symbol = f"{1000 + i}"
             con.execute("INSERT INTO universe_master VALUES (?, '2020-01-01', NULL)", [symbol])
-            con.execute("INSERT INTO panel VALUES (?, '2026-11-13', -.01, .01, .01, -.02, -.03, ?, 500, 1e9)",
-                        [symbol + "0", 1e9 - i * 1e6])
+            ret1 = -.019 + (i * 17 % 60) * .0003
+            con.execute("INSERT INTO panel VALUES (?, '2026-11-13', ?, .01, .01, -.02, -.03, ?, 500, 1e9)",
+                        [symbol + "0", ret1, 1e9 - i * 1e6])
         def selection():
             return {(r["strategy"], r["code"], r["merged_rank"])
                     for r in research.load_inputs(con)[2]}
         before = selection()
-        assert len({code for _, code, _ in before}) == 50
+        scores = [i + 1 + 60 - (i * 17 % 60) for i in range(60)]
+        expected = {
+            (strategy, f"{1000 + i}0", rank)
+            for i, score in enumerate(scores)
+            for rank in [1 + sum(other < score for other in scores)]
+            if rank <= 50
+            for strategy in ("pullback", "range")
+        }
+        assert before == expected
         con.execute("INSERT INTO bars_daily SELECT code, '2026-11-16', 1, 1, 1 FROM panel")
         assert selection() == before
         con.execute("UPDATE bars_daily SET o=1000000, adj_o=1000000, adj_c=1000000")
@@ -234,3 +243,42 @@ def test_aggregate_output_excludes_trade_codes_and_prices():
     text = json.dumps(aggregate)
     assert "SENSITIVE_CODE" not in text
     assert "123.456" not in text
+
+
+def test_run_writes_only_aggregates_for_synthetic_database(tmp_path, monkeypatch):
+    db = tmp_path / "input.duckdb"
+    with duckdb.connect(str(db)) as con:
+        con.execute("CREATE TABLE market_state(date DATE, topix_ret1 DOUBLE, regime_vol_base VARCHAR)")
+        con.execute("INSERT INTO market_state VALUES ('2026-11-12', 0, 'NORMAL'), "
+                    "('2026-11-13', 0, 'NORMAL'), ('2026-11-16', 0, 'NORMAL'), "
+                    "('2026-11-17', 0, 'NORMAL')")
+        con.execute("CREATE TABLE universe_master(symbol VARCHAR, listed_from DATE, listed_to DATE)")
+        con.execute("INSERT INTO universe_master VALUES ('9876', '2020-01-01', NULL)")
+        con.execute("""CREATE TABLE panel(
+            code VARCHAR, date DATE, ret1 DOUBLE, ret5 DOUBLE, ret20 DOUBLE,
+            off_high60 DOUBLE, sma25_gap DOUBLE, va DOUBLE, price_close DOUBLE, va_avg20 DOUBLE
+        )""")
+        con.execute("INSERT INTO panel VALUES "
+                    "('98760', '2026-11-12', -.01, .01, .01, -.02, -.03, 1e9, 500, 1e9)")
+        con.execute("CREATE TABLE bars_daily(code VARCHAR, date DATE, o DOUBLE, adj_o DOUBLE, adj_c DOUBLE)")
+        con.execute("INSERT INTO bars_daily VALUES "
+                    "('98760', '2026-11-13', 123.456789, 123.456789, 123.456789), "
+                    "('98760', '2026-11-16', 123.456789, 123.456789, 123.456789), "
+                    "('98760', '2026-11-17', 123.456789, 123.456789, 123.456789)")
+    reference = tmp_path / "reference.json"
+    reference.write_text(json.dumps({"input_sha256": research.digest(db)}), encoding="utf-8")
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="recorded signal-only baseline"):
+        research.run(db, output, reference)
+    assert not output.exists()
+
+    monkeypatch.setattr(research, "validate_pullback_baseline", lambda ref: None)
+    research.run(db, output, reference)
+    assert {path.name for path in output.iterdir()} == {"report.json"}
+    text = (output / "report.json").read_text(encoding="utf-8")
+    report = json.loads(text)
+    assert report["candidate_counts"] == {"pullback": 1, "range": 1}
+    assert set(report["followup"]) == {"original", "no_stops", "all_stops"}
+    assert report["candidate_ranking"]["pullback"]["candidates"] == 1
+    assert "98760" not in text
+    assert "123.456789" not in text

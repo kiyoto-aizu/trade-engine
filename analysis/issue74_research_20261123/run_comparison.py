@@ -381,6 +381,13 @@ def candidate_returns(sessions, candidates, bars, fee, stop_strategies):
     }
 
 
+def validate_pullback_baseline(ref):
+    pull = ref["strategies"]["pullback"]
+    if (sum(pull["decisions"].values()), pull["completed"], round(ref["final_equity"]),
+        round(ref["max_dd"], 4)) != (1108, 542, 381950, .1395):
+        raise ValueError("Pullback replay does not match the recorded signal-only baseline")
+
+
 def run(db, output, reference=REFERENCE):
     if output.exists():
         raise FileExistsError(f"Output already exists: {output}")
@@ -413,11 +420,7 @@ def run(db, output, reference=REFERENCE):
             for name in ("range", "rebound")
         }
         if fee == FEES[0]:
-            ref = runs[str(fee)]["pullback"]
-            pull = ref["strategies"]["pullback"]
-            if (sum(pull["decisions"].values()), pull["completed"], round(ref["final_equity"]),
-                round(ref["max_dd"], 4)) != (1108, 542, 381950, .1395):
-                raise ValueError("Pullback replay does not match the recorded signal-only baseline")
+            validate_pullback_baseline(runs[str(fee)]["pullback"])
     overlap = {}
     pullback = {(r["signal_date"], r["code"]) for r in candidates if r["strategy"] == "pullback"}
     for strategy in ("range", "rebound"):
